@@ -15,7 +15,7 @@ import pytest
 from filets.cli import verify
 from filets.policies import catch_rule
 from filets.prompts import (catch_messages, context_block, lake_block, lake_level, lake_reminder, lake_trend, persona,
-                            share_line, speak_messages)
+                            speak_messages, surplus_line)
 from test_rumors import FOUR, Recorder, play_with_announcement
 
 
@@ -208,21 +208,35 @@ def test_rule_fishers_never_ask_for_more_than_the_lake_they_can_see(arch):
     assert catch_rule(arch, state)[0] <= 10.0
 
 
-# ---------------------------------------------------------------- le partage du lac entre les barques
-def test_the_share_line_is_said_only_when_the_lake_cannot_fill_every_boat():
+# ---------------------------------------------------------------- le repère des anciens, en tonnes et par pêcheur
+def test_the_surplus_line_turns_the_half_lake_mark_into_tonnes_per_fisher():
+    obs = obs_for(70.0)
+    obs["n_fishers"] = 8
+    line = surplus_line(obs)
+    assert "il y a 20 tonnes au-dessus de la moitié du lac (50 t), soit 2.5 t par pêcheur (vous êtes 8)" in line
+    obs["stock_estimate"] = 30.0                              # sous la moitié : plus rien à prendre sans l'entamer
+    assert "il y a 0 tonnes au-dessus de la moitié du lac (50 t), soit 0.0 t par pêcheur" in surplus_line(obs)
+    obs["capacity"] = 140.0
+    assert "(70 t)" in surplus_line(obs)
+    assert surplus_line(obs) in lake_reminder(obs)            # rappelé juste avant la question
+    obs.pop("n_fishers")
+    assert "par pêcheur" not in surplus_line(obs) and "au-dessus de la moitié" in surplus_line(obs)
+    obs.pop("capacity")
+    assert surplus_line(obs) == ""
+
+
+def test_no_prompt_tells_the_equal_share_of_what_is_left():
+    """« Si chacun prenait la part égale de ce qui reste » servait d'ancre : à 51 % les pêcheurs demandaient 6 t chacun, soit
+    exactement 51/8, c'est-à-dire tout le lac. Cette phrase a été retirée ; le test empêche son retour."""
     obs = obs_for(38.0)
     obs["n_fishers"] = 8
-    line = share_line(obs)
-    assert "Vous êtes 8 pêcheurs" in line and "environ 38 tonnes" in line and "4.8" in line and "plus du tout" in line
-    assert line in lake_reminder(obs)                        # elle est rappelée juste avant la question
-    obs["stock_estimate"] = 100.0                            # 12,5 t par barque : le lac suffit largement
-    assert share_line(obs) == ""
-    obs["stock_estimate"] = 38.0
-    obs.pop("n_fishers")
-    assert share_line(obs) == ""
+    text = lake_reminder(obs) + context_block(obs)
+    assert "il n'en resterait plus du tout" not in text and "si chacun en prenait" not in text
 
 
-def test_every_ai_prompt_of_a_depleted_lake_carries_the_share_line(tmp_path):
+def test_every_ai_prompt_of_a_depleted_lake_carries_the_surplus_per_fisher(tmp_path):
     world, events, requests = play_greedy(tmp_path, "aw6", capacity=40.0, seasons=2)
-    low = [r for r in requests if re.search(r"soit (\d+) %", r["user"]) and int(re.search(r"soit (\d+) %", r["user"]).group(1)) < 80]
-    assert low and all("Vous êtes 4 pêcheurs sur ce lac" in r["user"] for r in low)
+    assert requests
+    for r in requests:
+        assert re.search(r"Repère des anciens : il y a \d+ tonnes au-dessus de la moitié du lac \(20 t\), soit \d+\.\d t par pêcheur "
+                         r"\(vous êtes 4\)", r["user"]), r["user"][-700:]

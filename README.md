@@ -252,8 +252,10 @@ chaque décision (`prompts.py`, `world.observe`) :
 * **Ce que l'agent a constaté jusqu'ici** : la suite de SES propres estimations (ouverture de chaque pêche, chaque veillée) et la
   tendance (« il a beaucoup baissé », « il reste vide »). Rien d'inventé ni du futur (C6) ; chaque chiffre se rattache à la décision
   qui l'a porté (`used_event_ids`).
-* **Un rappel juste avant la question**, avec, quand le lac ne suffit plus à remplir toutes les barques, le partage qui en
-  découle : « vous êtes 8 pêcheurs, il reste 40 t : si chacun en prenait 5, il n'en resterait plus du tout ».
+* **Un rappel juste avant la question** (les petits modèles lisent surtout la fin) : le niveau du lac, puis, quand il ne suffit plus
+  à remplir toutes les barques, le partage qui en découle (« vous êtes 8 pêcheurs, il reste 40 t : si chacun en prenait 5, il n'en
+  resterait plus du tout »), puis le repère des anciens en tonnes (« il y a 0 tonne au-dessus de la moitié du lac (50 t) »). Sans cette
+  dernière ligne, les petits modèles lisaient « la moitié, 50 tonnes » comme un quota de prise.
 * **Des souvenirs datés** : une parole de la veillée d'il y a deux saisons ne passe plus pour l'état du lac d'aujourd'hui.
 * **Une réponse contrainte** : avec Ollama, la réponse est imposée par un schéma JSON (`llm.providers.ollama.json_schema`), la
   justification (ce que l'agent constate du lac et en conclut) AVANT la prise, de sorte que le nombre s'écrit à la suite de ce

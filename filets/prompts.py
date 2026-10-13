@@ -108,15 +108,20 @@ def lake_block(obs: dict) -> str:
     return f"{head}\nCe que tu as constaté du lac jusqu'ici : {seen}; maintenant ≈ {est:.0f} t ({lake_trend(est, cap, hist)})."
 
 
-def share_line(obs: dict) -> str:
-    """Ce que vaut le lac rapporté au nombre de barques : un chiffre que les pêcheurs ont sous les yeux mais ne rapprochent pas
-    d'eux-mêmes (8 pêcheurs qui prennent 6 t vident un lac de 40 t). N'est dite que si le lac ne suffit plus à remplir
-    toutes les barques."""
-    n, est, boat = obs.get("n_fishers"), obs["stock_estimate"], obs["boat_capacity"]
-    if not n or est / n >= boat:
+def surplus_line(obs: dict) -> str:
+    """Le repère des anciens (« laisse le lac à moitié ») traduit en tonnes : ce qui dépasse la moitié du lac, et ce que cela
+    fait par pêcheur. Ce sont des faits sur le lac, pas un ordre. Sans cette ligne, les petits modèles lisent « la moitié,
+    environ 50 tonnes » comme un quota de prise, et ne divisent pas par le nombre de barques : à 51 % ils écrivaient « il faut des
+    prises modestes » puis demandaient 6 t chacun, soit tout le lac à huit. (Une phrase « si chacun prenait la part égale de ce
+    qui reste » faisait pire : ils s'alignaient sur ce chiffre.)"""
+    cap = obs.get("capacity")
+    if not cap:
         return ""
-    return (f"Vous êtes {n} pêcheurs sur ce lac et il en reste environ {est:.0f} tonnes : "
-            f"si chacun en prenait {est / n:.1f}, il n'en resterait plus du tout.\n")
+    half, n = cap / 2, obs.get("n_fishers")
+    surplus = max(0.0, obs["stock_estimate"] - half)
+    each = f", soit {surplus / n:.1f} t par pêcheur (vous êtes {n})" if n else ""
+    return (f"Repère des anciens : il y a {surplus:.0f} tonnes au-dessus de la moitié du lac ({half:.0f} t){each}. "
+            "Ce qu'on prend sous la moitié, le lac ne le rend pas vite.\n")
 
 
 def lake_reminder(obs: dict) -> str:
@@ -127,7 +132,7 @@ def lake_reminder(obs: dict) -> str:
         return ""
     est = obs["stock_estimate"]
     return (f"Rappel : le lac est à {100 * est / cap:.0f} % ({lake_level(est, cap, obs.get('collapse_ratio', 0.05))}) ; "
-            "ce que tu constates toi-même compte plus que ce qu'on a pu dire aux veillées passées.\n" + share_line(obs))
+            "ce que tu constates toi-même compte plus que ce qu'on a pu dire aux veillées passées.\n" + surplus_line(obs))
 
 
 def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dict:
