@@ -1,0 +1,103 @@
+{
+  "type": "object",
+  "properties": {
+    "state": {
+      "enum": [
+        "idle",
+        "starting",
+        "running",
+        "paused",
+        "ended"
+      ]
+    },
+    "engine_id": {
+      "type": "string"
+    },
+    "wall_clock": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mode": {
+      "enum": [
+        "sync",
+        "async",
+        null
+      ]
+    },
+    "pending_mode": {
+      "enum": [
+        "sync",
+        "async",
+        null
+      ]
+    },
+    "speed": {
+      "type": "number"
+    },
+    "fast": {
+      "type": "boolean"
+    },
+    "paused": {
+      "type": "boolean"
+    },
+    "season": {
+      "type": "integer"
+    },
+    "seasons": {
+      "type": "integer"
+    },
+    "sim_label": {
+      "type": "string"
+    },
+    "end_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "controls": {
+      "type": "boolean"
+    },
+    "lobby": {
+      "type": "boolean"
+    },
+    "detail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ai": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "advised_speed": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "catalog": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "state",
+    "engine_id",
+    "wall_clock"
+  ],
+  "additionalProperties": false
+}

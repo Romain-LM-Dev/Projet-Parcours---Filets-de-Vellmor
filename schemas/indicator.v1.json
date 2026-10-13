@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "trigger": {
+      "type": "string"
+    },
+    "values": {
+      "type": "object"
+    },
+    "source_event_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "lag_s": {
+      "type": "number"
+    },
+    "computed_at": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "trigger",
+    "values",
+    "source_event_ids",
+    "lag_s",
+    "computed_at"
+  ],
+  "additionalProperties": false
+}

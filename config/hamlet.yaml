@@ -1,0 +1,5 @@
+# Communication limitée au hameau : quatre veillées séparées (l'ancien n'assiste qu'à celle de Bramois).
+extends: default.yaml
+run: {label: hamlet}
+scenario:
+  communication: hamlet

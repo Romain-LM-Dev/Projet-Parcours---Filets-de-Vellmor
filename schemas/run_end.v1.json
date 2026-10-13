@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string"
+    },
+    "seasons_completed": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "reason",
+    "seasons_completed"
+  ],
+  "additionalProperties": false
+}

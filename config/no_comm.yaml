@@ -1,0 +1,5 @@
+# Témoin pour B3 : communication interdite, aucune veillée → aucune règle ne peut être adoptée.
+extends: default.yaml
+run: {label: no_comm}
+scenario:
+  communication: none

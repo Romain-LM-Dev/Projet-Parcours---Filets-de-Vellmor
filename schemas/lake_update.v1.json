@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "stock": {
+      "type": "number"
+    },
+    "capacity": {
+      "type": "number"
+    },
+    "cause": {
+      "enum": [
+        "init",
+        "catch",
+        "regrowth",
+        "injection"
+      ]
+    },
+    "delta": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "stock",
+    "capacity",
+    "cause"
+  ],
+  "additionalProperties": false
+}

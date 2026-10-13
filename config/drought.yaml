@@ -1,0 +1,6 @@
+# Choc programmé : une sécheresse divise le stock par deux au début de la saison 4.
+extends: default.yaml
+run: {label: drought}
+scenario:
+  scheduled_injections:
+    - {season: 4, type: drought, factor: 0.5}

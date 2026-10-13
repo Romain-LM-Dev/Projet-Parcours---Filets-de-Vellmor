@@ -1,0 +1,88 @@
+{
+  "type": "object",
+  "properties": {
+    "mode": {
+      "enum": [
+        "sync",
+        "async"
+      ]
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "seasons": {
+      "type": "integer"
+    },
+    "lake": {
+      "type": "object",
+      "properties": {
+        "capacity": {
+          "type": "number"
+        },
+        "stock": {
+          "type": "number"
+        },
+        "growth_rate": {
+          "type": "number"
+        },
+        "collapse_ratio": {
+          "type": "number"
+        },
+        "sustainable_yield": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "capacity",
+        "stock",
+        "growth_rate",
+        "collapse_ratio",
+        "sustainable_yield"
+      ],
+      "additionalProperties": false
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "hamlets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scenario": {
+      "type": "object"
+    },
+    "season_days": {
+      "type": "number"
+    },
+    "config_hash": {
+      "type": "string"
+    },
+    "llm_tiers": {
+      "type": "object"
+    },
+    "label": {
+      "type": "string"
+    },
+    "population": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "mode",
+    "seed",
+    "seasons",
+    "lake",
+    "agents",
+    "hamlets",
+    "scenario",
+    "season_days",
+    "config_hash",
+    "llm_tiers"
+  ],
+  "additionalProperties": false
+}

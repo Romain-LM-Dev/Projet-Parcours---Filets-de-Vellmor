@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string"
+    },
+    "quota": {
+      "type": "number"
+    },
+    "scope": {
+      "type": "string"
+    },
+    "effective_season": {
+      "type": "integer"
+    },
+    "supporters": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "author": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "proposal_id",
+    "quota",
+    "scope",
+    "effective_season",
+    "supporters",
+    "participants",
+    "author"
+  ],
+  "additionalProperties": false
+}

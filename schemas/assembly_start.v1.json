@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "scope": {
+      "type": "string"
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "scope",
+    "participants"
+  ],
+  "additionalProperties": false
+}

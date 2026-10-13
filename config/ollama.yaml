@@ -1,0 +1,8 @@
+# Deux tailles de modèle en local avec Ollama (gratuit, illimité, données restent sur la machine).
+#   ollama pull qwen2.5:7b && ollama pull qwen2.5:1.5b
+extends: default.yaml
+run: {label: ollama}
+llm:
+  tiers:
+    grand: {provider: ollama, model: "qwen2.5:7b"}
+    petit: {provider: ollama, model: "qwen2.5:1.5b"}

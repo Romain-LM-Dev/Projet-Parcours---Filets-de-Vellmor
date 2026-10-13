@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "amount": {
+      "type": "number"
+    },
+    "for_season": {
+      "type": "integer"
+    },
+    "utterance_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent",
+    "amount",
+    "for_season",
+    "utterance_id"
+  ],
+  "additionalProperties": false
+}

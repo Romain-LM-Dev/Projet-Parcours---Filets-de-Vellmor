@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "injection_type": {
+      "type": "string"
+    },
+    "params": {
+      "type": "object"
+    },
+    "source": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "injection_type",
+    "params",
+    "source"
+  ],
+  "additionalProperties": false
+}

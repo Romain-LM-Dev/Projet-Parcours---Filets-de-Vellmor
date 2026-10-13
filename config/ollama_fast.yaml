@@ -1,0 +1,11 @@
+# Ollama en local, réglé pour la vitesse : 3B pour les pêcheurs expérimentés, 1.5B pour les autres.
+# Les deux modèles tiennent ensemble dans 6 Go de mémoire graphique : Ollama n'a jamais à en décharger un pour charger
+# l'autre, alors qu'avec le 7B chaque passage de l'un à l'autre coûte une trentaine de secondes.
+#   ollama pull qwen2.5:3b && ollama pull qwen2.5:1.5b
+extends: default.yaml
+run: {label: ollama_fast}
+llm:
+  reflection: rapide
+  tiers:
+    grand: {provider: ollama, model: "qwen2.5:3b"}
+    petit: {provider: ollama, model: "qwen2.5:1.5b"}

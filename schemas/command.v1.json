@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "properties": {
+    "type": {
+      "enum": [
+        "drought",
+        "set_communication",
+        "set_visibility",
+        "announcement",
+        "pause",
+        "resume",
+        "set_speed",
+        "set_mode",
+        "stop",
+        "start_game",
+        "new_game"
+      ]
+    },
+    "value": {},
+    "text": {
+      "type": "string"
+    },
+    "factor": {
+      "type": "number"
+    },
+    "config": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "additionalProperties": true
+}

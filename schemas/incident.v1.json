@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "incident_type": {
+      "enum": [
+        "out_of_role",
+        "unparseable",
+        "no_response",
+        "quota",
+        "invalid_value",
+        "assistant_posture",
+        "missed_window",
+        "schema_violation",
+        "temporal_violation"
+      ]
+    },
+    "detail": {
+      "type": "string"
+    },
+    "handled_by": {
+      "type": "string"
+    },
+    "llm_call_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "agent",
+    "incident_type",
+    "detail",
+    "handled_by"
+  ],
+  "additionalProperties": false
+}

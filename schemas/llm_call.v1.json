@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "properties": {
+    "call_id": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "tier": {
+      "type": "string"
+    },
+    "prompt_tokens": {
+      "type": "integer"
+    },
+    "completion_tokens": {
+      "type": "integer"
+    },
+    "latency_s": {
+      "type": "number"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "error",
+        "timeout",
+        "quota",
+        "cancelled"
+      ]
+    },
+    "retries": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "call_id",
+    "agent",
+    "purpose",
+    "provider",
+    "model",
+    "tier",
+    "prompt_tokens",
+    "completion_tokens",
+    "latency_s",
+    "status"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,117 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "agent_kind": {
+      "enum": [
+        "llm",
+        "rule"
+      ]
+    },
+    "decision_type": {
+      "enum": [
+        "catch",
+        "speak"
+      ]
+    },
+    "info_horizon": {
+      "type": "number"
+    },
+    "justification": {
+      "type": "string"
+    },
+    "retrieved": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "corpus",
+              "memory",
+              "pinned",
+              "rumor"
+            ]
+          },
+          "score": {
+            "type": "number"
+          },
+          "sim_time": {
+            "type": "number"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "score",
+          "sim_time"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "used_event_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "fallback": {
+      "type": "boolean"
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rule": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "llm_call_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "value": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "observed": {
+      "type": "object"
+    },
+    "out_of_role": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "agent",
+    "agent_kind",
+    "decision_type",
+    "info_horizon",
+    "justification",
+    "retrieved",
+    "used_event_ids",
+    "fallback"
+  ],
+  "additionalProperties": false
+}

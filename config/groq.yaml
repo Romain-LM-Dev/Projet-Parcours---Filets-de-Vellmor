@@ -1,0 +1,8 @@
+# Grand modèle via l'offre gratuite de Groq, petit modèle en local (Ollama).
+# Les noms de modèles et quotas gratuits changent souvent : vérifiez-les au démarrage du projet.
+extends: default.yaml
+run: {label: groq}
+llm:
+  tiers:
+    grand: {provider: groq, model: "llama-3.3-70b-versatile"}
+    petit: {provider: ollama, model: "qwen2.5:1.5b"}

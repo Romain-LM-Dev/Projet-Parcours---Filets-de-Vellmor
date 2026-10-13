@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "properties": {
+    "speaker": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "string"
+    },
+    "round": {
+      "type": "integer"
+    },
+    "info_horizon": {
+      "type": "number"
+    },
+    "heard": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "decision_event_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "speaker",
+    "to",
+    "text",
+    "scope",
+    "round",
+    "info_horizon",
+    "heard",
+    "decision_event_id"
+  ],
+  "additionalProperties": false
+}

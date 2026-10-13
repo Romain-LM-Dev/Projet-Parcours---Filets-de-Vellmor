@@ -1,0 +1,64 @@
+{
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "integer"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "seq": {
+      "type": "integer"
+    },
+    "sim_time": {
+      "type": "number"
+    },
+    "sim_label": {
+      "type": "string"
+    },
+    "season": {
+      "type": "integer"
+    },
+    "processed_at": {
+      "type": "number"
+    },
+    "wall_clock": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "actor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "replay": {
+      "type": "boolean"
+    },
+    "replayed_at": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "type",
+    "schema_version",
+    "event_id",
+    "run_id",
+    "seq",
+    "sim_time",
+    "sim_label",
+    "season",
+    "processed_at",
+    "wall_clock",
+    "payload"
+  ],
+  "additionalProperties": false
+}

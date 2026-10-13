@@ -1,0 +1,6 @@
+# Baseline sans LLM (E1) : même monde, mêmes scénarios, tous les pêcheurs et l'ancien suivent des règles fixes.
+extends: default.yaml
+run: {label: baseline}
+population:
+  rule_fraction: 1.0
+  elder_kind: rule

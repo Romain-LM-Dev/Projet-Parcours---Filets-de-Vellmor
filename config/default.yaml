@@ -1,0 +1,113 @@
+# FILETS — configuration par défaut d'un run.
+# Tout ce qui varie d'une expérience à l'autre se règle ici ou en ligne de commande,
+# jamais dans le code (exigence C2).
+
+run:
+  seed: 42
+  seasons: 10                 # nombre de saisons simulées
+  stop_on_collapse: false     # arrêter le run (à la fin de la saison) si le lac s'effondre (stock sous collapse_ratio)
+  stop_on_extinction: true    # arrêter le run, tout de suite, quand le lac est à 0 : il ne se repeuple jamais depuis 0
+
+population:
+  fishers: 8                  # nombre de pêcheurs (C2)
+  rule_fraction: 0.25         # part des pêcheurs à règles (A6) ; 1.0 = baseline sans LLM (E1)
+  elder: true                 # l'ancien, arbitre sans pouvoir, ne pêche pas
+  elder_kind: llm             # llm | rule
+  large_model_min_experience: 15   # années d'expérience à partir desquelles un profil raisonne avec le grand modèle (A5)
+  # custom: composition choisie à la main (menu de démarrage) ; remplace la génération ci-dessus.
+  # Liste de fiches {first_name, hamlet, archetype, experience, wealth, debt_payment, kind: llm|rule, tier: auto|grand|petit}.
+  # Quand elle est présente, `fishers` et `rule_fraction` sont déduits de la liste.
+
+lake:
+  capacity: auto              # nombre, ou "auto" = capacity_per_fisher × fishers (garde le même stock par tête quand on change d'échelle, C8)
+  capacity_per_fisher: 12.5   # tonnes
+  initial_ratio: 1.0          # stock initial / capacité
+  growth_rate: 1.0            # taux de repeuplement r (croissance logistique, appliquée une fois par saison) ; rendement durable max = r·K/4
+  collapse_ratio: 0.05        # sous ce ratio, le lac est considéré effondré
+  observation_noise: 0.10     # erreur relative de l'estimation du stock par un pêcheur
+
+economy:
+  price_per_tonne: 100        # écus
+  upkeep_per_season: 150      # coût de la vie
+  boat_capacity: 10           # prise maximale par saison et par pêcheur (tonnes)
+
+scenario:
+  communication: valley       # valley | hamlet | none
+  catches_visible: true       # les prises de chacun sont-elles connues de toute la vallée ?
+  assembly_rounds: 2          # tours de parole par veillée
+  promise_tolerance: 0.5      # tonnes tolérées au-dessus d'une promesse
+  quota_tolerance: 0.5        # tonnes tolérées au-dessus d'un quota adopté
+  # événements programmés (mêmes perturbations pour toutes les configurations comparées)
+  scheduled_injections: []
+  #  - {season: 4, type: drought}
+
+time:
+  mode: async                 # sync | async (C4)
+  season_days: 30
+  fishing_open_day: 0.25      # J0 06:00
+  fishing_close_day: 20.0     # au-delà, une sortie décidée trop tard est perdue
+  assembly_day: 25.75         # J25 18:00, veillée chez l'ancien
+  assembly_close_day: 29.0
+  regrowth_day: 29.9
+  assembly_turn_gap_days: 0.05  # en async : temps d'écoute (≈ 1 h 12) avant de reprendre la parole
+  # rythme propre de chaque pêcheur en mode asynchrone : décalage (jours) avant sa première réflexion
+  async_offset_days: [0.0, 4.0]
+  # conversion temps réel → temps simulé : heures simulées par seconde réelle.
+  # En async, c'est elle qui transforme la latence d'un LLM en durée dans le monde
+  # (à 3 h/s, un modèle qui réfléchit 10 s agit 30 h plus tard). C'est un paramètre du
+  # modèle de temps : son effet sur le phénomène doit être mesuré (C5, O10).
+  sim_hours_per_second: 3
+  # en async, quand aucun agent ne réfléchit, l'horloge accélère de ce facteur (inf = saut direct)
+  idle_speedup: 40
+  fast: false                 # true = aucune attente d'affichage (runs répétés, tests)
+
+memory:
+  top_k: 6
+  recency_decay_per_day: 0.01
+  weights: {recency: 1.0, importance: 1.0, relevance: 1.5}
+
+rag:
+  corpus_dir: corpus
+  top_k: 3
+
+llm:
+  temperature: 0.7
+  max_tokens: 350
+  # complete : réponses libres, contexte complet (profil de référence des expériences).
+  # rapide   : une phrase courte par champ, contexte allégé, longueur de réponse bornée (≈ 2× plus rapide sur un modèle local).
+  reflection: complete
+  timeout_s: 45
+  max_retries: 3
+  json_mode: true
+  tiers:
+    grand: {provider: scripted, model: scripted-grand}
+    petit: {provider: scripted, model: scripted-petit}
+  providers:
+    scripted:      # faux LLM déterministe : sert à tester la chaîne sans clé ni GPU, jamais à conclure
+      latency_s: {grand: [1.0, 4.0], petit: [0.3, 1.2]}
+      latency_scale: 1.0
+      incident_rates: {out_of_role: 0.03, unparseable: 0.03, no_response: 0.02}
+    # Ollama (local) : délai long (un modèle froid met du temps à se charger, et à 8 pêcheurs en synchrone les requêtes
+    # se partagent la carte graphique) et au plus 4 requêtes à la fois, le reste attend de ce côté-ci.
+    # json_schema : Ollama contraint la réponse au schéma demandé (tous les champs, dans l'ordre) ; sinon JSON libre.
+    ollama:     {base_url: "http://localhost:11434/v1", api_key_env: null, rpm: 0, timeout_s: 240, max_concurrency: 4,
+                 json_schema: true}
+    groq:       {base_url: "https://api.groq.com/openai/v1", api_key_env: GROQ_API_KEY, rpm: 25}
+    openrouter: {base_url: "https://openrouter.ai/api/v1", api_key_env: OPENROUTER_API_KEY, rpm: 15}
+    gemini:     {base_url: "https://generativelanguage.googleapis.com/v1beta/openai", api_key_env: GEMINI_API_KEY, rpm: 10}
+    mistral:    {base_url: "https://api.mistral.ai/v1", api_key_env: MISTRAL_API_KEY, rpm: 30}
+    github:     {base_url: "https://models.github.ai/inference", api_key_env: GITHUB_TOKEN, rpm: 10}
+
+bus:
+  kind: local                 # local | kafka
+  bootstrap: "localhost:9092"
+  topics:
+    events: filets.events
+    indicators: filets.indicators
+    commands: filets.commands
+    deadletter: filets.deadletter
+    status: filets.status        # état du moteur (salon, en cours, pause, vitesse…), conservé une heure
+
+output:
+  runs_dir: runs
+  history_db: data/history.db

@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "hamlet": {
+      "type": "string"
+    },
+    "tonnes": {
+      "type": "number"
+    },
+    "price": {
+      "type": "number"
+    },
+    "income": {
+      "type": "number"
+    },
+    "wealth": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "agent",
+    "hamlet",
+    "tonnes",
+    "price",
+    "income",
+    "wealth"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "proposal_id": {
+      "type": "string"
+    },
+    "utterance_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent",
+    "proposal_id",
+    "utterance_id"
+  ],
+  "additionalProperties": false
+}

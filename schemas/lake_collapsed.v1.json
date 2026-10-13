@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "stock": {
+      "type": "number"
+    },
+    "capacity": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "stock",
+    "capacity"
+  ],
+  "additionalProperties": false
+}

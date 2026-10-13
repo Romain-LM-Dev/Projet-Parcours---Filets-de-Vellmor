@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "quota": {
+      "type": "number"
+    },
+    "scope": {
+      "type": "string"
+    },
+    "utterance_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "proposal_id",
+    "author",
+    "quota",
+    "scope",
+    "utterance_id"
+  ],
+  "additionalProperties": false
+}

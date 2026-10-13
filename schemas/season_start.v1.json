@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "stock": {
+      "type": "number"
+    },
+    "mode": {
+      "enum": [
+        "sync",
+        "async"
+      ]
+    }
+  },
+  "required": [
+    "stock"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "stock": {
+      "type": "number"
+    },
+    "catches": {
+      "type": "object"
+    },
+    "wealth": {
+      "type": "object"
+    },
+    "norms_in_force": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "stock",
+    "catches",
+    "wealth",
+    "norms_in_force"
+  ],
+  "additionalProperties": false
+}

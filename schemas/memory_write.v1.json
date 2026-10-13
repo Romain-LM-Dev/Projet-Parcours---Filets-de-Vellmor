@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "memory_id": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "importance": {
+      "type": "number"
+    },
+    "pinned": {
+      "type": "boolean"
+    },
+    "source_event_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "agent",
+    "memory_id",
+    "text",
+    "kind",
+    "importance",
+    "pinned"
+  ],
+  "additionalProperties": false
+}

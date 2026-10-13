@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "promise_event_id": {
+      "type": "string"
+    },
+    "promised": {
+      "type": "number"
+    },
+    "landed": {
+      "type": "number"
+    },
+    "kept": {
+      "type": "boolean"
+    },
+    "season": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "agent",
+    "promise_event_id",
+    "promised",
+    "landed",
+    "kept",
+    "season"
+  ],
+  "additionalProperties": false
+}

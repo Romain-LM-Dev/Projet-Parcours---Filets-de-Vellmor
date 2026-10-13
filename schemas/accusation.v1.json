@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "accuser": {
+      "type": "string"
+    },
+    "accused": {
+      "type": "string"
+    },
+    "utterance_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "accuser",
+    "accused",
+    "utterance_id"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,23 @@
+# environnement Python et caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# secrets : ne jamais commiter (voir .env.example)
+.env
+
+# données produites par les parties : historique SQLite, journaux d'événements
+data/
+runs/*
+!runs/.gitkeep
+
+# propre à la machine : projet Godot importé, chemin de Godot, processus lancés par start.ps1
+godot/.godot/
+godot.path
+.filets-services.pids
+
+# éditeur / système
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "enum": [
+        "fishing",
+        "assembly",
+        "regrowth"
+      ]
+    },
+    "state": {
+      "enum": [
+        "open",
+        "close"
+      ]
+    }
+  },
+  "required": [
+    "name",
+    "state"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "scope": {
+      "type": "string"
+    },
+    "adopted_proposal": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "utterances": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "scope",
+    "adopted_proposal",
+    "utterances"
+  ],
+  "additionalProperties": false
+}

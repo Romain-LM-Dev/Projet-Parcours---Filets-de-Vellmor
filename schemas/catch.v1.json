@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "hamlet": {
+      "type": "string"
+    },
+    "requested": {
+      "type": "number"
+    },
+    "landed": {
+      "type": "number"
+    },
+    "stock_observed": {
+      "type": "number"
+    },
+    "stock_before": {
+      "type": "number"
+    },
+    "stock_after": {
+      "type": "number"
+    },
+    "decision_event_id": {
+      "type": "string"
+    },
+    "info_horizon": {
+      "type": "number"
+    },
+    "rationed": {
+      "type": "boolean"
+    },
+    "stock_at_horizon": {
+      "type": "number"
+    },
+    "stock_at_action": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "agent",
+    "hamlet",
+    "requested",
+    "landed",
+    "stock_observed",
+    "stock_before",
+    "stock_after",
+    "decision_event_id",
+    "info_horizon",
+    "rationed",
+    "stock_at_horizon",
+    "stock_at_action"
+  ],
+  "additionalProperties": false
+}
