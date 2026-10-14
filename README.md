@@ -22,6 +22,8 @@ montre tout en direct.
     └─ catalogue (menu)                                 Godot (menu, scène, pilotage, inspecteur)
 ```
 
+Pour comprendre comment les morceaux se parlent (architecture, horloge, communication et mémoire, tokens) : [docs/architecture.md](docs/architecture.md).
+
 ## Démarrage rapide
 
 Sous Windows, deux scripts font tout (voir `install.ps1` et `start.ps1`, ou leurs lanceurs `.cmd`) :
@@ -59,7 +61,7 @@ Au lancement, Godot propose le menu **Nouvelle partie** tant que le moteur est e
 | La vallée | veillées (toute la vallée, par hameau, interdites), **tours de parole** par veillée (1 à 3, 2 par défaut), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
 | Le lac | **stock max** : la limite du stock, de 10 à 1000 t, ou *Auto* (12,5 t par pêcheur, qui suit alors le nombre de pêcheurs). C'est 100 % de la jauge : le lac part plein et ne la dépasse jamais. **Repeuplement** : le taux `r` du lac, de 0,1 à 2 par saison (1 = normal). Le menu rappelle ce que le lac renouvelle (`r·K/4` par saison) face à ce que les barques peuvent ramener. **Arrêter si le lac est vide** (coché par défaut) |
 | Moteur d'IA | faux LLM de test, **Ollama · rapide** (3B + 1,5B, recommandé), Ollama · qualité (7B + 1,5B) ou Groq ; le moteur vérifie avant de lancer (Ollama joignable, modèles présents, clé d'API) |
-| Réflexion | **Rapide** (une phrase courte, contexte allégé, réponse bornée : environ deux fois plus rapide) ou **Complète** (réponses libres, contexte entier : le profil de référence des expériences) |
+| Réflexion | **Adaptative (système 1 / 2)** : un réflexe d'un nombre pour les prises de routine, la réflexion pour le reste ([détail](docs/architecture.md)). **Rapide** (une phrase courte, contexte allégé, réponse bornée : environ deux fois plus rapide) ou **Complète** (réponses libres, contexte entier : le profil de référence des expériences) |
 | Pêcheurs | de 1 à 24 : prénom, hameau, archétype, expérience, avoir, dette par saison, « cerveau » (IA auto/grand/petit, ou règles) |
 | Disposition | un aperçu de la vallée : on glisse un pêcheur d'un hameau à l'autre ; **Composition de base** rétablit les huit pêcheurs par défaut, tous en « IA auto » |
 | Vitesse | vitesse au départ (× 1/16 à × 16, ou maximale). En asynchrone avec une vraie IA, le menu propose la vitesse qui lui convient (× ¼ pour Ollama rapide, × 1/8 pour le 7B) et prévient si on choisit plus vite |
@@ -262,6 +264,29 @@ chaque décision (`prompts.py`, `world.observe`) :
   raisonnement. Sans cela, les petits modèles oubliaient souvent le champ « prise » et la décision retombait sur la règle de repli, qui
   tient compte du stock : il faut toujours compter les décisions en repli (`decision.fallback`) quand on mesure l'effet d'un prompt.
 * **Les agents à règles ne demandent jamais plus que le lac qu'ils voient** : à stock estimé nul, même le plus endetté reste à quai.
+
+## Le vote des règles
+
+Avant, aucune règle n'était jamais adoptée : trois veillées avaient produit 41 propositions (7,0 ; 7,3 ; 7,4 ; 7,5 ; 4,2 ; 4,3…), les voix
+dispersées. Maintenant, deux quotas à moins de `scenario.proposal_merge_tolerance` (0,75 t) sont la même proposition, et à la clôture un
+**vote** compte ce que chacun a dit : qui n'a soutenu aucune proposition vote pour la plus proche de son quota proposé ou promis, à
+`scenario.vote_tolerance` (1,5 t) près ; qui n'a rien dit de chiffré s'abstient. Chaque voix est un événement `support`. Une proposition
+soutenue par plus de la moitié des pêcheurs présents devient une règle.
+
+**Le bulletin.** Beaucoup de pêcheurs à IA ne disent aucun chiffre et ne soutiennent rien : ils s'abstenaient, et des propositions
+manquaient la majorité d'une voix. Avant la clôture, chaque pêcheur à IA qui n'a rien soutenu remplit donc un **bulletin** : une
+question de quelques lignes (les propositions, leurs soutiens, l'état du lac), posée au petit modèle, dont la réponse est contrainte
+à l'identifiant d'une proposition ou « aucune » (10 tokens au plus, `llm_call` de nature `vote`, système 1). En asynchrone les
+bulletins se remplissent 6 h avant la fin de la veillée (`time.ballot_lead_days`) : une IA trop lente perd sa voix, comme sa réplique.
+Avec le faux LLM, qui ne sait pas répondre à un bulletin, on compte ce que chacun a dit.
+
+Mesuré avec Ollama (3B + 1,5B, 8 pêcheurs, 6 saisons) : trois règles de 1,5 t adoptées (7, 7 puis 8 pêcheurs sur 8, accord 88 %), là où
+il n'y en avait aucune. Mais la conformité reste faible (12 à 25 % des pêcheurs respectent la règle qu'ils ont votée) : on vote 1,5 t et
+on pêche 4 à 10 t, l'écart entre ce qu'on dit et ce qu'on fait que le jeu étudie ; le lac s'est épuisé à la saison 6 et la partie s'est
+arrêtée (« le lac est à sec »).
+
+Pour resserrer les comportements (l'un pêchait 0 t, l'autre 10 t au même moment), chaque pêcheur reçoit aussi un résumé de ce que les
+autres ont pris la saison dernière (« entre 2 et 6 t, 4,0 t pour le pêcheur du milieu »), et les règles adoptées servent de repère commun.
 
 ## Les annonces du joueur ont un effet
 

@@ -33,7 +33,36 @@ BRIEF_MAX_TOKENS = {"catch": 110, "speak": 150}
 
 
 def is_brief(cfg_llm: dict) -> bool:
-    return str(cfg_llm.get("reflection", "complete")) == "rapide"
+    """Réponses courtes et contexte allégé : profils `rapide` et `adaptive` (dont le système 2 est « rapide »)."""
+    return str(cfg_llm.get("reflection", "complete")) in ("rapide", "adaptive")
+
+
+def is_adaptive(cfg_llm: dict) -> bool:
+    """Profil `adaptive` : système 1 (réflexe) pour les décisions de routine, système 2 (réflexion) sinon. Voir `routing.py`."""
+    return str(cfg_llm.get("reflection", "complete")) == "adaptive"
+
+
+# Système 1 : un nombre, rien d'autre. Le contexte tient en une dizaine de lignes (environ 150 tokens, contre 1 500 à 2 000
+# pour le système 2) et la réponse en une quinzaine de tokens.
+REFLEX_MAX_TOKENS = 16
+REFLEX_SCHEMA = {"type": "object", "properties": {"prise": {"type": "number"}}, "required": ["prise"],
+                 "additionalProperties": False}
+
+
+def reflex_messages(p, obs: dict) -> list[dict]:
+    """La question du système 1 : la prise d'un pêcheur dont la situation est de routine (lac sain et stable, un engagement ou
+    une règle à suivre, pas de rumeur, finances correctes). Seul ce qui sert à ce réflexe y figure."""
+    cap, est = obs["capacity"], obs["stock_estimate"]
+    lines = [f"Saison {obs['season']}. Le lac est à {100 * est / cap:.0f} % ({lake_level(est, cap, obs.get('collapse_ratio', 0.05))})"
+             f", il n'a pas baissé. Ta barque rapporte au plus {obs['boat_capacity']:.0f} tonnes par saison."]
+    if obs.get("pinned"):
+        lines.append("Tes engagements : " + " ".join(obs["pinned"]))
+    if obs.get("norms"):
+        lines.append("Règles en vigueur : " + " ".join(obs["norms"]))
+    lines.append(f"Tes finances : {obs['wealth']:.0f} écus ; dépenses de la saison : {obs['upkeep'] + obs['debt_payment']:.0f} écus.")
+    lines.append(f"Combien de tonnes pêches-tu ? Réponds en JSON : {{\"prise\": <tonnes, entre 0 et {obs['boat_capacity']:.0f}>}}")
+    who = f"Tu es {p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    return [{"role": "system", "content": who}, {"role": "user", "content": "\n".join(lines)}]
 
 
 def persona(p, capacity: float, brief: bool = False) -> str:
@@ -108,6 +137,18 @@ def lake_block(obs: dict) -> str:
     return f"{head}\nCe que tu as constaté du lac jusqu'ici : {seen}; maintenant ≈ {est:.0f} t ({lake_trend(est, cap, hist)})."
 
 
+def social_line(obs: dict) -> str:
+    """Ce que les autres ont pris la saison dernière, en une phrase. Un pêcheur sait à peu près ce que font ses voisins : un
+    repère commun resserre les comportements (avant, l'un pêchait 0 t et l'autre 10 t sur le même lac, au même moment, parce que
+    chaque modèle partait de son propre sentiment du « raisonnable »). Muet quand on connaît trop peu de prises."""
+    vals = obs.get("last_season_catches") or []
+    if len(vals) < 3:
+        return ""
+    mid = vals[len(vals) // 2] if len(vals) % 2 else (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2
+    return (f"\nEn résumé, la saison dernière, les {len(vals)} pêcheurs dont tu connais la prise ont pris entre {vals[0]:g} et "
+            f"{vals[-1]:g} t, {mid:.1f} t pour le pêcheur du milieu.")
+
+
 def surplus_line(obs: dict) -> str:
     """Le repère des anciens (« laisse le lac à moitié ») traduit en tonnes : ce qui dépasse la moitié du lac, et ce que cela
     fait par pêcheur. Ce sont des faits sur le lac, pas un ordre. Sans cette ligne, les petits modèles lisent « la moitié,
@@ -172,7 +213,8 @@ def context_block(obs: dict, brief: bool = False) -> str:
     memories = _cut(obs["memories"][:4], 4, 170) if brief else obs["memories"]
     documents = _cut(obs["documents"][:2], 2, 230) if brief else obs["documents"]
     parts.append("Règles en vigueur entre pêcheurs :\n" + _bullets(obs["norms"], "aucune règle n'a été adoptée"))
-    parts.append("Ce que tu sais des prises des autres :\n" + _bullets(known, "tu ne sais pas ce qu'ils ont pêché"))
+    parts.append("Ce que tu sais des prises des autres :\n" + _bullets(known, "tu ne sais pas ce qu'ils ont pêché")
+                 + social_line(obs))
     parts.append("Tes engagements et ce qui te tient à cœur :\n" + _bullets(obs["pinned"], "aucun engagement en cours"))
     parts.append("Tes souvenirs qui reviennent :\n" + _bullets(memories, "aucun souvenir précis"))
     parts.append("Ce qu'on raconte dans la vallée (archives, comptes, récits) :\n" + _bullets(documents, "rien de particulier"))
@@ -222,3 +264,19 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     )
     return [{"role": "system", "content": persona(p, capacity, brief)},
             {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
+
+
+# Le bulletin de vote : un identifiant de proposition (ou « aucune »), rien d'autre.
+BALLOT_MAX_TOKENS = 10
+
+
+def ballot_schema(ids: list[str]) -> dict:
+    return {"type": "object", "properties": {"vote": {"enum": [*ids, "aucune"]}}, "required": ["vote"], "additionalProperties": False}
+
+
+def ballot_messages(p, table: list[str], est: float, capacity: float, collapse_ratio: float = 0.05) -> list[dict]:
+    who = f"Tu es {p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    body = (f"La veillée touche à sa fin. Le lac est à {100 * est / capacity:.0f} % ({lake_level(est, capacity, collapse_ratio)}).\n"
+            "Propositions de règle sur la table :\n" + "\n".join(table) +
+            "\nPour laquelle votes-tu ? Réponds en JSON : {\"vote\": \"<identifiant d'une proposition, ou aucune>\"}")
+    return [{"role": "system", "content": who}, {"role": "user", "content": body}]

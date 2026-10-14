@@ -39,7 +39,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .agents import Agent, decide_catch, speak
+from .agents import Agent, ballot, decide_catch, speak
 from .clock import SimClock
 from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
@@ -73,6 +73,7 @@ class Assembly:
     utterances: list[dict] = field(default_factory=list)       # événements `utterance`
     proposals: dict[str, Proposal] = field(default_factory=dict)
     support: dict[str, tuple[str, float, str]] = field(default_factory=dict)  # agent -> (proposal, t, event_id)
+    stated: dict[str, float] = field(default_factory=dict)     # agent -> dernier quota qu'il a dit vouloir (proposé ou promis)
     closed: bool = False
 
     @property
@@ -300,6 +301,7 @@ class World:
             "wealth": agent.wealth, "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
             "price": self.econ["price_per_tonne"], "boat_capacity": self.econ["boat_capacity"],
             "own_history": own, "norms": norm_lines, "known_catches": catches_txt,
+            "last_season_catches": sorted(last_catches.values()),
             # chaque souvenir porte sa date : une parole de la veillée d'il y a deux saisons (« le lac a l'air bien rempli »)
             # ne doit pas passer pour l'état du lac d'aujourd'hui
             "pinned": [m.text for m in pinned],
@@ -528,11 +530,19 @@ class World:
         # proposition de règle
         q = to_number(d.get("proposition_quota"))
         if q is not None and 0 <= q <= self.econ["boat_capacity"]:
-            pid = f"P{next(self._pid)}"
-            pe = self.events.emit("proposal", {"proposal_id": pid, "author": agent.id, "quota": round(q, 2),
-                                               "scope": asm.scope, "utterance_id": u["event_id"]}, actor=agent.id)
-            asm.proposals[pid] = Proposal(pid, agent.id, round(q, 2), now, pe["event_id"], asm.scope)
-            self._support(agent, asm, pid, u)
+            q = round(q, 2)
+            asm.stated[agent.id] = q
+            twin = self._similar_proposal(asm, q)
+            if twin is not None:
+                # huit pêcheurs qui proposent 7,0 ; 7,3 ; 7,4 ; 7,5 ne font pas huit règles : une seule, soutenue par tous. Sans
+                # cela les voix se dispersaient sur des dizaines de propositions et aucune règle n'était jamais adoptée.
+                self._support(agent, asm, twin.id, u)
+            else:
+                pid = f"P{next(self._pid)}"
+                pe = self.events.emit("proposal", {"proposal_id": pid, "author": agent.id, "quota": q,
+                                                   "scope": asm.scope, "utterance_id": u["event_id"]}, actor=agent.id)
+                asm.proposals[pid] = Proposal(pid, agent.id, q, now, pe["event_id"], asm.scope)
+                self._support(agent, asm, pid, u)
         # soutien
         sup = d.get("soutien")
         if isinstance(sup, str) and sup.strip():
@@ -549,6 +559,7 @@ class World:
         if agent.is_fisher:
             pv = to_number(d.get("promesse"))
             if pv is not None and 0 <= pv <= self.econ["boat_capacity"]:
+                asm.stated.setdefault(agent.id, round(pv, 2))     # une proposition de quota, si elle existe, prime sur la promesse
                 pe = self.events.emit("promise", {"agent": agent.id, "amount": round(pv, 2), "for_season": season + 1,
                                                   "utterance_id": u["event_id"]}, actor=agent.id)
                 self.promises[(agent.id, season + 1)] = (round(pv, 2), pe["event_id"])
@@ -584,10 +595,46 @@ class World:
                               actor=agent.id)
         asm.support[agent.id] = (pid, self.clock.now(), se["event_id"])
 
+    def _similar_proposal(self, asm: Assembly, q: float) -> Proposal | None:
+        """La proposition déjà sur la table dont le quota est à moins de `scenario.proposal_merge_tolerance` t de `q` (la plus proche)."""
+        tol = float(self.scn.get("proposal_merge_tolerance", 0.75))
+        near = [p for p in asm.proposals.values() if abs(p.quota - q) <= tol + 1e-9]
+        return min(near, key=lambda p: (abs(p.quota - q), p.id), default=None)
+
+    def ballot_candidates(self, asm: Assembly) -> list[Agent]:
+        """Les pêcheurs à IA qui n'ont encore soutenu aucune proposition (et qu'on peut donc interroger). Pas avec le faux LLM :
+        il ne sait pas répondre à un bulletin, la clôture compte alors ce que chacun a dit."""
+        if asm.closed or not asm.proposals or self.cfg["llm"]["tiers"]["petit"]["provider"] == "scripted":
+            return []
+        return [self.agents[a] for a in asm.participants if self.agents[a].is_fisher and a not in asm.support
+                and self.agents[a].profile.kind == "llm"]
+
+    async def ballots(self, asms: list[Assembly]) -> None:
+        """Le bulletin de chacun, en même temps (synchrone : juste avant la clôture)."""
+        await asyncio.gather(*(ballot(self, a, asm) for asm in asms for a in self.ballot_candidates(asm)))
+
+    def closing_vote(self, asm: Assembly):
+        """Le vote de clôture : chaque pêcheur qui n'a soutenu aucune proposition vote pour celle dont le quota est le plus proche
+        de ce qu'il a lui-même dit vouloir (quota proposé ou promesse), pourvu qu'elle soit à moins de `scenario.vote_tolerance` t.
+        Qui n'a rien dit de chiffré s'abstient. C'est le dépouillement de ce que chacun a déjà exprimé, sans appel à l'IA : chaque
+        voix est un événement `support`, rattaché à la dernière parole du votant."""
+        tol = float(self.scn.get("vote_tolerance", 1.5))
+        for aid in asm.participants:
+            agent = self.agents[aid]
+            if not agent.is_fisher or aid in asm.support or aid not in asm.stated or not asm.proposals:
+                continue
+            best = min(asm.proposals.values(), key=lambda p: (abs(p.quota - asm.stated[aid]), p.id))
+            if abs(best.quota - asm.stated[aid]) > tol + 1e-9:
+                continue
+            last = next((u for u in reversed(asm.utterances) if u["payload"]["speaker"] == aid), None)
+            if last is not None:
+                self._support(agent, asm, best.id, last)
+
     def close_assembly(self, asm: Assembly):
         if asm.closed:
             return
         asm.closed = True
+        self.closing_vote(asm)
         fishers_present = [a for a in asm.participants if self.agents[a].is_fisher]
         tally: dict[str, list[str]] = {}
         for aid, (pid, _, _) in asm.support.items():
@@ -677,7 +724,7 @@ class World:
                 "run_id": self.run_id, "seasons_completed": self.season, "final_stock": round(self.lake.stock, 3),
                 "capacity": self.capacity, "llm_calls": u.calls, "prompt_tokens": u.prompt_tokens,
                 "completion_tokens": u.completion_tokens, "llm_latency_s": round(u.latency_s, 2),
-                "by_tier": u.by_tier, "wall_s": round(self.clock.wall_elapsed(), 2), "reason": self.stopped_reason,
+                "by_tier": u.by_tier, "by_system": u.by_system, "wall_s": round(self.clock.wall_elapsed(), 2), "reason": self.stopped_reason,
             }, indent=2, ensure_ascii=False))
             self.recorder.close()
 
@@ -763,6 +810,7 @@ class SyncRunner:
                 await self.goto(hr + self.ROUND_STEP / 2)
                 for (asm, a), o in zip(jobs, outs):
                     w.post_utterance(a, asm, o, rnd, hr)
+            await w.ctl.guard(w.ballots(asms))               # le bulletin de ceux qui n'ont rien soutenu
             await self.goto(t0 + T["assembly_close_day"])
             for asm in asms:
                 w.close_assembly(asm)
@@ -783,7 +831,7 @@ class AsyncRunner:
         self.heap: list = []
         self.seq = itertools.count()
         self.tasks: set[asyncio.Task] = set()
-        self.by_kind: dict[str, dict[str, asyncio.Task]] = {"fish": {}, "talk": {}}     # tâches par agent, pour les annuler
+        self.by_kind: dict[str, dict[str, asyncio.Task]] = {"fish": {}, "talk": {}, "vote": {}}     # tâches par agent, pour les annuler
         self.thinking: dict[tuple[str, str], int] = {}     # (nature, agent) → tour de parole : qui réfléchit en ce moment
         self.done = False
 
@@ -866,6 +914,7 @@ class AsyncRunner:
             self.at(t0 + T["fishing_open_day"] + a.offset_days, self.spawn_fish, a, t0 + T["fishing_close_day"])
         self.at(t0 + T["fishing_close_day"], self.fishing_close)
         self.at(t0 + T["assembly_day"], self.assembly_open, season, t0 + T["assembly_close_day"])
+        self.at(t0 + T["assembly_close_day"] - float(T.get("ballot_lead_days", 0.25)), self.assembly_vote)
         self.at(t0 + T["assembly_close_day"], self.assembly_close)
         self.at(t0 + T["regrowth_day"], self.regrowth, season)
 
@@ -919,9 +968,19 @@ class AsyncRunner:
             # on écoute les autres avant de reprendre la parole
             await self.sleep_until(self.c.now() + float(w.T.get("assembly_turn_gap_days", 0.05)))
 
+    def assembly_vote(self):
+        """Quelques heures avant la fin de la veillée, chaque pêcheur qui n'a rien soutenu remplit son bulletin. Une IA trop lente
+        perd sa voix, comme elle perd sa réplique : à la clôture, on compte alors ce qu'elle avait dit."""
+        for asm in self.w.assemblies:
+            for a in self.w.ballot_candidates(asm):
+                self.spawn(ballot(self.w, a, asm), "vote", a.id)
+
     def assembly_close(self):
         if not self.w.assemblies:
             return
+        for task in list(self.by_kind["vote"].values()):
+            if not task.done():
+                task.cancel()                            # un bulletin pas rempli à temps est abandonné, sans incident
         self.expire("talk", "réplique perdue",
                     "parole du tour {rnd} pas prête à la fin de la veillée : l'IA réfléchissait encore")
         for asm in self.w.assemblies:

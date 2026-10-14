@@ -22,7 +22,7 @@ from test_engine import fisher, request, until
 def test_catalog_describes_the_new_options():
     cat = build_catalog(load_config(None))
     assert cat["limits"]["capacity"] == [10, 1000] and cat["limits"]["assembly_rounds"] == [1, 3]
-    assert [r["id"] for r in cat["reflections"]] == ["rapide", "complete"]
+    assert [r["id"] for r in cat["reflections"]] == ["rapide", "adaptive", "complete"]
     d = cat["defaults"]
     assert d["reflection"] == "rapide" and d["assembly_rounds"] == 2 and d["capacity"] is None
     assert d["capacity_per_fisher"] == 12.5 and d["boat_capacity"] == 10.0 and d["growth_rate"] == 1.0

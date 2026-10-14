@@ -35,6 +35,8 @@ scenario:
   communication: valley       # valley | hamlet | none
   catches_visible: true       # les prises de chacun sont-elles connues de toute la vallée ?
   assembly_rounds: 2          # tours de parole par veillée
+  proposal_merge_tolerance: 0.75   # deux quotas proposés à moins de 0,75 t l'un de l'autre sont la même proposition
+  vote_tolerance: 1.5         # au vote de clôture, on vote pour la proposition la plus proche de ce qu'on a dit, à 1,5 t près
   promise_tolerance: 0.5      # tonnes tolérées au-dessus d'une promesse
   quota_tolerance: 0.5        # tonnes tolérées au-dessus d'un quota adopté
   # événements programmés (mêmes perturbations pour toutes les configurations comparées)
@@ -49,6 +51,7 @@ time:
   assembly_day: 25.75         # J25 18:00, veillée chez l'ancien
   assembly_close_day: 29.0
   regrowth_day: 29.9
+  ballot_lead_days: 0.25        # en async : les bulletins de vote sont remplis 6 h avant la fin de la veillée (une IA trop lente perd sa voix)
   assembly_turn_gap_days: 0.05  # en async : temps d'écoute (≈ 1 h 12) avant de reprendre la parole
   # rythme propre de chaque pêcheur en mode asynchrone : décalage (jours) avant sa première réflexion
   async_offset_days: [0.0, 4.0]
@@ -75,6 +78,7 @@ llm:
   max_tokens: 350
   # complete : réponses libres, contexte complet (profil de référence des expériences).
   # rapide   : une phrase courte par champ, contexte allégé, longueur de réponse bornée (≈ 2× plus rapide sur un modèle local).
+  # adaptive : système 1 (réflexe : un nombre, ~150 tokens, petit modèle) pour les prises de routine, système 2 (rapide) sinon.
   reflection: complete
   timeout_s: 45
   max_retries: 3
@@ -90,8 +94,9 @@ llm:
     # Ollama (local) : délai long (un modèle froid met du temps à se charger, et à 8 pêcheurs en synchrone les requêtes
     # se partagent la carte graphique) et au plus 4 requêtes à la fois, le reste attend de ce côté-ci.
     # json_schema : Ollama contraint la réponse au schéma demandé (tous les champs, dans l'ordre) ; sinon JSON libre.
+    # seed : Ollama respecte la graine envoyée (stable par partie, agent, saison, nature, tour) : même prompt, même réponse.
     ollama:     {base_url: "http://localhost:11434/v1", api_key_env: null, rpm: 0, timeout_s: 240, max_concurrency: 4,
-                 json_schema: true}
+                 json_schema: true, seed: true}
     groq:       {base_url: "https://api.groq.com/openai/v1", api_key_env: GROQ_API_KEY, rpm: 25}
     openrouter: {base_url: "https://openrouter.ai/api/v1", api_key_env: OPENROUTER_API_KEY, rpm: 15}
     gemini:     {base_url: "https://generativelanguage.googleapis.com/v1beta/openai", api_key_env: GEMINI_API_KEY, rpm: 10}

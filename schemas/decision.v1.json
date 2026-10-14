@@ -101,6 +101,12 @@
     },
     "out_of_role": {
       "type": "boolean"
+    },
+    "system": {
+      "enum": [
+        "S1",
+        "S2"
+      ]
     }
   },
   "required": [

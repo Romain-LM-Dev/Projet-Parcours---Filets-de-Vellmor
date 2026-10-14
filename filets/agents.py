@@ -7,9 +7,10 @@ souvenirs et documents retrouvés, justification ou règle appliquée).
 from __future__ import annotations
 
 import random
+import zlib
 from dataclasses import dataclass, field
 
-from . import prompts
+from . import prompts, routing
 from .llm import detect_drift, extract_json, to_number
 from .memory import MemoryStore
 from .policies import catch_rule, speak_rule
@@ -57,14 +58,29 @@ def _note_observation(obs: dict, dec: dict) -> None:
         entry["event_id"] = dec["event_id"]
 
 
-async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], state: dict):
-    """Appelle le LLM et classe les dérives. Renvoie (données JSON ou None, llm_result, flags)."""
+def _seed(world, agent: Agent, purpose: str, state: dict) -> int:
+    """Une graine stable par (partie, agent, saison, nature, tour) : le fournisseur qui la respecte (Ollama) redonne la même
+    réponse au même prompt, donc une partie rejouée avec la même configuration se déroule de la même façon."""
+    key = f"{world.cfg['run']['seed']}|{agent.id}|{world.season}|{purpose}|{state.get('round', 1)}"
+    return zlib.crc32(key.encode()) & 0x7FFFFFFF
+
+
+async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], state: dict, system: str = "S2",
+                   schema: dict | None = None, max_tokens: int | None = None):
+    """Appelle le LLM et classe les dérives. Renvoie (données JSON ou None, llm_result, flags).
+    `system` : « S1 » (réflexe : un nombre, le petit modèle) ou « S2 » (réflexion : le modèle de l'agent), voir `routing.py`."""
     brief = prompts.is_brief(world.cfg["llm"])
-    hint = {"purpose": purpose, "archetype": agent.archetype, "state": state,
-            "schema": prompts.answer_schema(purpose, brief, agent.is_fisher)}     # imposé aux fournisseurs qui le savent
-    if brief:
+    reflex = system == "S1"
+    hint = {"purpose": purpose, "archetype": agent.archetype, "state": state, "system": system,
+            "schema": schema or (prompts.REFLEX_SCHEMA if reflex else prompts.answer_schema(purpose, brief, agent.is_fisher)),
+            "seed": _seed(world, agent, purpose, state)}                  # le schéma est imposé aux fournisseurs qui le savent
+    if max_tokens:
+        hint["max_tokens"] = max_tokens
+    elif reflex:
+        hint["max_tokens"] = prompts.REFLEX_MAX_TOKENS
+    elif brief:
         hint["max_tokens"] = prompts.BRIEF_MAX_TOKENS[purpose]       # réflexion rapide : réponse courte, appel plus court
-    res = await world.router.complete(agent.id, agent.profile.tier, purpose, messages, hint)
+    res = await world.router.complete(agent.id, "petit" if reflex else agent.profile.tier, purpose, messages, hint)
     if res.status != "ok":
         itype = "quota" if res.status == "quota" else "no_response"
         world.incident(agent.id, itype, res.detail or res.status, "règle de repli", res.call_id)
@@ -101,10 +117,17 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
         return Outcome(v, {"prise": v}, dec)
 
     brief = prompts.is_brief(world.cfg["llm"])
-    data, res, flags = await _ask_llm(world, agent, "catch", prompts.catch_messages(p, obs, world.capacity, brief), state)
+    system, why = routing.choose_system(obs, "catch") if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
+    if system == "S1":
+        data, res, flags = await _ask_llm(world, agent, "catch", prompts.reflex_messages(p, obs), state, "S1")
+    else:
+        data, res, flags = await _ask_llm(world, agent, "catch", prompts.catch_messages(p, obs, world.capacity, brief), state)
     fallback, rule = False, None
     v = to_number(data.get("prise")) if data else None
     just = str(data.get("justification", "")).strip() if data else ""
+    if system == "S1" and data is not None:
+        just = f"Réflexe (système 1) : {why}."
+    common = {**common, "system": system}                        # sans routage adaptatif, tout est système 2
     if data is not None and v is None:
         world.incident(agent.id, "invalid_value", f"prise absente : {str(data)[:150]}", "règle de repli", res.call_id)
     if v is not None and not (0 <= v <= state["boat_capacity"]):
@@ -143,6 +166,7 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
         return Outcome(None, data, dec)
 
     brief = prompts.is_brief(world.cfg["llm"])
+    common = {**common, "system": "S2"}                          # la parole est toujours de la réflexion (voir `routing.py`)
     data, res, flags = await _ask_llm(world, agent, "speak", prompts.speak_messages(p, obs, world.capacity, brief), state)
     fallback, rule = False, None
     if data is None or not str(data.get("message", "")).strip():
@@ -169,3 +193,22 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
     _note_observation(obs, dec)
     agent.last_decision = dec
     return Outcome(None, data, dec)
+
+
+async def ballot(world, agent: Agent, asm) -> None:
+    """Le bulletin d'un pêcheur à IA qui n'a soutenu aucune proposition à la veillée : pour laquelle vote-t-il ? Une question de
+    quelques lignes au petit modèle (système 1), réponse contrainte à l'identifiant d'une proposition ou « aucune ». Sans cela,
+    ceux qui ne disent aucun chiffre s'abstenaient et aucune proposition n'atteignait la majorité. Une réponse inutilisable n'est
+    pas une erreur : le pêcheur reste sans voix ici, et la clôture compte ce qu'il a dit (`World.closing_vote`)."""
+    if asm.closed or agent.id in asm.support or not asm.proposals:
+        return
+    est = world.lake.observe(agent.rng)
+    table = [f"- {pr.id} : {pr.quota:g} t par pêcheur, proposée par {world.name(pr.author)}, "
+             f"{sum(1 for v in asm.support.values() if v[0] == pr.id)} soutien(s)" for pr in asm.proposals.values()]
+    messages = prompts.ballot_messages(agent.profile, table, est, world.capacity, world.lake.collapse_ratio)
+    data, res, _ = await _ask_llm(world, agent, "vote", messages, {"round": 99}, "S1",
+                                  schema=prompts.ballot_schema(list(asm.proposals)), max_tokens=prompts.BALLOT_MAX_TOKENS)
+    vote = str((data or {}).get("vote", "")).strip().upper()
+    last = next((u for u in reversed(asm.utterances) if u["payload"]["speaker"] == agent.id), None)
+    if vote in asm.proposals and last is not None and not asm.closed:
+        world._support(agent, asm, vote, last)

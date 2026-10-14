@@ -39,6 +39,12 @@
     },
     "retries": {
       "type": "integer"
+    },
+    "system": {
+      "enum": [
+        "S1",
+        "S2"
+      ]
     }
   },
   "required": [

@@ -51,6 +51,7 @@ class IndicatorEngine:
         self.promise_outcomes: list[dict] = []
         self.incidents: dict[str, int] = defaultdict(int)
         self.llm = {"calls": 0, "tokens": 0, "latency_s": 0.0, "errors": 0, "cancelled": 0}
+        self.by_system = {"S1": {"calls": 0, "tokens": 0}, "S2": {"calls": 0, "tokens": 0}}
         self.events_by_id: dict[str, dict] = {}
         self.temporal_violations = 0
         self.staleness: list[float] = []
@@ -129,6 +130,9 @@ class IndicatorEngine:
             self.llm["calls"] += 1
             self.llm["tokens"] += p["prompt_tokens"] + p["completion_tokens"]
             self.llm["latency_s"] += p["latency_s"]
+            if p.get("system") in self.by_system:
+                self.by_system[p["system"]]["calls"] += 1
+                self.by_system[p["system"]]["tokens"] += p["prompt_tokens"] + p["completion_tokens"]
             if p["status"] == "cancelled":
                 self.llm["cancelled"] += 1             # réponse devenue inutile : du travail perdu, pas une erreur du modèle
             else:
@@ -211,6 +215,8 @@ class IndicatorEngine:
             "llm_latency_s": round(self.llm["latency_s"], 2),
             "llm_errors": self.llm["errors"],
             "llm_cancelled": self.llm["cancelled"],
+            "llm_calls_s1": self.by_system["S1"]["calls"], "llm_tokens_s1": self.by_system["S1"]["tokens"],
+            "llm_calls_s2": self.by_system["S2"]["calls"], "llm_tokens_s2": self.by_system["S2"]["tokens"],
             "wealth_gini": gini(wealth),
         }
         if extra:

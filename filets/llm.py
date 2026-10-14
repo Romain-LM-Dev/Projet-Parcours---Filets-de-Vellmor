@@ -153,11 +153,13 @@ class ModelGate:
 
 class OpenAICompatClient:
     def __init__(self, name: str, base_url: str, api_key_env: str | None, rpm: float, cfg: dict,
-                 timeout_s: float | None = None, max_concurrency: int = 0, json_schema: bool = False):
+                 timeout_s: float | None = None, max_concurrency: int = 0, json_schema: bool = False,
+                 seed: bool = False):
         self.name = name
         # Le fournisseur sait-il contraindre la réponse à un schéma JSON (Ollama oui) ? Alors la forme de la réponse est
         # garantie : tous les champs présents, dans l'ordre voulu, sans que le modèle ait à « penser » au format.
         self.json_schema = json_schema
+        self.seed = seed        # le fournisseur respecte-t-il `seed` (Ollama oui) : même prompt, même réponse
         self.base_url = base_url.rstrip("/")
         self.api_key = os.environ.get(api_key_env, "") if api_key_env else ""
         if api_key_env and not self.api_key:
@@ -190,6 +192,8 @@ class OpenAICompatClient:
         max_tokens = int((hint or {}).get("max_tokens") or self.cfg["max_tokens"])
         body = {"model": model, "messages": messages, "temperature": self.cfg["temperature"],
                 "max_tokens": max_tokens}
+        if self.seed and (hint or {}).get("seed") is not None:
+            body["seed"] = int(hint["seed"])
         schema = (hint or {}).get("schema")
         if self.json_schema and schema:
             body["response_format"] = {"type": "json_schema", "json_schema": {
@@ -240,6 +244,7 @@ class Usage:
     latency_s: float = 0.0
     cancelled: int = 0              # appels abandonnés en cours de route (réponse devenue inutile)
     by_tier: dict = field(default_factory=dict)
+    by_system: dict = field(default_factory=dict)    # système 1 (réflexe) / système 2 (réflexion) : appels et tokens
 
 
 class LLMRouter:
@@ -264,7 +269,7 @@ class LLMRouter:
                 self.clients[prov] = OpenAICompatClient(prov, pcfg["base_url"], pcfg.get("api_key_env"),
                                                         pcfg.get("rpm", 0), self.cfg, pcfg.get("timeout_s"),
                                                         int(pcfg.get("max_concurrency", 0)),
-                                                        bool(pcfg.get("json_schema", False)))
+                                                        bool(pcfg.get("json_schema", False)), bool(pcfg.get("seed", False)))
 
     def describe(self) -> dict:
         return {t: f"{s['provider']}:{s['model']}" for t, s in self.tiers.items()}
@@ -290,7 +295,7 @@ class LLMRouter:
                 "call_id": call_id, "agent": agent, "purpose": purpose, "provider": spec["provider"],
                 "model": spec["model"], "tier": tier, "prompt_tokens": sum(len(m["content"]) for m in messages) // 4,
                 "completion_tokens": 0, "latency_s": round(time.monotonic() - t_start, 3), "status": "cancelled",
-                "retries": 0}, actor=agent)
+                "retries": 0, **({"system": hint["system"]} if hint.get("system") else {})}, actor=agent)
             raise
         finally:
             self.clock.in_flight -= 1
@@ -305,10 +310,16 @@ class LLMRouter:
         bt = u.by_tier.setdefault(tier, {"calls": 0, "tokens": 0})
         bt["calls"] += 1
         bt["tokens"] += res.prompt_tokens + res.completion_tokens
+        system = hint.get("system")
+        if system:
+            bs = u.by_system.setdefault(system, {"calls": 0, "tokens": 0})
+            bs["calls"] += 1
+            bs["tokens"] += res.prompt_tokens + res.completion_tokens
         self.events.emit("llm_call", {
             "call_id": call_id, "agent": agent, "purpose": purpose, "provider": res.provider, "model": res.model,
             "tier": tier, "prompt_tokens": int(res.prompt_tokens), "completion_tokens": int(res.completion_tokens),
             "latency_s": round(res.latency_s, 3), "status": res.status, "retries": res.retries,
+            **({"system": system} if system else {}),
         }, actor=agent)
         return res
 

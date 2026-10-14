@@ -44,6 +44,9 @@ LLM_OPTIONS = [
 REFLECTIONS = [
     {"id": "rapide", "label": "Rapide",
      "detail": "Les IA répondent en une phrase courte, avec un contexte allégé : environ deux fois plus rapide."},
+    {"id": "adaptive", "label": "Adaptative (système 1 / 2)",
+     "detail": "Un réflexe de quelques tokens pour les prises de routine (lac sain et stable, engagement à suivre), la "
+               "réflexion complète seulement quand la situation l'exige : moins de tokens, plus de temps pour ce qui compte."},
     {"id": "complete", "label": "Complète",
      "detail": "Réponses libres et contexte complet (profil de référence des expériences) : plus lent."},
 ]

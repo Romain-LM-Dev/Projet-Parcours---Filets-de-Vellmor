@@ -37,8 +37,9 @@ FOUR = [fisher("Mathis", "Ostrel", "ancienne_famille"), fisher("Inès", "Bramois
 class Recorder:
     """Faux fournisseur compatible OpenAI : enregistre ce qu'on lui demande, répond avec un JSON valide."""
 
-    def __init__(self, prise: float = 3.0, reject: tuple = ()):
+    def __init__(self, prise: float = 3.0, reject: tuple = (), propose_first: float | None = None):
         self.requests: list[dict] = []
+        self.propose_first, self.proposed = propose_first, False
         self.reject = reject                      # formats de réponse refusés par ce fournisseur (HTTP 400), ex. ("json_schema",)
         outer = self
 
@@ -51,7 +52,8 @@ class Recorder:
                 user = body["messages"][-1]["content"]
                 fmt = body.get("response_format")
                 outer.requests.append({"user": user, "system": body["messages"][0]["content"],
-                                       "max_tokens": body.get("max_tokens"), "response_format": fmt})
+                                       "max_tokens": body.get("max_tokens"), "response_format": fmt, "seed": body.get("seed"),
+                                       "model": body.get("model")})
                 if fmt and fmt.get("type") in outer.reject:
                     err = json.dumps({"error": {"message": "response_format non pris en charge"}}).encode()
                     self.send_response(400)
@@ -60,9 +62,17 @@ class Recorder:
                     self.end_headers()
                     self.wfile.write(err)
                     return
-                content = (json.dumps({"prise": prise, "justification": "Je reste raisonnable."}) if '"prise"' in user
-                           else json.dumps({"message": "Je compte pêcher trois tonnes.", "destinataire": "tous",
-                                            "proposition_quota": None, "soutien": None, "promesse": 3, "accuse": None}))
+                if '"prise"' in user:
+                    content = json.dumps({"prise": prise, "justification": "Je reste raisonnable."})
+                elif '"vote"' in user:                                  # bulletin de vote : la première proposition de la liste
+                    ids = re.findall(r"^- (P\d+) :", user, re.M)
+                    content = json.dumps({"vote": ids[0] if ids else "aucune"})
+                else:
+                    quota = None
+                    if outer.propose_first is not None and not outer.proposed:
+                        outer.proposed, quota = True, outer.propose_first      # le premier à parler propose un quota, personne d'autre
+                    content = json.dumps({"message": "Je compte pêcher trois tonnes.", "destinataire": "tous",
+                                          "proposition_quota": quota, "soutien": None, "promesse": 3, "accuse": None})
                 out = json.dumps({"choices": [{"message": {"content": content}}],
                                   "usage": {"prompt_tokens": 100, "completion_tokens": 20}}).encode()
                 self.send_response(200)
@@ -85,8 +95,8 @@ class Recorder:
 def play_with_announcement(tmp_path, run_id, text, seasons=3, population=FOUR, elder=False, provider=None, announce_at=1,
                            llm_overrides=None, **over):
     """Joue une partie ; `text` est annoncé au début de la saison `announce_at` (None : aucune annonce)."""
-    cfg = cfg_for(tmp_path, seasons=seasons, time__mode="sync", population__custom=population, population__elder=elder,
-                  population__elder_kind="rule", **over)
+    cfg = cfg_for(tmp_path, seasons=seasons, population__custom=population, population__elder=elder,
+                  population__elder_kind="rule", **{"time__mode": "sync", **over})
     cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
     if provider is not None:
         cfg["llm"]["providers"]["fake"] = {"base_url": provider.url, "api_key_env": None, "rpm": 0}
