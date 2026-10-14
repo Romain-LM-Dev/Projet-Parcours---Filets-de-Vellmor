@@ -129,6 +129,8 @@ def used_models(cfg: dict) -> dict[str, set[str]]:
     from .profiles import build_population
 
     tiers = {p.tier for p in build_population(cfg, Random(int(cfg["run"]["seed"]))) if p.kind == "llm" and p.tier}
+    if tiers and "reflexe" in cfg["llm"]["tiers"]:
+        tiers.add("reflexe")                      # le modèle de décision des réflexes (système 1) et des bulletins de vote
     wanted: dict[str, set[str]] = {}
     for tier in tiers:
         spec = cfg["llm"]["tiers"][tier]
@@ -153,7 +155,7 @@ async def preflight(cfg: dict, progress: Callable[[str], None] | None = None) ->
             if not os.environ.get(pcfg["api_key_env"]):
                 raise GameRequestError(f"la variable d'environnement {pcfg['api_key_env']} est absente "
                                        f"(nécessaire pour {prov})")
-        if prov == "ollama":
+        if prov == "ollama" or pcfg.get("local"):
             base = pcfg["base_url"].rstrip("/")
             root = base[:-3] if base.endswith("/v1") else base
             try:
@@ -163,17 +165,74 @@ async def preflight(cfg: dict, progress: Callable[[str], None] | None = None) ->
             except (httpx.HTTPError, ValueError):
                 raise GameRequestError(f"Ollama ne répond pas sur {root} : lancez l'application Ollama") from None
             missing = sorted(m for m in models if m not in present and f"{m}:latest" not in present)
+            reflex = llm["tiers"].get("reflexe", {})
+            if reflex.get("provider") == prov and reflex.get("model") in missing:
+                # le modèle de décision est une économie, pas une nécessité : sans lui, la partie se joue, et les réflexes
+                # passent par le petit modèle de langage
+                llm["tiers"].pop("reflexe")
+                missing.remove(reflex["model"])
+                models = models - {reflex["model"]}
+                say(f"Modèle de décision {reflex['model']} absent (ollama pull {reflex['model']}, Ollama 0.40.4 ou plus) : "
+                    "les réflexes passeront par le petit modèle.")
+                log.warning("modèle de décision %s absent : niveau « reflexe » retiré de la partie", reflex["model"])
             if missing:
                 raise GameRequestError("modèle Ollama absent : " + ", ".join(f"ollama pull {m}" for m in missing))
             for k, model in enumerate(sorted(models), 1):
                 say(f"Chargement du modèle {model} ({k}/{len(models)}) : la première fois, cela peut prendre une minute…")
                 try:
                     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=3.0)) as http:
-                        r = await http.post(f"{root}/api/generate", json={"model": model, "prompt": "", "keep_alive": "30m"})
+                        if pcfg.get("kind") == "systemone":      # un modèle de décision se charge par une question
+                            r = await http.post(f"{root}/v1/systemone", json={
+                                "model": model, "state": "Le lac est plein.", "keep_alive": "30m",
+                                "questions": {"plein": {"type": "noul", "instructions": "Le lac est-il plein ?"}}})
+                        else:
+                            r = await http.post(f"{root}/api/generate", json={"model": model, "prompt": "", "keep_alive": "30m"})
                 except httpx.HTTPError as exc:
                     raise GameRequestError(f"Ollama n'a pas pu charger {model} : {exc or type(exc).__name__}") from None
                 if r.status_code != 200:
                     raise GameRequestError(f"Ollama n'a pas pu charger {model} : {r.text[:160]}")
+    await check_storage(cfg, say)
+
+
+async def check_storage(cfg: dict, say: Callable[[str], None]) -> None:
+    """La base (PostgreSQL + pgvector), le modèle de plongement et le stockage objet, s'ils sont demandés : un message
+    clair avant la partie plutôt qu'une erreur au premier souvenir."""
+    from .objects import make_objects
+    from .vectors import EmbeddingError, make_embedder, postgres_dsn
+
+    rag, storage = cfg["rag"], cfg.get("storage", {})
+    if rag.get("backend", "bm25") == "pgvector" or storage.get("history") == "postgres":
+        import asyncpg
+
+        dsn = postgres_dsn(cfg)
+        say("Vérification de PostgreSQL…")
+        try:
+            conn = await asyncpg.connect(dsn, timeout=3.0)
+            await conn.close()
+        except (OSError, asyncio.TimeoutError, asyncpg.PostgresError) as exc:
+            where = dsn.rsplit("@", 1)[-1]
+            raise GameRequestError(f"PostgreSQL ne répond pas sur {where} ({type(exc).__name__}) : "
+                                   "lancez « docker compose --profile data up -d »") from None
+    if rag.get("backend", "bm25") == "pgvector":
+        emb = make_embedder(rag)
+        say(f"Chargement du modèle de plongement {emb.name}…")
+        try:
+            await emb.embed(["Le lac de Vellmor."])
+        except EmbeddingError as exc:
+            model = rag.get("embeddings", {}).get("model", "")
+            hint = f" (ollama pull {model})" if "not found" in str(exc) or "404" in str(exc) else ""
+            raise GameRequestError(f"modèle de plongement indisponible{hint} : {exc}") from None
+        finally:
+            await emb.aclose()
+    objects = make_objects(cfg)
+    if objects is not None:
+        say("Vérification du stockage objet…")
+        try:
+            await objects.open()
+        except Exception as exc:
+            raise GameRequestError(f"stockage objet injoignable ({objects.where}) : {str(exc)[:120]}") from None
+        finally:
+            await objects.aclose()
 
 
 class Engine:

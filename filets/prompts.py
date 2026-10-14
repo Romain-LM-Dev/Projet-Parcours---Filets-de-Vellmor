@@ -280,3 +280,35 @@ def ballot_messages(p, table: list[str], est: float, capacity: float, collapse_r
             "Propositions de règle sur la table :\n" + "\n".join(table) +
             "\nPour laquelle votes-tu ? Réponds en JSON : {\"vote\": \"<identifiant d'une proposition, ou aucune>\"}")
     return [{"role": "system", "content": who}, {"role": "user", "content": body}]
+
+
+# ---------------------------------------------------------------- questions typées pour un modèle de décision (système 1)
+# Un modèle comme `tev1` ne génère pas de texte : il choisit une option, ou un niveau dans une échelle, et donne les probabilités.
+# Ces fonctions décrivent la même décision que `reflex_messages` / `ballot_messages`, sous cette forme.
+
+def catch_levels(boat_capacity: float, n: int = 10) -> list[float]:
+    """Les niveaux de prise proposés au modèle de décision : de 0 à la capacité de la barque, en `n` paliers réguliers."""
+    return [round(i * boat_capacity / (n - 1), 1) for i in range(n)]
+
+
+def reflex_system_one(p, obs: dict) -> dict:
+    """La prise de routine en question typée : l'état (les mêmes lignes que `reflex_messages`), une échelle de prises."""
+    msgs = reflex_messages(p, obs)
+    state = msgs[0]["content"].replace(" Réponds uniquement par un objet JSON.", "") + "\n" + \
+        msgs[1]["content"].rsplit("\n", 1)[0]
+    levels = catch_levels(obs["boat_capacity"])
+    criteria = [f"{t:g} t" + (" : il reste à quai" if t == 0 else "") for t in levels]
+    return {"state": state, "values": {"prise": levels},
+            "questions": {"prise": {"type": "score", "criteria": criteria,
+                                    "instructions": "Combien de tonnes ce pêcheur pêche-t-il cette saison, vu l'état du lac, "
+                                                    "ses engagements et les règles ?"}}}
+
+
+def ballot_system_one(p, proposals: dict[str, str], est: float, capacity: float, collapse_ratio: float = 0.05) -> dict:
+    """Le bulletin de vote en question typée : `proposals` = identifiant → description (« 1.5 t par pêcheur, proposée par… »)."""
+    state = (f"{p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits}\n"
+             f"La veillée touche à sa fin. Le lac est à {100 * est / capacity:.0f} % ({lake_level(est, capacity, collapse_ratio)}).")
+    criteria = {**dict(list(proposals.items())[:25]), "aucune": "aucune de ces propositions"}   # 26 options au plus
+    return {"state": state,
+            "questions": {"vote": {"type": "choice", "criteria": criteria,
+                                   "instructions": "Pour quelle proposition de règle ce pêcheur vote-t-il ?"}}}

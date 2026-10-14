@@ -1,12 +1,13 @@
 ﻿<#
 .SYNOPSIS
-  Arrête ce que start.ps1 a lancé : le moteur, les services Kafka, puis le broker.
+  Arrête ce que start.ps1 a lancé : le moteur, les services Kafka, puis les conteneurs (Kafka, et PostgreSQL et le
+  stockage objet s'ils tournent).
 
 .PARAMETER KeepKafka
-  Laisse le conteneur Kafka tourner (ferme seulement le moteur et les fenêtres de services).
+  Laisse les conteneurs tourner (ferme seulement le moteur et les fenêtres de services).
 
 .PARAMETER Purge
-  Supprime aussi les données Kafka (volume kafka-data : `docker compose down -v`).
+  Supprime aussi les données Kafka (volume kafka-data). La base PostgreSQL et le stockage objet sont toujours gardés.
 #>
 [CmdletBinding()]
 param(
@@ -44,7 +45,13 @@ Get-CimInstance Win32_Process -Filter "Name like 'python%'" -ErrorAction Silentl
 if (-not $KeepKafka -and (Get-Command docker -ErrorAction SilentlyContinue)) {
     docker info *> $null
     if ($LASTEXITCODE -eq 0) {
-        if ($Purge) { docker compose --profile ui down -v } else { docker compose --profile ui down }
+        # jamais « down -v » : il effacerait aussi les volumes de PostgreSQL et du stockage objet
+        docker compose --profile ui --profile data down
+        if ($Purge) {
+            $project = (docker compose config --format json | ConvertFrom-Json).name
+            docker volume rm "${project}_kafka-data" *> $null
+            Write-Host 'Données Kafka supprimées (PostgreSQL et stockage objet gardés).'
+        }
     } else {
         Write-Host "Docker n'est pas démarré : rien à arrêter côté Kafka."
     }

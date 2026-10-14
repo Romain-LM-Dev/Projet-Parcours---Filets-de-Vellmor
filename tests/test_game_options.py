@@ -27,16 +27,36 @@ def test_catalog_describes_the_new_options():
     assert d["reflection"] == "rapide" and d["assembly_rounds"] == 2 and d["capacity"] is None
     assert d["capacity_per_fisher"] == 12.5 and d["boat_capacity"] == 10.0 and d["growth_rate"] == 1.0
     ids = [o["id"] for o in cat["llm_options"]]
-    assert ids == ["scripted", "ollama_fast", "ollama", "groq"]
+    assert ids == ["scripted", "ollama_fast", "ollama_open", "ollama", "groq"]
     assert all("config" not in o for o in cat["llm_options"])               # un détail d'implémentation, pas pour le menu
     assert all(o["async_speed"] in SPEEDS for o in cat["llm_options"])      # une vitesse que le menu sait afficher
+    reflections = {r["id"] for r in cat["reflections"]}
+    assert all(o["reflection"] in reflections for o in cat["llm_options"])  # une réflexion que le menu connaît
     assert {0.0625, 0.125, 0.25} <= set(cat["speeds"])                       # les vitesses lentes existent
+
+
+def test_the_default_reflection_follows_the_preselected_engine():
+    """Les réflexes open ne servent qu'en réflexion adaptative : lancé avec ce moteur, le menu la présélectionne."""
+    assert build_catalog(load_config(None), "ollama_open")["defaults"]["reflection"] == "adaptive"
+    assert build_catalog(load_config(None), "ollama_fast")["defaults"]["reflection"] == "rapide"
+    assert build_catalog(load_config(None), "inconnu")["defaults"]["llm"] == "scripted"
 
 
 def test_slower_engines_are_advised_slower_worlds():
     speed = {o["id"]: o["async_speed"] for o in LLM_OPTIONS}
     assert speed["scripted"] == 1.0
     assert speed["ollama"] < speed["ollama_fast"] < speed["groq"] <= speed["scripted"]
+    assert speed["ollama_open"] == speed["ollama_fast"]      # les veillées, plus lentes que les réflexes, fixent le rythme
+
+
+def test_the_open_preset_sends_reflexes_to_a_decision_model():
+    """Réflexes et bulletins de vote : le modèle de décision open (POST /v1/systemone) ; Qwen pour tout le reste."""
+    cfg = load_config("config/ollama_open.yaml")
+    preset = cfg["llm"]
+    assert preset["tiers"]["reflexe"] == {"provider": "ollama_s1", "model": "tev1:0.8b"}
+    assert preset["tiers"]["grand"]["model"] == "qwen2.5:3b" and preset["tiers"]["petit"]["model"] == "qwen2.5:1.5b"
+    assert preset["reflection"] == "adaptive"
+    assert preset["providers"]["ollama_s1"]["kind"] == "systemone" and preset["providers"]["ollama_s1"]["local"]
 
 
 def test_the_fast_preset_fits_the_small_graphics_card():

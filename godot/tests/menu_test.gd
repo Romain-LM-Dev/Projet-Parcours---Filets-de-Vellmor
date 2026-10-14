@@ -74,6 +74,20 @@ func _initialize() -> void:
 	m.reset_all()
 	check(m.fishers.size() == 8 and not m.speed_touched, "Tout réinitialiser : retour aux réglages de départ")
 
+	# --- réflexion proposée par le moteur d'IA : les réflexes open demandent la réflexion adaptative
+	var reflection_is := func(v: String) -> bool: return str(m.opt_reflection.get_item_metadata(m.opt_reflection.selected)) == v
+	pick_llm.call("ollama_open")
+	check(reflection_is.call("adaptive") and m.build_config()["reflection"] == "adaptive", "réflexes open : réflexion adaptative")
+	check("Système 1" in m.lbl_reflection_desc.text, "la description suit la réflexion proposée : " + m.lbl_reflection_desc.text)
+	pick_llm.call("ollama_fast")
+	check(reflection_is.call("rapide"), "retour à Ollama rapide : réflexion rapide")
+	m._select_meta(m.opt_reflection, "complete")
+	m.opt_reflection.item_selected.emit(m.opt_reflection.selected)     # le joueur choisit lui-même la réflexion
+	pick_llm.call("ollama_open")
+	check(reflection_is.call("complete"), "la réflexion choisie à la main n'est plus changée d'office")
+	m.reset_all()
+	check(reflection_is.call("rapide") and not m.reflection_touched, "Tout réinitialiser : réflexion de départ")
+
 	# --- paramètres de la partie
 	m._set_mode("async")
 	check(m.mode == "async" and m.mode_buttons["async"].button_pressed and not m.mode_buttons["sync"].button_pressed, "mode asynchrone")

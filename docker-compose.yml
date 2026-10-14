@@ -1,6 +1,9 @@
 # Kafka en mode KRaft (sans ZooKeeper), un seul nœud : suffisant pour le projet.
-#   docker compose up -d            → broker sur localhost:9092
-#   docker compose --profile ui up -d → + interface web Kafka UI sur http://localhost:8080
+#   docker compose up -d                → broker sur localhost:9092
+#   docker compose --profile ui up -d   → + interface web Kafka UI sur http://localhost:8080
+#   docker compose --profile data up -d → + PostgreSQL 17 + pgvector (127.0.0.1:5433) et stockage objet S3 (127.0.0.1:8333),
+#                                         pour config/data.yaml (RAG vectoriel, historique, archives des parties)
+# Les services de données n'écoutent que sur la machine locale (127.0.0.1) : identifiants de développement.
 services:
   kafka:
     image: apache/kafka:3.8.0
@@ -34,5 +37,40 @@ services:
       KAFKA_CLUSTERS_0_NAME: filets
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: filets-postgres
+    profiles: ["data"]
+    ports:
+      - "127.0.0.1:5433:5432"        # 5433 : le 5432 est souvent pris par un PostgreSQL installé sur la machine
+    environment:
+      POSTGRES_USER: filets
+      POSTGRES_PASSWORD: filets
+      POSTGRES_DB: filets
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U filets -d filets"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Stockage objet compatible S3. SeaweedFS (Apache-2.0) : l'image Docker de MinIO n'est plus publiée sur Docker Hub.
+  # N'importe quel service S3 convient (MinIO, AWS S3…) : voir storage.objects dans config/data.yaml.
+  objects:
+    image: chrislusf/seaweedfs:4.48
+    container_name: filets-objects
+    profiles: ["data"]
+    command: ["mini", "-dir=/data"]
+    ports:
+      - "127.0.0.1:8333:8333"
+    environment:
+      AWS_ACCESS_KEY_ID: filets
+      AWS_SECRET_ACCESS_KEY: filets-secret
+    volumes:
+      - objects-data:/data
+
 volumes:
   kafka-data:
+  postgres-data:
+  objects-data:

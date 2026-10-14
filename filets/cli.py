@@ -29,6 +29,7 @@ from .indicators import IndicatorEngine
 from .pipeline import IndicatorPublisher
 from .schemas import COMMAND, ENVELOPE, PAYLOADS, SCHEMA_VERSION, STATUS, validate_event
 from .store import HistoryStore
+from .vectors import postgres_dsn
 
 log = logging.getLogger("filets")
 
@@ -60,6 +61,15 @@ def new_run_id(cfg: dict) -> str:
     return f"{stamp}-{cfg['time']['mode']}-n{cfg['population']['fishers']}-s{cfg['run']['seed']}"
 
 
+def make_api(cfg: dict, port: int, on_command, catalog: dict | None):
+    """L'API (REST + WebSocket) de ce processus : adresse de `api.host` (127.0.0.1 par défaut), runs lus dans `runs/`,
+    mémoire collective dans pgvector si `rag.backend: pgvector`."""
+    from .api import ApiServer, LocalRuns, memories_for
+
+    return ApiServer(cfg.get("api", {}).get("host", "127.0.0.1"), port, on_command, catalog=catalog,
+                     runs=LocalRuns(ROOT / cfg["output"]["runs_dir"]), memories=memories_for(cfg))
+
+
 def unique_run_id(cfg: dict) -> str:
     """Comme `new_run_id`, sans jamais réutiliser le dossier d'un run existant (deux parties dans la même seconde)."""
     base = rid = new_run_id(cfg)
@@ -80,13 +90,12 @@ async def run_once(cfg: dict, ws: bool = False, ws_port: int = 8765, linger: boo
     local = isinstance(bus, LocalBus)
     bridge = None
     if ws:
-        from .ws_bridge import WSBridge
-        bridge = WSBridge("0.0.0.0", ws_port, bus.send_command, catalog=build_catalog(cfg))
+        bridge = make_api(cfg, ws_port, bus.send_command, build_catalog(cfg))
         await bridge.start()
         for topic in ("events", "indicators", "status"):
             bus.subscribe(topic, lambda e, t=topic: bridge.push(t, e))
         if not quiet:
-            print(f"Pont WebSocket : ws://localhost:{ws_port} (lancez la scène Godot)")
+            print(f"API FILETS : http://localhost:{bridge.port} (WebSocket /ws pour Godot, documentation /docs)")
     pub = None
     if local:
         # en bus local, les indicateurs sont calculés en processus ; avec Kafka, c'est le service dédié
@@ -126,13 +135,12 @@ async def serve(cfg: dict, ws: bool = True, ws_port: int = 8765, quiet: bool = F
     engine = Engine(cfg, bus, quiet=quiet, default_llm=llm)
     bridge = None
     if ws:
-        from .ws_bridge import WSBridge
-        bridge = WSBridge("0.0.0.0", ws_port, bus.send_command, catalog=engine.catalog)
+        bridge = make_api(cfg, ws_port, bus.send_command, engine.catalog)
         await bridge.start()
         for topic in ("events", "indicators", "status"):
             bus.subscribe(topic, lambda e, t=topic: bridge.push(t, e))
         if not quiet:
-            print(f"Pont WebSocket : ws://localhost:{ws_port} (lancez la scène Godot)")
+            print(f"API FILETS : http://localhost:{bridge.port} (WebSocket /ws pour Godot, documentation /docs)")
     try:
         await engine.serve()
     finally:
@@ -156,12 +164,11 @@ async def replay(run_id: str, cfg: dict, speed: float, ws: bool, ws_port: int, l
     local = isinstance(bus, LocalBus)
     bridge = None
     if ws:
-        from .ws_bridge import WSBridge
-        bridge = WSBridge("0.0.0.0", ws_port, lambda c: print("(rejeu : injection ignorée)", c))
+        bridge = make_api(cfg, ws_port, lambda c: print("(rejeu : injection ignorée)", c), None)
         await bridge.start()
         bus.subscribe("events", lambda e: bridge.push("events", e))
         bus.subscribe("indicators", lambda e: bridge.push("indicators", e))
-        print(f"Rejeu sur ws://localhost:{ws_port}")
+        print(f"Rejeu sur ws://localhost:{bridge.port}")
     pub = None
     if local:
         pub = IndicatorPublisher(bus, cfg["output"]["runs_dir"], cfg["scenario"]["quota_tolerance"])
@@ -258,6 +265,49 @@ def batch(configs: list[str], runs: int, base_args, db_path: str | None) -> None
         s, n = ms("final_stock_ratio"), ms("mean_norm_index")
         print(f"{c:<18} {len(rs):>2}   {s[0]:.2f} ± {s[1]:.2f}                {n[0]:.2f} ± {n[1]:.2f}"
               f"                   {statistics.mean(r['llm_calls'] for r in rs):.0f}")
+
+
+def sql_blocks(text: str) -> list[tuple[str, str]]:
+    """Les requêtes d'un fichier .sql : (titre tiré du commentaire, requête)."""
+    out = []
+    for block in text.split(";"):
+        lines = [l for l in block.splitlines() if l.strip()]
+        title = next((l.strip("- ").strip() for l in lines if l.startswith("--")), "")
+        sql = "\n".join(l for l in lines if not l.strip().startswith("--"))
+        if sql.strip():
+            out.append((title, sql))
+    return out
+
+
+def print_table(title: str, columns: list[str], rows) -> None:
+    print(f"\n## {title}")
+    print(" | ".join(columns))
+    for row in list(rows)[:30]:
+        print(" | ".join("" if v is None else str(v)[:60] for v in row))
+
+
+async def ingest_pg(dsn: str, runs_dir: Path, ids: list[str]) -> None:
+    from .pgstore import PgHistoryStore
+
+    st = PgHistoryStore(dsn)
+    await st.open()
+    try:
+        for rid in ids:
+            print(rid, await st.ingest_run_dir(runs_dir / rid), "événements")
+    finally:
+        await st.close()
+
+
+async def query_pg(dsn: str, blocks: list[tuple[str, str]]) -> None:
+    import asyncpg
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        for title, sql in blocks:
+            stmt = await conn.prepare(sql)
+            print_table(title, [a.name for a in stmt.get_attributes()], [tuple(r) for r in await stmt.fetch()])
+    finally:
+        await conn.close()
 
 
 def retrieval_sample(run_id: str, cfg: dict, n: int, seed: int = 0) -> Path:
@@ -369,12 +419,16 @@ def main(argv=None):
     ing = sub.add_parser("ingest")
     ing.add_argument("run_ids", nargs="*")
     ing.add_argument("--db", default="data/history.db")
+    ing.add_argument("--pg", nargs="?", const="", default=None,
+                     help="dans PostgreSQL (adresse ; sans adresse : FILETS_PG_DSN ou la configuration)")
 
     sub.add_parser("schemas")
 
     qy = sub.add_parser("query", help="exécuter les requêtes d'un fichier .sql sur l'historique")
     qy.add_argument("sql_file", nargs="?", default="analysis/queries.sql")
     qy.add_argument("--db", default="data/history.db")
+    qy.add_argument("--pg", nargs="?", const="", default=None,
+                    help="sur PostgreSQL (fichier conseillé : analysis/queries_pg.sql)")
 
     rv = sub.add_parser("retrieval", help="évaluer la qualité de la récupération (F2)")
     common(rv)
@@ -413,29 +467,27 @@ def main(argv=None):
                                   seed=None, bus=None, fast=True, config=None)
         batch(args.config, args.runs, base, args.db)
     elif args.cmd == "ingest":
-        st = HistoryStore(ROOT / args.db)
         runs_dir = ROOT / "runs"
         ids = args.run_ids or sorted(p.name for p in runs_dir.iterdir() if (p / "events.jsonl").exists())
-        for rid in ids:
-            print(rid, st.ingest_run_dir(runs_dir / rid), "événements")
-        st.close()
+        if args.pg is not None:
+            asyncio.run(ingest_pg(args.pg or postgres_dsn(load_config(None)), runs_dir, ids))
+        else:
+            st = HistoryStore(ROOT / args.db)
+            for rid in ids:
+                print(rid, st.ingest_run_dir(runs_dir / rid), "événements")
+            st.close()
     elif args.cmd == "schemas":
         export_schemas()
     elif args.cmd == "query":
-        import sqlite3
-        db = sqlite3.connect(str(ROOT / args.db))
-        text = (ROOT / args.sql_file).read_text(encoding="utf-8")
-        for block in text.split(";"):
-            lines = [l for l in block.splitlines() if l.strip()]
-            title = next((l.strip("- ").strip() for l in lines if l.startswith("--")), "")
-            sql = "\n".join(l for l in lines if not l.strip().startswith("--"))
-            if not sql.strip():
-                continue
-            cur = db.execute(sql)
-            print(f"\n## {title}")
-            print(" | ".join(d[0] for d in cur.description))
-            for row in cur.fetchall()[:30]:
-                print(" | ".join("" if v is None else str(v)[:60] for v in row))
+        blocks = sql_blocks((ROOT / args.sql_file).read_text(encoding="utf-8"))
+        if args.pg is not None:
+            asyncio.run(query_pg(args.pg or postgres_dsn(load_config(None)), blocks))
+        else:
+            import sqlite3
+            db = sqlite3.connect(str(ROOT / args.db))
+            for title, sql in blocks:
+                cur = db.execute(sql)
+                print_table(title, [d[0] for d in cur.description], cur.fetchall())
     elif args.cmd == "retrieval":
         retrieval_sample(args.run_id, build_cfg(args), args.sample)
 

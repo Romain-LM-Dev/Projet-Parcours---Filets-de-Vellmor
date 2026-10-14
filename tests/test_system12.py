@@ -97,7 +97,7 @@ def test_routine_catches_become_reflexes_and_the_rest_stays_reflection(tmp_path)
     decisions = [e["payload"] for e in events if e["type"] == "decision" and e["payload"]["agent_kind"] == "llm"]
     assert all(d["system"] in ("S1", "S2") for d in decisions) and not any(d["fallback"] for d in decisions)
     reflex = [d for d in decisions if d["system"] == "S1"]
-    assert reflex and all(d["justification"].startswith("Réflexe (système 1)") for d in reflex)
+    assert reflex and all(d["justification"].startswith("Réflexe (système 1, m)") for d in reflex)     # avec le modèle qui a répondu
     assert verify("s12a", world.cfg)
 
 

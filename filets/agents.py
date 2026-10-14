@@ -6,6 +6,7 @@ souvenirs et documents retrouvés, justification ou règle appliquée).
 """
 from __future__ import annotations
 
+import logging
 import random
 import zlib
 from dataclasses import dataclass, field
@@ -15,6 +16,8 @@ from .llm import detect_drift, extract_json, to_number
 from .memory import MemoryStore
 from .policies import catch_rule, speak_rule
 from .profiles import Profile
+
+log = logging.getLogger("filets.agents")
 
 
 @dataclass
@@ -66,7 +69,7 @@ def _seed(world, agent: Agent, purpose: str, state: dict) -> int:
 
 
 async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], state: dict, system: str = "S2",
-                   schema: dict | None = None, max_tokens: int | None = None):
+                   schema: dict | None = None, max_tokens: int | None = None, system_one: dict | None = None):
     """Appelle le LLM et classe les dérives. Renvoie (données JSON ou None, llm_result, flags).
     `system` : « S1 » (réflexe : un nombre, le petit modèle) ou « S2 » (réflexion : le modèle de l'agent), voir `routing.py`."""
     brief = prompts.is_brief(world.cfg["llm"])
@@ -80,7 +83,25 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
         hint["max_tokens"] = prompts.REFLEX_MAX_TOKENS
     elif brief:
         hint["max_tokens"] = prompts.BRIEF_MAX_TOKENS[purpose]       # réflexion rapide : réponse courte, appel plus court
-    res = await world.router.complete(agent.id, "petit" if reflex else agent.profile.tier, purpose, messages, hint)
+    tier = agent.profile.tier
+    if reflex:
+        # le réflexe va au modèle de décision s'il y en a un (niveau `reflexe`, ex. tev1), sinon au petit modèle de langage
+        usable = "reflexe" in world.router.tiers and system_one and not getattr(world, "_reflex_down", False)
+        tier = "reflexe" if usable else "petit"
+        if tier == "reflexe":
+            hint["system_one"] = system_one
+    res = await world.router.complete(agent.id, tier, purpose, messages, hint)
+    if res.status != "ok" and tier == "reflexe":
+        # modèle de décision indisponible (Ollama trop ancien, modèle absent…) : le petit modèle de langage prend le relais,
+        # pour cet appel et, si l'erreur n'est pas un simple délai dépassé, pour le reste de la partie
+        if res.status == "error":
+            world._reflex_down = True
+        if not getattr(world, "_reflex_warned", False):
+            world._reflex_warned = True
+            log.warning("modèle de décision indisponible (%s) : le petit modèle répond à sa place",
+                        (res.detail or res.status)[:160])
+        hint = {k: v for k, v in hint.items() if k not in ("_started", "system_one")}
+        res = await world.router.complete(agent.id, "petit", purpose, messages, hint)
     if res.status != "ok":
         itype = "quota" if res.status == "quota" else "no_response"
         world.incident(agent.id, itype, res.detail or res.status, "règle de repli", res.call_id)
@@ -101,7 +122,7 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
 
 
 async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
-    obs, state, retrieved, used = world.observe(agent, horizon, "catch")
+    obs, state, retrieved, used = await world.observe(agent, horizon, "catch")
     p = agent.profile
     common = {"agent": agent.id, "agent_kind": p.kind, "decision_type": "catch", "info_horizon": round(horizon, 6),
               "retrieved": retrieved, "used_event_ids": used,
@@ -119,14 +140,16 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
     brief = prompts.is_brief(world.cfg["llm"])
     system, why = routing.choose_system(obs, "catch") if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
     if system == "S1":
-        data, res, flags = await _ask_llm(world, agent, "catch", prompts.reflex_messages(p, obs), state, "S1")
+        data, res, flags = await _ask_llm(world, agent, "catch", prompts.reflex_messages(p, obs), state, "S1",
+                                          system_one=prompts.reflex_system_one(p, obs))
     else:
         data, res, flags = await _ask_llm(world, agent, "catch", prompts.catch_messages(p, obs, world.capacity, brief), state)
     fallback, rule = False, None
     v = to_number(data.get("prise")) if data else None
     just = str(data.get("justification", "")).strip() if data else ""
     if system == "S1" and data is not None:
-        just = f"Réflexe (système 1) : {why}."
+        conf = (data.get("_confiance") or {}).get("prise")
+        just = f"Réflexe (système 1, {res.model}) : {why}." + (f" Confiance {conf:.2f}." if conf is not None else "")
     common = {**common, "system": system}                        # sans routage adaptatif, tout est système 2
     if data is not None and v is None:
         world.incident(agent.id, "invalid_value", f"prise absente : {str(data)[:150]}", "règle de repli", res.call_id)
@@ -149,7 +172,7 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
 
 
 async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outcome:
-    obs, state, retrieved, used = world.observe(agent, horizon, "speak", assembly=assembly, rnd=rnd)
+    obs, state, retrieved, used = await world.observe(agent, horizon, "speak", assembly=assembly, rnd=rnd)
     p = agent.profile
     arch = agent.archetype
     common = {"agent": agent.id, "agent_kind": p.kind, "decision_type": "speak", "info_horizon": round(horizon, 6),
@@ -206,8 +229,12 @@ async def ballot(world, agent: Agent, asm) -> None:
     table = [f"- {pr.id} : {pr.quota:g} t par pêcheur, proposée par {world.name(pr.author)}, "
              f"{sum(1 for v in asm.support.values() if v[0] == pr.id)} soutien(s)" for pr in asm.proposals.values()]
     messages = prompts.ballot_messages(agent.profile, table, est, world.capacity, world.lake.collapse_ratio)
+    described = {pr.id: f"{pr.quota:g} t par pêcheur, proposée par {world.name(pr.author)}, "
+                        f"{sum(1 for v in asm.support.values() if v[0] == pr.id)} soutien(s)" for pr in asm.proposals.values()}
     data, res, _ = await _ask_llm(world, agent, "vote", messages, {"round": 99}, "S1",
-                                  schema=prompts.ballot_schema(list(asm.proposals)), max_tokens=prompts.BALLOT_MAX_TOKENS)
+                                  schema=prompts.ballot_schema(list(asm.proposals)), max_tokens=prompts.BALLOT_MAX_TOKENS,
+                                  system_one=prompts.ballot_system_one(agent.profile, described, est, world.capacity,
+                                                                       world.lake.collapse_ratio))
     vote = str((data or {}).get("vote", "")).strip().upper()
     last = next((u for u in reversed(asm.utterances) if u["payload"]["speaker"] == agent.id), None)
     if vote in asm.proposals and last is not None and not asm.closed:

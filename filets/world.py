@@ -45,11 +45,13 @@ from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
 from .events import EventFactory, Recorder
 from .lake import Lake
-from .memory import MemoryStore
+from .memory import MemoryBank, MemoryStore, VectorMemory
+from .objects import archive_run, make_objects
 from .profiles import HAMLETS, build_population
-from .rag import Retriever
+from .rag import Retriever, VectorRetriever
 from .schemas import validate_command
 from .llm import LLMRouter, to_number
+from .vectors import PgVectorStore, make_embedder, postgres_dsn
 
 log = logging.getLogger("filets.world")
 
@@ -122,18 +124,35 @@ class World:
         self.comm = self.scn["communication"]
         self.visible = bool(self.scn["catches_visible"])
         mcfg = cfg["memory"]
+        # Où vivent le corpus et les souvenirs : en mémoire (BM25, par défaut) ou dans PostgreSQL + pgvector ;
+        # et où l'on archive la partie (stockage objet). Les connexions s'ouvrent au début de `run`.
+        self.objects = make_objects(cfg)
+        self.vectors = self.memory_bank = None
+        if cfg["rag"].get("backend", "bm25") == "pgvector":
+            embedder = make_embedder(cfg["rag"])
+            self.vectors = PgVectorStore(postgres_dsn(cfg), embedder)
+            self.memory_bank = MemoryBank(self.vectors, embedder, run_id)
+
+        def memory_of(owner: str) -> MemoryStore:
+            if self.memory_bank is not None:
+                return VectorMemory(owner, mcfg["recency_decay_per_day"], mcfg["weights"], self.memory_bank)
+            return MemoryStore(owner, mcfg["recency_decay_per_day"], mcfg["weights"])
+
         self.agents: dict[str, Agent] = {}
         lo, hi = t["async_offset_days"]
         for i, p in enumerate(build_population(cfg, self.rng)):
             arng = random.Random(seed * 1000 + i)
-            self.agents[p.id] = Agent(p, MemoryStore(p.id, mcfg["recency_decay_per_day"], mcfg["weights"]), arng,
-                                      p.wealth, offset_days=round(arng.uniform(lo, hi), 3))
+            self.agents[p.id] = Agent(p, memory_of(p.id), arng, p.wealth, offset_days=round(arng.uniform(lo, hi), 3))
         self.fishers = [a for a in self.agents.values() if a.is_fisher]
         self.elder = next((a for a in self.agents.values() if not a.is_fisher), None)
         values = {"capacity": f"{self.capacity:.0f}", "half_capacity": f"{self.capacity / 2:.0f}",
                   "n_fishers": len(self.fishers), "price": self.econ["price_per_tonne"],
                   "upkeep": self.econ["upkeep_per_season"]}
-        self.retriever = Retriever(ROOT / cfg["rag"]["corpus_dir"], values)
+        if self.vectors is not None:
+            self.retriever = VectorRetriever(ROOT / cfg["rag"]["corpus_dir"], values, self.vectors, self.vectors.embedder,
+                                             self.objects, float(cfg["rag"].get("min_score", 0.0)))
+        else:
+            self.retriever = Retriever(ROOT / cfg["rag"]["corpus_dir"], values)
         self.router = LLMRouter(cfg, self.clock, self.events, seed, self.ctl)
         self.norms: list[Norm] = []          # historique complet, dans l'ordre d'adoption
         self.promises: dict[tuple[str, int], tuple[float, str]] = {}
@@ -244,8 +263,9 @@ class World:
         history = [e for e in agent.stock_seen if e is not entry and e["t"] <= horizon]
         return entry, history[-6:]
 
-    def observe(self, agent: Agent, horizon: float, purpose: str, assembly: Assembly | None = None, rnd: int = 1):
-        """Construit ce que l'agent sait à l'instant `horizon` : rien de postérieur (C6)."""
+    async def observe(self, agent: Agent, horizon: float, purpose: str, assembly: Assembly | None = None, rnd: int = 1):
+        """Construit ce que l'agent sait à l'instant `horizon` : rien de postérieur (C6). Asynchrone : la mémoire et le corpus
+        peuvent être dans PostgreSQL (`rag.backend: pgvector`)."""
         season = self.clock.season_of(horizon)
         p = agent.profile
         used: list[str] = []
@@ -280,25 +300,34 @@ class World:
                                             if u["sim_time"] <= horizon)
         # les rumeurs ont leur propre rubrique (toujours présente) : on ne les laisse pas aussi remonter par la mémoire
         skip = {m.id for m in pinned} | {m.id for m in agent.memory.items if m.kind == "rumeur"}
-        mems = agent.memory.retrieve(query, horizon, self.cfg["memory"]["top_k"], exclude=skip)
+        rumors = self.active_rumors(horizon)
+        own = [f"saison {s} : {v:g} t" for s, v in sorted(agent.catches.items())[-4:]]
+        wealth, stock_true = agent.wealth, round(self.lake.stock, 3)
+        if self.vectors is None:
+            # en mémoire : aucune attente, le monde ne bouge pas pendant l'observation
+            mems = agent.memory.retrieve(query, horizon, self.cfg["memory"]["top_k"], exclude=skip)
+            docs = self.retriever.search(query, p.hamlet, horizon, self.cfg["rag"]["top_k"])
+        else:
+            # dans la base : pendant l'attente, d'autres agents peuvent agir ; ce que l'agent sait de l'instant `horizon`
+            # (ses prises, son avoir, le stock) a été relevé avant
+            mems, docs = await asyncio.gather(
+                agent.memory.aretrieve(query, horizon, self.cfg["memory"]["top_k"], exclude=skip),
+                self.retriever.asearch(query, p.hamlet, horizon, self.cfg["rag"]["top_k"]))
         for m, s in mems:
             retrieved.append({"id": m.event_id or m.id, "source": "memory", "score": s, "sim_time": m.t,
                               "text": m.text[:160]})
-        docs = self.retriever.search(query, p.hamlet, horizon, self.cfg["rag"]["top_k"])
         for d, s in docs:
             retrieved.append({"id": f"corpus:{d.id}", "source": "corpus", "score": round(s, 3), "sim_time": d.sim_time,
                               "text": d.text[:160]})
-        rumors = self.active_rumors(horizon)
         for r in rumors:
             retrieved.insert(0, {"id": r["event_id"], "source": "rumor", "score": 1.0, "sim_time": r["t"],
                                  "text": r["text"][:160]})
         used += [r["id"] for r in retrieved if r["source"] != "corpus"]
-        own = [f"saison {s} : {v:g} t" for s, v in sorted(agent.catches.items())[-4:]]
         obs = {
             "label": self.clock.label(horizon), "season": season, "stock_estimate": est, "role": p.role,
             "capacity": self.capacity, "collapse_ratio": self.lake.collapse_ratio, "stock_history": history,
             "n_fishers": len(self.fishers), "_entry": entry,
-            "wealth": agent.wealth, "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
+            "wealth": wealth, "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
             "price": self.econ["price_per_tonne"], "boat_capacity": self.econ["boat_capacity"],
             "own_history": own, "norms": norm_lines, "known_catches": catches_txt,
             "last_season_catches": sorted(last_catches.values()),
@@ -310,10 +339,10 @@ class World:
             "rumors": [r["text"] for r in rumors],
         }
         state = {
-            "stock_estimate": est, "stock_true": round(self.lake.stock, 3), "capacity": self.capacity, "n_fishers": len(self.fishers),
+            "stock_estimate": est, "stock_true": stock_true, "capacity": self.capacity, "n_fishers": len(self.fishers),
             "quota": norm.quota if norm else None, "boat_capacity": self.econ["boat_capacity"],
             "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
-            "price": self.econ["price_per_tonne"], "wealth": agent.wealth,
+            "price": self.econ["price_per_tonne"], "wealth": wealth,
             "growth_rate": self.lake.r, "round": rnd,
             "rumors": obs["rumors"], "rumor_targets": self.named_fishers(obs["rumors"]) if rumors else [],
             "self_id": agent.id, "names": {a.id: (a.profile.first_name or a.profile.name.split()[0]) for a in self.fishers},
@@ -727,6 +756,36 @@ class World:
                 "by_tier": u.by_tier, "by_system": u.by_system, "wall_s": round(self.clock.wall_elapsed(), 2), "reason": self.stopped_reason,
             }, indent=2, ensure_ascii=False))
             self.recorder.close()
+        await self.close_storage()
+
+    async def open_storage(self) -> None:
+        """Ouvre la base (pgvector) et le stockage objet, et vectorise le corpus s'il ne l'est pas encore."""
+        if self.objects is not None:
+            await self.objects.open()
+        if self.vectors is not None:
+            await self.vectors.open()
+            await self.retriever.open()
+
+    async def close_storage(self, archive: bool = True) -> None:
+        """Archive la partie dans le stockage objet, écrit les derniers souvenirs, ferme les connexions. Une panne ici ne
+        change rien à la partie, déjà tracée dans `runs/` : elle est signalée, pas propagée."""
+        if archive and self.objects is not None and self.recorder:
+            try:
+                keys = await archive_run(self.objects, self.run_dir, self.run_id)
+                log.info("partie archivée dans %s (%d fichiers)", self.objects.where, len(keys))
+            except Exception as exc:
+                log.warning("archivage de la partie impossible : %s", exc)
+        if self.memory_bank is not None and not self.memory_bank.degraded and self.vectors.pool is not None:
+            try:
+                await self.memory_bank.flush()
+            except Exception as exc:
+                log.warning("derniers souvenirs non écrits dans la base : %s", exc)
+        for closing in (self.vectors, self.objects, getattr(self.vectors, "embedder", None)):
+            if closing is not None:
+                try:
+                    await closing.aclose()
+                except Exception as exc:
+                    log.warning("fermeture du stockage : %s", exc)
 
     def begin_season(self, season: int, mode: str):
         """Début de saison, commun aux deux orchestrations."""
@@ -737,6 +796,14 @@ class World:
 
     async def run(self):
         """Joue les saisons l'une après l'autre ; le mode (synchrone / asynchrone) est relu à chaque saison."""
+        try:
+            await self.open_storage()
+        except BaseException:
+            await self.close_storage(archive=False)
+            await self.router.aclose()
+            if self.recorder:
+                self.recorder.close()
+            raise
         self.start()
         pump = asyncio.create_task(self._command_pump())
         try:

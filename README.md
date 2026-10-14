@@ -15,25 +15,30 @@ montre tout en direct.
 ```
  Moteur Python ──► Kafka (filets.events) ──► service d'indicateurs ──► Kafka (filets.indicators)
   (salon, agents,       │                                                        │
-   lac, horloge)        ├──► service d'historique ──► SQLite (data/history.db)  │
-    │   ▲  │            └──────────────► pont WebSocket ◄────────────────────────┘
+   lac, horloge)        ├──► service d'historique ──► PostgreSQL (ou SQLite)    │
+    │   ▲  │            └──────────────► API FastAPI (REST + WebSocket) ◄────────┘
     │   │  └─ Kafka (filets.status : état du moteur) ──►│  ▲
     │   └──── Kafka (filets.commands : démarrer, pause, vitesse, mode, injections) ◄──┘
-    └─ catalogue (menu)                                 Godot (menu, scène, pilotage, inspecteur)
+    ├─ catalogue (menu)                                 Godot (menu, scène, pilotage, inspecteur)
+    ├─ Ollama : Qwen (réflexion), tev1 (décisions simples), embeddinggemma (plongements)
+    └─ RAG : PostgreSQL + pgvector (corpus, souvenirs) · stockage objet S3 (documents, archives des parties)
 ```
 
-Pour comprendre comment les morceaux se parlent (architecture, horloge, communication et mémoire, tokens) : [docs/architecture.md](docs/architecture.md).
+Pour comprendre comment les morceaux se parlent (architecture, horloge, communication et mémoire, tokens, bibliothèques
+asynchrones, stockage) : [docs/architecture.md](docs/architecture.md).
 
 ## Démarrage rapide
 
 Sous Windows, deux scripts font tout (voir `install.ps1` et `start.ps1`, ou leurs lanceurs `.cmd`) :
 
 ```powershell
-.\install.cmd                 # une fois : Python 3.13, .venv, dépendances, tests, Kafka, modèles Ollama (3B et 1,5B ; -Quality ajoute le 7B)
+.\install.cmd                 # une fois : Python 3.13, .venv, dépendances, tests, Kafka, modèles Ollama (3B et 1,5B ; -Quality ajoute
+                              # le 7B, -Open le modèle de décision tev1, -Data PostgreSQL + pgvector, S3 et embeddinggemma)
 .\start.cmd                   # moteur en salon + Godot : on règle la partie dans le menu, puis on la lance
 .\start.cmd -Kafka -Ollama    # avec Kafka (et ses services) et Ollama « rapide » (3B + 1,5B) présélectionné
 .\start.cmd -Ollama -OllamaProfile quality   # Ollama « qualité » (7B + 1,5B) : meilleur, mais bien plus lent
-.\stop.cmd                    # ferme le moteur, les services et le broker
+.\start.cmd -Kafka -Ollama -OllamaProfile open -Data   # + modèle de décision open (tev1), RAG PostgreSQL + pgvector, stockage S3
+.\stop.cmd                    # ferme le moteur, les services et les conteneurs (les données sont gardées)
 ```
 
 À la main, sans Kafka :
@@ -41,7 +46,7 @@ Sous Windows, deux scripts font tout (voir `install.ps1` et `start.ps1`, ou leur
 ```bash
 pip install -r requirements.txt
 python -m pytest -q                                  # tests de cohérence (les tests Kafka et Godot sont ignorés si absents)
-python -m filets serve                               # salon + pont WebSocket sur :8765 ; la partie se lance depuis Godot
+python -m filets serve                               # salon + API sur :8765 (WebSocket pour Godot, REST : http://localhost:8765/docs)
 python -m filets run --mode async --ws               # ou : partie immédiate, sans menu
 ```
 
@@ -126,8 +131,8 @@ ou à la main :
 ```bash
 docker compose up -d                                 # broker KRaft sur localhost:9092
 python -m filets.services.indicators                 # terminal 1 : indicateurs en flux
-python -m filets.services.store                      # terminal 2 : historique SQLite
-python -m filets.services.bridge                     # terminal 3 : pont Godot (ws://localhost:8765)
+python -m filets.services.store                      # terminal 2 : historique (SQLite ; PostgreSQL avec --config config/data.yaml)
+python -m filets.services.bridge                     # terminal 3 : API FastAPI (ws://localhost:8765/ws pour Godot, REST sur /api)
 python -m filets serve --bus kafka                   # terminal 4 : le moteur en salon (ou : run --bus kafka)
 ```
 
@@ -149,9 +154,9 @@ qu'un « Démarrer » cliqué trop tôt n'est pas perdu.
 | `python -m filets replay <id> [--speed 4] [--ws]` | rejoue un run **sans aucun appel LLM**, recalcule et compare les indicateurs |
 | `python -m filets verify <id>` | schémas, ordre, monotonie du temps simulé, violations temporelles |
 | `python -m filets batch --config A.yaml --config B.yaml --runs 5` | runs répétés (graines successives), tableau moyenne ± écart-type, archivage SQLite |
-| `python -m filets query [analysis/queries.sql]` | requêtes reproductibles sur l'historique |
+| `python -m filets query [analysis/queries.sql]` | requêtes reproductibles sur l'historique ; `query analysis/queries_pg.sql --pg` sur PostgreSQL |
 | `python -m filets retrieval <id> --sample 20` | échantillon de décisions et de ce qui a été retrouvé, à annoter (F2) |
-| `python -m filets ingest` | importe les runs enregistrés dans SQLite |
+| `python -m filets ingest [--pg]` | importe les runs enregistrés dans SQLite, ou dans PostgreSQL (`--pg`) |
 | `python -m filets schemas` | exporte les schémas d'événements dans `schemas/` |
 
 Exemples : `--set scenario.communication=hamlet`, `--set scenario.catches_visible=false`,
@@ -204,6 +209,13 @@ n'importe quel réglage du jeu. `nvidia-smi --query-gpu=temperature.gpu,clocks.s
 
 Réglages du serveur Ollama (variables d'environnement, non appliquées par le jeu) : `OLLAMA_FLASH_ATTENTION=1` et
 `OLLAMA_KV_CACHE_TYPE=q8_0` réduisent la mémoire du contexte ; `OLLAMA_NUM_PARALLEL=1` est déjà la valeur la plus sûre sur 6 Go.
+
+**Un modèle de décision open à côté de Qwen (« Ollama · rapide + réflexes open », `config/ollama_open.yaml`).** Les choix simples
+(une prise de routine, un bulletin de vote) n'ont pas besoin d'un texte : `tev1:0.8b` (Together AI, affiné à partir de Qwen 3.5,
+0,8 Go) y répond par une question typée sur `POST /v1/systemone` d'Ollama, en un ou deux tokens avec les probabilités de chaque
+réponse. Qwen garde la réflexion et les paroles. Il demande **Ollama 0.40.4 ou plus** (`winget upgrade Ollama.Ollama`, Ollama
+fermé) puis `ollama pull tev1:0.8b` ; sans lui, la partie se lance quand même et ces décisions passent par Qwen 1,5B. Détails :
+[docs/architecture.md § 4](docs/architecture.md#4-économie-de-tokens--système-1-et-système-2).
 
 Pour une API (Groq, OpenRouter `:free`, Gemini, Mistral, GitHub Models) : copiez `.env.example` en
 `.env`, exportez la clé, et adaptez `config/groq.yaml`. Toutes ces offres parlent le format OpenAI ;
@@ -419,11 +431,21 @@ La pause et la vitesse sont tracées de la même façon (`injection pause|resume
 | État du moteur | Kafka `filets.status` (1 heure) | salon, partie en cours, pause, vitesse, mode : ce que la barre de pilotage affiche ; seul le dernier message compte |
 | État courant du monde | mémoire du moteur | lu et écrit à chaque décision, latence nulle |
 | Run rejouable | `runs/<id>/events.jsonl` + `config.json` | source unique du rejeu sans LLM (E3) |
-| Historique des runs | SQLite `data/history.db`, vues typées | requêtes analytiques reproductibles entre runs (F5) |
-| Base de connaissances | `corpus/*.md`, index BM25 en mémoire | petit corpus fictif, coût nul, scores explicables (F2) ; accès par hameau et par date |
+| Historique des runs | SQLite `data/history.db`, ou **PostgreSQL** (`config/data.yaml`), vues typées | requêtes analytiques reproductibles entre runs (F5) ; JSONB indexé et écriture concurrente avec PostgreSQL |
+| Base de connaissances | `corpus/*.md`, index BM25 en mémoire, ou **PostgreSQL + pgvector** (`config/data.yaml`) | BM25 : coût nul, scores explicables (F2) ; pgvector : recherche par le sens, vecteurs gardés d'une partie à l'autre ; accès par hameau et par date dans les deux cas |
+| Souvenirs des agents | mémoire du moteur, ou **pgvector** (`config/data.yaml`) | mémoire collective d'une partie interrogeable par le sens (`GET /api/runs/{id}/memories?q=…`) |
+| Fichiers bruts | `runs/<id>/`, et un **stockage objet S3** avec `config/data.yaml` | documents du corpus et archive de chaque partie, hors de la machine de jeu |
 | Événements invalides | Kafka `filets.deadletter` | isolés sans arrêter la simulation (F4) |
 
 Les schémas versionnés de chaque type d'événement sont dans `schemas/` (source : `filets/schemas.py`).
+
+**PostgreSQL + pgvector et stockage objet (`config/data.yaml`).** `docker compose --profile data up -d` démarre PostgreSQL 17 avec
+pgvector (sur 127.0.0.1:5433, car le 5432 est souvent pris par un PostgreSQL installé) et un stockage objet compatible S3
+(SeaweedFS sur 127.0.0.1:8333 ; l'image Docker de MinIO n'est plus publiée sur Docker Hub, mais tout service S3 convient).
+`ollama pull embeddinggemma` installe le modèle de plongement (multilingue, 768 dimensions, calculé sur le processeur pour laisser
+la carte graphique aux LLM). Puis `python -m filets serve --config config/data.yaml` (ou `.\start.cmd -Data`). Si la base tombe en
+cours de partie, la recherche se rabat sur BM25 en mémoire et la partie continue. Tout se fait en asynchrone (asyncpg,
+miniopy-async, aiokafka, httpx). Voir [docs/architecture.md § 6](docs/architecture.md#6-stockage--postgresql--pgvector-et-stockage-objet).
 
 ## Arborescence
 
@@ -431,16 +453,20 @@ Les schémas versionnés de chaque type d'événement sont dans `schemas/` (sour
 filets/            moteur : world.py (calendrier, sync/async), control.py (pause, vitesse, mode, arrêt),
                    engine.py (le salon : validation de la demande, vérification des IA, parties successives),
                    catalog.py (ce que propose le menu), agents.py, prompts.py, policies.py, profiles.py,
-                   memory.py, rag.py, llm.py, scripted.py, indicators.py, store.py, ws_bridge.py, console.py, cli.py
-filets/services/   services Kafka : indicators, bridge (Godot), store (SQLite)
+                   memory.py, rag.py, llm.py, routing.py, scripted.py, indicators.py, console.py, cli.py,
+                   api.py (FastAPI), aio.py (aiokafka), vectors.py (plongements, pgvector), pgstore.py (historique
+                   PostgreSQL), store.py (historique SQLite), objects.py (stockage objet S3)
+filets/services/   services Kafka asynchrones : indicators, bridge (API FastAPI), store (PostgreSQL ou SQLite)
 godot/             projet Godot 4 : main.gd (interface, barre de pilotage, inspecteur), start_menu.gd (menu de démarrage),
                    menu_map.gd (aperçu de la vallée du menu), world_view.gd (scène), art.gd (palette, pions), chart.gd,
                    legend.gd, shaders/valley.gdshader, fonts/, tests/ (feed_test.gd, menu_test.gd, main_feed_test.gd)
 install.ps1, start.ps1, stop.ps1 (et .cmd)   installation, démarrage et arrêt sous Windows
 corpus/            base de connaissances fictive de la vallée
-config/            default, baseline (sans LLM), no_comm, hamlet, drought, ollama (7B), ollama_fast (3B), groq
+config/            default, baseline (sans LLM), no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
+                   ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, stockage objet)
+docs/              architecture.md : architecture, temps, communication, tokens, asynchrone, stockage
 schemas/           schémas JSON versionnés des événements
-analysis/          requêtes SQL du rapport
+analysis/          requêtes SQL du rapport (queries.sql pour SQLite, queries_pg.sql pour PostgreSQL)
 runs/              runs enregistrés (un exemple fourni)
 tests/             tests de cohérence
 ```
@@ -449,7 +475,8 @@ tests/             tests de cohérence
 
 * Brancher de vrais modèles et calibrer les prompts (sortie de rôle, posture d'« assistant
   prudent », agents trop conciliants : cf. pistes de la fiche).
-* Évaluer la récupération (`filets retrieval`) et décider s'il faut passer à un index vectoriel.
+* Évaluer la récupération (`filets retrieval`) : comparer BM25 et pgvector sur les mêmes décisions annotées.
+* Valider le modèle de décision tev1 sur une vraie partie (Ollama 0.40.4) : part des réflexes, confiance, écart aux prises de Qwen.
 * Mesure d'énergie (CodeCarbon pour Ollama, EcoLogits pour les API) à ajouter au bilan de coût.
 * Le protocole expérimental : hypothèses, 5 runs × 2 configurations au moins, baseline (E1, E2).
 * Exploiter les mesures déjà instrumentées pour l'excellence : décalage événement → indicateur sous

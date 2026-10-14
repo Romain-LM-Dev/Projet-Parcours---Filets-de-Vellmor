@@ -1,0 +1,11 @@
+# Ollama « rapide » (Qwen 2.5 3B + 1,5B) et, pour les réflexes, un modèle de décision open (« système 1 ») : tev1 0,8B
+# (Together AI, dérivé de Qwen 3.5, ~0,8 Go). Il ne génère pas de texte : il répond à des questions typées (une option, un
+# niveau, vrai/faux) en un ou deux tokens, avec les probabilités de chaque réponse. Il sert aux prises de routine et aux
+# bulletins de vote ; Qwen garde la réflexion (veillées, situations qui sortent de l'ordinaire).
+#   ollama pull qwen2.5:3b && ollama pull qwen2.5:1.5b && ollama pull tev1:0.8b      (Ollama 0.40.4 ou plus)
+extends: ollama_fast.yaml
+run: {label: ollama_open}
+llm:
+  reflection: adaptive
+  tiers:
+    reflexe: {provider: ollama_s1, model: "tev1:0.8b"}

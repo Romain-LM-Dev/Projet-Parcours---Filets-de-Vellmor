@@ -236,6 +236,86 @@ class OpenAICompatClient:
             await asyncio.sleep(min(30, 2 ** retries))
 
 
+def level_value(score: float, scale: list[float] | None) -> float:
+    """Le `score` d'une question à niveaux est la moyenne des niveaux (comptés depuis 0) pondérée par leurs probabilités :
+    3,4 tombe entre le niveau 3 et le niveau 4. Avec l'échelle des valeurs (ex. les tonnes de chaque niveau), on interpole."""
+    if not scale:
+        return score
+    s = min(max(score, 0.0), len(scale) - 1.0)
+    lo = int(s)
+    hi = min(lo + 1, len(scale) - 1)
+    return round(scale[lo] + (scale[hi] - scale[lo]) * (s - lo), 3)
+
+
+class SystemOneClient:
+    """Les modèles de décision « système 1 » d'Ollama (`POST /v1/systemone` ; tev1 demande Ollama 0.40.4 ou plus).
+
+    Au lieu de générer du texte, le modèle répond à des **questions typées** sur un état donné : `choice` (une option parmi
+    2 à 26), `score` (une échelle ordonnée de 2 à 26 niveaux, réponse : le niveau moyen pondéré par les probabilités),
+    `noul` (la probabilité que ce soit vrai). La réponse tient en un ou deux tokens, avec les probabilités de chaque option et
+    une confiance (la concentration de ces probabilités, pas la chance d'avoir raison) : c'est le réflexe, à une fraction du
+    coût d'un modèle de langage. On l'interroge avec la question typée que porte `hint["system_one"]`
+    (`{"state", "questions", "values"}`, voir `prompts.reflex_system_one`) et on rend un JSON comme celui d'un modèle de
+    langage (`{"prise": 3.3}`, `{"vote": "P1"}`), si bien que le reste du moteur ne voit pas la différence.
+    """
+
+    def __init__(self, name: str, base_url: str, cfg: dict, timeout_s: float | None = None, max_concurrency: int = 0):
+        self.name = name
+        self.url = base_url.rstrip("/") + "/systemone"
+        self.cfg = cfg
+        self.gate = ModelGate(max_concurrency) if max_concurrency and max_concurrency > 0 else None
+        self.http = httpx.AsyncClient(timeout=timeout_s or cfg["timeout_s"])
+
+    async def complete(self, model: str, messages: list[dict], hint: dict, tier: str) -> LLMResult:
+        t0 = time.monotonic()
+        if self.gate is not None:
+            await self.gate.acquire(model)
+        hint["_started"] = True
+        try:
+            return await self._ask(model, hint, t0)
+        finally:
+            if self.gate is not None:
+                self.gate.release()
+
+    async def _ask(self, model: str, hint: dict, t0: float) -> LLMResult:
+        spec = hint.get("system_one")
+        if not spec:
+            return LLMResult(None, "error", latency_s=0.0, detail="pas de question typée pour le système 1")
+        body = {"model": model, "state": spec["state"], "questions": spec["questions"], "keep_alive": "30m"}
+        try:
+            r = await self.http.post(self.url, json=body)
+        except httpx.TimeoutException:
+            return LLMResult(None, "timeout", latency_s=time.monotonic() - t0, detail="timeout")
+        except httpx.HTTPError as exc:
+            return LLMResult(None, "error", latency_s=time.monotonic() - t0, detail=str(exc) or type(exc).__name__)
+        if r.status_code != 200:
+            return LLMResult(None, "error", latency_s=time.monotonic() - t0, detail=f"HTTP {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        values = spec.get("values", {})
+        answers = data.get("answers") or {}
+        if isinstance(answers, list):                    # dans l'ordre des questions
+            answers = dict(zip(spec["questions"], answers))
+        out, confidence = {}, {}
+        for name, question in spec["questions"].items():
+            ans = answers.get(name)
+            if not isinstance(ans, dict):
+                continue
+            kind = question.get("type")                  # la réponse ne redit pas le type : c'est celui de la question
+            if kind == "choice" and ans.get("choice") is not None:
+                out[name] = ans["choice"]
+            elif kind == "score" and ans.get("score") is not None:
+                out[name] = level_value(float(ans["score"]), values.get(name))
+            elif kind == "noul" and ans.get("noul") is not None:
+                out[name] = ans["noul"]                  # probabilité que ce soit vrai
+            if ans.get("confidence") is not None:
+                confidence[name] = ans["confidence"]
+        if confidence:
+            out["_confiance"] = confidence
+        usage = data.get("usage") or {}
+        return LLMResult(json.dumps(out, ensure_ascii=False), "ok", int(usage.get("input_tokens", 0)),
+                         int(usage.get("output_tokens", 0)), time.monotonic() - t0)
+
+
 @dataclass
 class Usage:
     calls: int = 0
@@ -265,6 +345,9 @@ class LLMRouter:
             if prov == "scripted":
                 from .scripted import ScriptedClient
                 self.clients[prov] = ScriptedClient(pcfg, rng_seed)
+            elif pcfg.get("kind") == "systemone":
+                self.clients[prov] = SystemOneClient(prov, pcfg["base_url"], self.cfg, pcfg.get("timeout_s"),
+                                                     int(pcfg.get("max_concurrency", 0)))
             else:
                 self.clients[prov] = OpenAICompatClient(prov, pcfg["base_url"], pcfg.get("api_key_env"),
                                                         pcfg.get("rpm", 0), self.cfg, pcfg.get("timeout_s"),

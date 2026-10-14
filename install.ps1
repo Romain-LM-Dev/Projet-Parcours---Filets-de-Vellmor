@@ -18,6 +18,14 @@
   Télécharge aussi qwen2.5:7b (4,7 Go), pour l'option « Ollama · qualité » du menu. Par défaut, seuls les modèles du réglage
   rapide (qwen2.5:3b et qwen2.5:1.5b) sont téléchargés : ils suffisent et tiennent ensemble dans 6 Go de mémoire graphique.
 
+.PARAMETER Open
+  Télécharge aussi tev1:0.8b (0,8 Go), le modèle de décision open de l'option « Ollama · rapide + réflexes open » (réflexes
+  et bulletins de vote). Il demande Ollama 0.40.4 ou plus ; sans lui, ces décisions passent par qwen2.5:1.5b.
+
+.PARAMETER Data
+  Prépare le stockage de config/data.yaml : images Docker de PostgreSQL + pgvector et du stockage objet S3 (SeaweedFS), et
+  le modèle de plongement embeddinggemma (0,6 Go) pour le RAG vectoriel.
+
 .PARAMETER SkipTests
   Ne lance pas pytest à la fin.
 
@@ -34,6 +42,8 @@ param(
     [switch]$SkipKafka,
     [switch]$SkipOllama,
     [switch]$Quality,
+    [switch]$Open,
+    [switch]$Data,
     [switch]$SkipTests,
     [string]$GodotPath
 )
@@ -47,6 +57,8 @@ Set-Location -LiteralPath $PSScriptRoot
 # « qualité » (config/ollama.yaml), bien plus lent.
 $OllamaModels = @('qwen2.5:3b', 'qwen2.5:1.5b')
 if ($Quality) { $OllamaModels += 'qwen2.5:7b' }
+if ($Data) { $OllamaModels += 'embeddinggemma' }
+$OptionalModels = if ($Open) { @('tev1:0.8b') } else { @() }   # facultatif : Ollama 0.40.4 ou plus
 $PythonVersions = @('3.13', '3.12', '3.11', '3.10')   # versions supportées : 3.10 à 3.13
 
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -134,6 +146,11 @@ if (-not $SkipKafka) {
             docker compose pull kafka
             if ($LASTEXITCODE -eq 0) { Ok 'image Kafka (apache/kafka:3.8.0) téléchargée' }
             else { Warn "Le téléchargement de l'image Kafka a échoué." }
+            if ($Data) {
+                docker compose --profile data pull postgres objects
+                if ($LASTEXITCODE -eq 0) { Ok 'images PostgreSQL + pgvector et SeaweedFS (S3) téléchargées' }
+                else { Warn "Le téléchargement des images de stockage a échoué." }
+            }
         }
     }
 }
@@ -168,10 +185,14 @@ if (-not $SkipOllama) {
         if (-not $up) {
             Warn 'Le serveur Ollama ne répond pas sur localhost:11434 : lance l''application Ollama puis relance install.ps1.'
         } else {
-            foreach ($m in $OllamaModels) {
+            foreach ($m in $OllamaModels + $OptionalModels) {
                 Write-Host "    ollama pull $m"
                 & $ollama pull $m
-                if ($LASTEXITCODE -eq 0) { Ok "modèle $m disponible" } else { Warn "échec du téléchargement de $m" }
+                if ($LASTEXITCODE -eq 0) { Ok "modèle $m disponible" }
+                elseif ($OptionalModels -contains $m) {
+                    Warn "$m indisponible : il demande Ollama 0.40.4 ou plus (quitte Ollama, « winget upgrade Ollama.Ollama », relance)."
+                }
+                else { Warn "échec du téléchargement de $m" }
             }
         }
     }

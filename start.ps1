@@ -12,13 +12,17 @@
     puis le moteur `--bus kafka` ici (le service bridge ouvre le port 8765, pas le moteur).
   - Avec -Ollama : vérifie le serveur et les modèles, et présélectionne Ollama dans le menu. Par défaut le réglage
     « rapide » (Qwen 2.5 3B + 1,5B, qui tiennent ensemble dans 6 Go de mémoire graphique) ; -OllamaProfile quality
-    choisit le 7B (meilleur, mais bien plus lent : chaque changement de modèle coûte une trentaine de secondes).
+    choisit le 7B (meilleur, mais bien plus lent : chaque changement de modèle coûte une trentaine de secondes) ;
+    -OllamaProfile open ajoute le modèle de décision open tev1 (0,8B, Ollama 0.40.4 ou plus) pour les réflexes et les votes.
+  - Avec -Data : démarre PostgreSQL + pgvector et le stockage objet S3 (docker compose --profile data), charge le modèle
+    de plongement, et prend config/data.yaml : RAG vectoriel, historique dans PostgreSQL, archives des parties.
   - Avec -Auto : ancien comportement, sans menu : la partie démarre tout de suite (`python -m filets run`).
   Ctrl+C arrête le moteur ; .\stop.ps1 ferme aussi les services Kafka et le broker.
 
 .PARAMETER Kafka      Utilise Kafka (Docker Desktop doit être lancé).
 .PARAMETER Ollama     Vérifie Ollama et le présélectionne dans le menu (ou le fait utiliser avec -Auto).
-.PARAMETER OllamaProfile  fast (3B + 1,5B, défaut) ou quality (7B + 1,5B), avec -Ollama.
+.PARAMETER OllamaProfile  fast (3B + 1,5B, défaut), quality (7B + 1,5B) ou open (3B + 1,5B + tev1 0,8B), avec -Ollama.
+.PARAMETER Data       PostgreSQL + pgvector et stockage objet (Docker Desktop doit être lancé) ; configuration config/data.yaml.
 .PARAMETER NoGodot    Ne lance pas Godot.
 .PARAMETER NoEngine   Ne lance pas le moteur : à utiliser quand il tourne déjà (services ou Godot fermés par erreur, une partie
                       est en cours) ; relance les services Kafka et Godot, qui se rattachent à la partie en cours.
@@ -34,6 +38,7 @@
 .EXAMPLE
   .\start.ps1
   .\start.ps1 -Kafka -Ollama
+  .\start.ps1 -Kafka -Ollama -OllamaProfile open -Data
   .\start.ps1 -Mode async -Agents 12
   .\start.ps1 -Auto -Mode sync -Seasons 5
 #>
@@ -41,7 +46,8 @@
 param(
     [switch]$Kafka,
     [switch]$Ollama,
-    [ValidateSet('fast', 'quality')][string]$OllamaProfile = 'fast',
+    [ValidateSet('fast', 'quality', 'open')][string]$OllamaProfile = 'fast',
+    [switch]$Data,
     [switch]$NoGodot,
     [switch]$NoEngine,
     [switch]$Ui,
@@ -64,9 +70,14 @@ $WsPort     = 8765
 # « fast » : les deux modèles tiennent ensemble dans 6 Go, donc aucun échange ; « quality » : le 7B prend presque toute la carte.
 if ($OllamaProfile -eq 'quality') {
     $OllamaModels = @('qwen2.5:7b', 'qwen2.5:1.5b'); $OllamaLlm = 'ollama'; $OllamaConfig = 'config/ollama.yaml'
+} elseif ($OllamaProfile -eq 'open') {
+    $OllamaModels = @('qwen2.5:3b', 'qwen2.5:1.5b'); $OllamaLlm = 'ollama_open'; $OllamaConfig = 'config/ollama_open.yaml'
 } else {
     $OllamaModels = @('qwen2.5:3b', 'qwen2.5:1.5b'); $OllamaLlm = 'ollama_fast'; $OllamaConfig = 'config/ollama_fast.yaml'
 }
+# Modèles facultatifs : s'ils manquent, la partie se joue quand même (les réflexes passent par Qwen 1,5B).
+$OptionalModels = if ($OllamaProfile -eq 'open') { @('tev1:0.8b') } else { @() }
+$EmbedModel = 'embeddinggemma'      # plongements du RAG vectoriel (-Data), voir config/data.yaml
 
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Ok($msg)   { Write-Host "    [ok] $msg" -ForegroundColor Green }
@@ -85,8 +96,8 @@ if ($busy) {
     Fail "Le port $WsPort est déjà utilisé (processus $who, PID $($busy.OwningProcess)) : un ancien moteur ou pont tourne encore. Lance .\stop.ps1, ou ferme-le, puis relance."
 }
 
-# --- Ollama --------------------------------------------------------------------------------------------------
-if ($Ollama) {
+# --- Ollama (modèles de langage, et modèle de plongement avec -Data) -----------------------------------------
+if ($Ollama -or $Data) {
     Step 'Ollama'
     $ollamaExe = (Get-Command ollama -ErrorAction SilentlyContinue).Source
     if (-not $ollamaExe) {
@@ -108,14 +119,39 @@ if ($Ollama) {
     }
     if ($null -eq $tags) { Fail 'Le serveur Ollama ne répond pas sur localhost:11434.' }
     Ok 'serveur Ollama à l''écoute'
-    foreach ($m in $OllamaModels) {
-        if ($tags -contains $m) { Ok "modèle $m présent" }
-        else {
-            Write-Host "    ollama pull $m"
-            & $ollamaExe pull $m
-            if ($LASTEXITCODE -ne 0) { Fail "Impossible de télécharger $m." }
+    $required = @(); $optional = @()
+    if ($Ollama) { $required += $OllamaModels; $optional += $OptionalModels }
+    if ($Data) { $required += $EmbedModel }
+    foreach ($m in $required + $optional) {
+        if ($tags -contains $m -or $tags -contains "${m}:latest") { Ok "modèle $m présent"; continue }
+        Write-Host "    ollama pull $m"
+        & $ollamaExe pull $m
+        if ($LASTEXITCODE -eq 0) { Ok "modèle $m téléchargé" }
+        elseif ($optional -contains $m) {
+            Warn "$m indisponible (il demande Ollama 0.40.4 ou plus : quitte Ollama, puis « winget upgrade Ollama.Ollama »)."
+            Warn 'La partie se jouera quand même : les réflexes et les votes passeront par Qwen 1,5B.'
         }
+        else { Fail "Impossible de télécharger $m." }
     }
+}
+
+# --- Données : PostgreSQL + pgvector, stockage objet S3 --------------------------------------------------------
+if ($Data) {
+    Step 'PostgreSQL + pgvector et stockage objet'
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Fail 'Docker est introuvable (installe Docker Desktop).' }
+    docker info *> $null
+    if ($LASTEXITCODE -ne 0) { Fail "Docker Desktop n'est pas démarré : lance-le, attends qu'il soit prêt, puis relance." }
+    docker compose --profile data up -d postgres objects
+    if ($LASTEXITCODE -ne 0) { Fail 'docker compose --profile data up a échoué.' }
+    $ready = $false
+    for ($i = 0; $i -lt 30 -and -not $ready; $i++) {
+        docker exec filets-postgres pg_isready -U filets -d filets *> $null
+        if ($LASTEXITCODE -eq 0) { $ready = $true } else { Start-Sleep -Seconds 1 }
+    }
+    if (-not $ready) { Fail 'PostgreSQL ne répond pas. Vérifie avec : docker compose logs postgres' }
+    Ok 'PostgreSQL + pgvector prêt (127.0.0.1:5433)'
+    Ok 'stockage objet S3 (127.0.0.1:8333, bucket « filets »)'
+    if (-not $Config) { $Config = 'config/data.yaml' }
 }
 
 # --- Kafka ---------------------------------------------------------------------------------------------------
@@ -142,8 +178,10 @@ if ($Kafka) {
 
     Step 'Services (indicators, store, bridge)'
     $shell = (Get-Process -Id $PID).Path   # powershell.exe (ou pwsh.exe), le même que celui-ci
+    # la même configuration que le moteur : avec -Data, le service store écrit dans PostgreSQL
+    $svcConfig = if ($Config) { " --config '$Config'" } else { '' }
     foreach ($svc in @('indicators', 'store', 'bridge')) {
-        $cmd = "`$Host.UI.RawUI.WindowTitle = 'FILETS - $svc'; & '$venvPython' -m filets.services.$svc"
+        $cmd = "`$Host.UI.RawUI.WindowTitle = 'FILETS - $svc'; & '$venvPython' -m filets.services.$svc$svcConfig"
         $p = Start-Process -FilePath $shell -WorkingDirectory $PSScriptRoot -PassThru `
              -ArgumentList @('-NoProfile', '-NoExit', '-Command', $cmd)
         Add-Content -Path $pidFile -Value $p.Id

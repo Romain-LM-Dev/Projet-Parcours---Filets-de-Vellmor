@@ -72,6 +72,18 @@ memory:
 rag:
   corpus_dir: corpus
   top_k: 3
+  # bm25     : corpus et souvenirs cherchés en mémoire, par mots (par défaut : aucun service, aucun calcul de vecteur).
+  # pgvector : corpus et souvenirs rangés dans PostgreSQL + pgvector avec leur vecteur, cherchés par le sens
+  #            (voir config/data.yaml et `vectors.py`). Si la base tombe en cours de partie, BM25 prend le relais.
+  backend: bm25
+  min_score: 0.0                       # pgvector : similarité cosinus minimale d'un passage retenu
+  embeddings: {kind: hash, dim: 384}   # pgvector : hash (sans modèle, pour les tests) | ollama (modèle de plongement)
+
+storage:
+  history: sqlite            # historique des parties : sqlite (output.history_db) | postgres
+  postgres:
+    dsn: "postgresql://filets:filets@127.0.0.1:5433/filets"   # la variable FILETS_PG_DSN l'emporte (docker-compose : port 5433)
+  objects: {kind: none}      # fichiers bruts (corpus, archives des parties) : none | local | s3 (voir config/data.yaml)
 
 llm:
   temperature: 0.7
@@ -96,7 +108,10 @@ llm:
     # json_schema : Ollama contraint la réponse au schéma demandé (tous les champs, dans l'ordre) ; sinon JSON libre.
     # seed : Ollama respecte la graine envoyée (stable par partie, agent, saison, nature, tour) : même prompt, même réponse.
     ollama:     {base_url: "http://localhost:11434/v1", api_key_env: null, rpm: 0, timeout_s: 240, max_concurrency: 4,
-                 json_schema: true, seed: true}
+                 json_schema: true, seed: true, local: true}
+    # Modèles de décision « système 1 » d'Ollama (POST /v1/systemone, Ollama ≥ 0.40.4 pour tev1) : une question typée, une
+    # réponse d'un token avec ses probabilités. Utilisés par le niveau `reflexe` (voir config/ollama_open.yaml).
+    ollama_s1:  {base_url: "http://localhost:11434/v1", kind: systemone, local: true, timeout_s: 60, max_concurrency: 4}
     groq:       {base_url: "https://api.groq.com/openai/v1", api_key_env: GROQ_API_KEY, rpm: 25}
     openrouter: {base_url: "https://openrouter.ai/api/v1", api_key_env: OPENROUTER_API_KEY, rpm: 15}
     gemini:     {base_url: "https://generativelanguage.googleapis.com/v1beta/openai", api_key_env: GEMINI_API_KEY, rpm: 10}

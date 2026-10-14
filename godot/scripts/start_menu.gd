@@ -33,6 +33,7 @@ var selected := -1
 var mode := "sync"
 var capacity_auto := true             # tant que le joueur n'a pas fixé le stock du lac, il suit le nombre de pêcheurs
 var speed_touched := false            # tant qu'il n'a pas choisi la vitesse, on propose celle qui convient au moteur d'IA
+var reflection_touched := false       # de même pour la réflexion (les réflexes « open » demandent la réflexion adaptative)
 var can_cancel := false
 var engine_state := ""
 var engine_detail := ""
@@ -405,10 +406,14 @@ func _build_ai_strip(col: Control) -> void:
 	opt_llm = _option([])
 	opt_llm.item_selected.connect(func(i: int) -> void:
 		_show_llm(i)
+		_suggest_reflection()
 		_suggest_speed())
 	strip.add_child(_ai_choice("Moteur d'IA", opt_llm, 236))
 	opt_reflection = _option([])
-	opt_reflection.item_selected.connect(func(i: int) -> void: _show_reflection(i))
+	opt_reflection.item_selected.connect(func(i: int) -> void:
+		if not _updating:
+			reflection_touched = true
+		_show_reflection(i))
 	strip.add_child(_ai_choice("Réflexion", opt_reflection, 130))
 	opt_speed = _option([])
 	opt_speed.tooltip_text = "Synchrone : rythme d'affichage. Asynchrone : le temps du monde suit le temps réel à cette vitesse, " \
@@ -572,8 +577,10 @@ func reset_all() -> void:
 	spin_growth.value = float(d.get("growth_rate", 1.0))
 	chk_stop_empty.button_pressed = bool(d.get("stop_on_extinction", true))
 	speed_touched = false
+	reflection_touched = false
 	_updating = false
 	_show_llm(opt_llm.selected)
+	_suggest_reflection()
 	_show_reflection(opt_reflection.selected)
 	_suggest_speed()
 	reset_population()
@@ -630,6 +637,19 @@ func _show_llm(i: int) -> void:
 func _show_reflection(i: int) -> void:
 	var opts: Array = catalog.get("reflections", [])
 	lbl_reflection_desc.text = str(opts[i]["detail"]) if i >= 0 and i < opts.size() else ""
+
+
+## Un moteur d'IA peut demander sa réflexion (le catalogue la donne : `reflection`) : les réflexes d'un modèle de décision
+## « open » ne servent qu'en réflexion adaptative. Tant que le joueur n'a pas choisi la sienne, on la propose.
+func _suggest_reflection() -> void:
+	if catalog.is_empty() or opt_reflection == null or reflection_touched:
+		return
+	var r := str(_llm_option().get("reflection", catalog.get("defaults", {}).get("reflection", "rapide")))
+	var was := _updating
+	_updating = true
+	_select_meta(opt_reflection, r)
+	_updating = was
+	_show_reflection(opt_reflection.selected)
 
 
 func _set_mode(m: String) -> void:

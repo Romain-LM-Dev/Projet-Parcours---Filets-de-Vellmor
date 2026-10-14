@@ -5,13 +5,16 @@ observations du lac) est découpé en passages et indexé par BM25. Le choix de 
 plutôt que d'un index vectoriel est délibéré pour ce premier build : le corpus est petit,
 écrit en français contrôlé, l'index tient en mémoire, il ne coûte aucun appel et le
 score est explicable lors de l'évaluation de la récupération (F2). La classe `Retriever`
-isole ce choix : un index vectoriel peut la remplacer sans toucher aux agents.
+isole ce choix : avec `rag.backend: pgvector`, `VectorRetriever` la remplace sans toucher aux agents (mêmes passages,
+mêmes droits, recherche par similarité de sens dans PostgreSQL + pgvector, voir `vectors.py`).
 
 Contrôle d'accès : un passage n'est visible que par les hameaux listés dans
 `visible_to` ; et jamais avant son `sim_time` (cohérence temporelle, C6).
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 import math
 import re
 import unicodedata
@@ -102,9 +105,11 @@ def render(text: str, values: dict) -> str:
 class Retriever:
     def __init__(self, corpus_dir: Path, values: dict):
         self.passages: list[Passage] = []
+        self.files: dict[str, Path] = {}          # document → fichier source
         for path in sorted(Path(corpus_dir).glob("*.md")):
             meta, body = _front_matter(path.read_text(encoding="utf-8"))
             doc_id = meta.get("id", path.stem)
+            self.files[doc_id] = path
             title = meta.get("title", doc_id)
             vis = [v.strip() for v in meta.get("visible_to", "all").split(",")]
             t = float(meta.get("sim_time", 0))
@@ -125,3 +130,63 @@ class Retriever:
         ]
         cands.sort(key=lambda x: -x[1])
         return cands[:k]
+
+    # interface asynchrone commune avec `VectorRetriever`
+    async def open(self) -> None:
+        pass
+
+    async def asearch(self, query: str, hamlet: str, horizon: float, k: int) -> list[tuple[Passage, float]]:
+        return self.search(query, hamlet, horizon, k)
+
+    async def aclose(self) -> None:
+        pass
+
+
+log = logging.getLogger("filets.rag")
+
+
+class VectorRetriever:
+    """Le corpus dans PostgreSQL + pgvector : les mêmes passages que `Retriever` (même découpage, mêmes valeurs rendues),
+    vectorisés une fois et gardés dans la base (une partie suivante avec le même corpus ne recalcule rien). Les fichiers
+    sources vont au stockage objet, et chaque passage garde la clé de son document. Si la base ne répond plus en cours de
+    partie, la recherche se rabat sur BM25, en mémoire : une décision n'est jamais privée de contexte pour autant."""
+
+    def __init__(self, corpus_dir: Path, values: dict, store, embedder, objects=None, min_score: float = 0.0):
+        self.local = Retriever(corpus_dir, values)
+        self.passages = self.local.passages
+        self.by_id = {p.id: p for p in self.passages}
+        self.store, self.embedder, self.objects, self.min_score = store, embedder, objects, min_score
+        digest = hashlib.sha1()
+        for p in self.passages:
+            digest.update("\x1f".join([p.id, p.title, p.text, ",".join(p.visible_to), repr(p.sim_time)]).encode() + b"\x1e")
+        self.corpus = digest.hexdigest()[:16]     # empreinte du corpus rendu : capacité, prix… sont dans le texte
+        self.degraded = False
+
+    async def open(self) -> None:
+        if await self.store.count_chunks(self.corpus) >= len(self.passages):
+            return                                # déjà vectorisé par une partie précédente
+        keys: dict[str, str] = {}
+        if self.objects is not None:
+            for doc_id, path in self.local.files.items():
+                keys[doc_id] = await self.objects.put_bytes(f"corpus/{self.corpus}/{path.name}", path.read_bytes())
+        vecs = await self.embedder.embed([f"{p.title} {p.text}" for p in self.passages])
+        await self.store.put_chunks(self.corpus, [
+            (p.id, p.title, p.text, p.visible_to, p.sim_time, keys.get(p.id.split("#", 1)[0]), v)
+            for p, v in zip(self.passages, vecs)])
+
+    async def asearch(self, query: str, hamlet: str, horizon: float, k: int) -> list[tuple[Passage, float]]:
+        if not self.degraded:
+            try:
+                [q] = await self.embedder.embed([query])
+                rows = await self.store.search_chunks(self.corpus, q, hamlet, horizon, k, self.min_score)
+                return [(self.by_id[r["id"]], float(r["score"])) for r in rows if r["id"] in self.by_id]
+            except Exception as exc:              # base ou modèle de plongement perdus : BM25 prend le relais
+                self.degraded = True
+                log.warning("recherche vectorielle indisponible (%s) : BM25 en mémoire prend le relais", exc)
+        return self.local.search(query, hamlet, horizon, k)
+
+    def search(self, query: str, hamlet: str, horizon: float, k: int) -> list[tuple[Passage, float]]:
+        return self.local.search(query, hamlet, horizon, k)
+
+    async def aclose(self) -> None:
+        pass

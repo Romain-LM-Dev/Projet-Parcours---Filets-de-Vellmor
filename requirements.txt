@@ -1,7 +1,17 @@
 pyyaml>=6.0
 httpx>=0.27
 jsonschema>=4.21
+# bus : le moteur publie avec confluent-kafka ; les services (pont, indicateurs, historique) sont en asyncio avec aiokafka
 confluent-kafka>=2.4
+aiokafka>=0.11
+# API (REST + WebSocket pour Godot)
+fastapi>=0.115
+uvicorn>=0.30
+# stockage (config/data.yaml) : PostgreSQL + pgvector en asynchrone, stockage objet S3 en asynchrone
+asyncpg>=0.29
+pgvector>=0.3
+miniopy-async>=1.21
+# tests et clients de bout en bout (le client WebSocket qui joue le rôle de Godot)
 websockets>=13.0
 pytest>=8.0
 # facultatif, mesure d'énergie des calculs locaux (E4) : codecarbon
