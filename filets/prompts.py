@@ -185,7 +185,21 @@ def lake_reminder(obs: dict) -> str:
         return ""
     est = obs["stock_estimate"]
     return (f"Rappel : le lac est à {100 * est / cap:.0f} % ({lake_level(est, cap, obs.get('collapse_ratio', 0.05))}) ; "
-            "ce que tu constates toi-même compte plus que ce qu'on a pu dire aux veillées passées.\n" + surplus_line(obs))
+            "pour l'état du lac, ce que tu constates toi-même compte plus que ce qu'on a pu en dire aux veillées passées.\n"
+            + surplus_line(obs))
+
+
+def rule_reminder(obs: dict) -> str:
+    """La règle votée qui s'applique à ce pêcheur, rappelée juste avant la question (les petits modèles lisent surtout la fin).
+    Sans ce rappel, ils raisonnaient sur le lac seul et dépassaient le quota qu'ils venaient de voter : 0 pêcheur sur 8 le
+    respectait. Le pêcheur reste libre de tricher ; il sait seulement ce que cela veut dire."""
+    rule = obs.get("rule")
+    if not rule:
+        return ""
+    who = "tu l'as soutenue" if rule["supported"] else "tu ne l'as pas soutenue, mais la vallée l'a adoptée"
+    seen = " : les autres le verront au marché et pourront te le reprocher à la veillée" if rule.get("visible") else ""
+    return (f"Règle votée à la veillée : pas plus de {rule['quota']:g} t par pêcheur cette saison ({who}). "
+            f"Pêcher plus, c'est trahir la parole de la vallée{seen}.\n")
 
 
 def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dict:
@@ -233,11 +247,13 @@ def context_block(obs: dict, brief: bool = False) -> str:
 
 
 def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[dict]:
-    just = "<1 phrase courte : ce que tu constates du lac et ce que tu en conclus>" if brief else \
-        "<1 à 3 phrases, à la première personne : ce que tu constates du lac et ce que tu en conclus>"
+    seen = "ce que tu constates du lac, ce que tu fais de la règle votée" if obs.get("rule") else "ce que tu constates du lac"
+    just = f"<1 phrase courte : {seen}, et ce que tu en conclus>" if brief else \
+        f"<1 à 3 phrases, à la première personne : {seen}, et ce que tu en conclus>"
     ask = (
         "C'est le moment de décider combien tu vas pêcher cette saison.\n"
         + lake_reminder(obs)
+        + rule_reminder(obs)
         + ("Une rumeur qui te concerne, ou qui parle du lac, peut peser sur ta décision : tiens-en compte comme le "
            "ferait ton personnage.\n" if obs.get("rumors") else "")
         + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "

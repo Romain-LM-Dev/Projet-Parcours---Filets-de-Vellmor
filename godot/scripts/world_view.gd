@@ -945,7 +945,7 @@ func _draw_tokens(ci: CanvasItem) -> void:
 		var info: Dictionary = a["info"]
 		var on_water := lake_rn(a["pos"]) < 0.97 and assembly_scope != "valley"
 		if on_water:
-			_draw_boat(ci, p, float(a["heading"]), Art.arch_color(str(info.get("archetype", ""))), float(a["fishing"]))
+			_draw_boat(ci, p, float(a["heading"]), Art.agent_color(info), float(a["fishing"]))
 		Art.draw_token(ci, p - (Vector2(0, 7) if on_water else Vector2.ZERO), info, 0.78 if on_water else 1.0, 1.0,
 			id == selected, t)
 		var first := str(info.get("name", id)).split(" ")[0]
@@ -1026,7 +1026,7 @@ func _draw_bubbles(ci: CanvasItem) -> void:
 		rect.position.x = clamp(rect.position.x, 4.0, size.x - rect.size.x - 4.0)
 		rect.position.y = clamp(rect.position.y, 4.0, size.y - rect.size.y - 4.0)
 		placed.append(rect)
-		var col := Art.arch_color(str(info.get("archetype", "")))
+		var col := Art.agent_color(info)
 		# queue de la bulle
 		var anchor := Vector2(clamp(pb.x, rect.position.x + 14, rect.end.x - 14), clamp(pb.y, rect.position.y + 10, rect.end.y - 10))
 		var tdir := (pb - anchor).normalized()
@@ -1048,7 +1048,7 @@ func _draw_signs(ci: CanvasItem) -> void:
 		var c := _px(HAMLET_POS[h]) + Vector2(0, -96)
 		var w := tf.get_string_size(h, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 24
 		var r := Rect2(c - Vector2(w / 2, 0), Vector2(w, 26))
-		Art.box(Color(0.10, 0.08, 0.06, 0.72 * sa), 6, Color(Color("#d8bf8c"), 0.5 * sa), 1).draw(ci.get_canvas_item(), r)
+		Art.box(Color(0.10, 0.08, 0.06, 0.72 * sa), 6, Color(Art.HAMLET.get(h, Color("#d8bf8c")), 0.95 * sa), 2).draw(ci.get_canvas_item(), r)
 		ci.draw_string(tf, r.position + Vector2(12, 19), h, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(Color("#f3e3bd"), sa))
 	var ep := _px(ELDER_POS) + Vector2(0, -50)
 	var lbl := "Chez l'ancien"

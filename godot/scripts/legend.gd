@@ -11,10 +11,10 @@ func _draw() -> void:
 	var f := Art.font("ui")
 	var x := 10.0
 	var y := size.y / 2.0
-	for arch in ["ancienne_famille", "nouveau_venu", "taiseux", "beau_parleur", "ancien"]:
-		Art.draw_token(self, Vector2(x + 9, y), {"archetype": arch, "role": "ancien" if arch == "ancien" else "pecheur",
+	for h in ["Ostrel", "Bramois", "Tilque", "Hennad", "ancien"]:
+		Art.draw_token(self, Vector2(x + 9, y), {"hamlet": h, "role": "ancien" if h == "ancien" else "pecheur",
 			"kind": "llm", "tier": "petit", "name": " "}, 0.7)
-		var lbl: String = Art.ARCH_LABEL[arch]
+		var lbl: String = "l'ancien" if h == "ancien" else h
 		draw_string(f, Vector2(x + 22, y + 4), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Art.MUTED)
 		x += 30 + f.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
 	x += 10
@@ -24,7 +24,6 @@ func _draw() -> void:
 		[{"kind": "rule", "tier": ""}, "agent à règles"]]
 	for k in kinds:
 		var info: Dictionary = k[0].duplicate()
-		info["archetype"] = "x"
 		info["name"] = " "
 		Art.draw_token(self, Vector2(x + 9, y), info, 0.7)
 		draw_string(f, Vector2(x + 22, y + 4), k[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Art.MUTED)

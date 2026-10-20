@@ -161,7 +161,7 @@ func _draw() -> void:
 		var label := "%s · %d" % [str(h), n]
 		var w := f.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 14
 		var r := Rect2(c + Vector2(-w / 2.0, -size.y * 0.115 - 22), Vector2(w, 18))
-		Art.box(Color(0.08, 0.06, 0.04, 0.75), 6).draw(get_canvas_item(), r)
+		Art.box(Color(0.08, 0.06, 0.04, 0.75), 6, Art.HAMLET.get(str(h), Color("#c4a978")), 2).draw(get_canvas_item(), r)
 		draw_string(f, r.position + Vector2(7, 13), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#f3e3bd"))
 	# l'ancien
 	if elder_on:
@@ -185,7 +185,7 @@ func _draw() -> void:
 
 func _token(i: int, p: Vector2, sel: bool, alpha: float = 1.0) -> void:
 	var fi: Dictionary = fishers[i]
-	var info := {"role": "pecheur", "archetype": fi["archetype"], "kind": fi["kind"], "tier": _tier_of(fi),
+	var info := {"role": "pecheur", "hamlet": fi["hamlet"], "kind": fi["kind"], "tier": _tier_of(fi),
 		"name": str(fi["first_name"])}
 	Art.draw_token(self, p, info, 0.82, alpha, sel, _t)
 	if sel or i == _hover:

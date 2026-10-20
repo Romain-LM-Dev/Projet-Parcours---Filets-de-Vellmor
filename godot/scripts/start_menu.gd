@@ -914,7 +914,7 @@ func _refresh_all(_full: bool = true) -> void:
 		(r["del"] as Button).disabled = fishers.size() <= 1
 	if selected >= 0 and selected < fishers.size():
 		var f: Dictionary = fishers[selected]
-		var hc := Art.arch_color(str(f["archetype"])).lightened(0.2).to_html(false)
+		var hc := Art.agent_color(f).lightened(0.2).to_html(false)
 		var arch: Dictionary = _archetypes()[_arch_index(str(f["archetype"]))]
 		var s := "[font=res://fonts/alegreya-latin-700-normal.woff2][font_size=20][color=#%s]%s[/color][/font_size][/font]  [color=#6f7896]F%02d[/color]\n" % [hc, str(f["first_name"]), selected + 1]
 		s += "%s · hameau %s\n[color=#9ba1ba]%s[/color]\n\n" % [str(arch["label"]), str(f["hamlet"]), str(arch["summary"])]

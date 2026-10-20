@@ -1018,7 +1018,7 @@ func _render_inspector() -> void:
 	if a == null:
 		return
 	var info: Dictionary = a["info"]
-	var hc := Art.arch_color(str(info.get("archetype", ""))).lightened(0.2).to_html(false)
+	var hc := Art.agent_color(info).lightened(0.2).to_html(false)
 	var s := "[font=res://fonts/alegreya-latin-700-normal.woff2][font_size=22][color=#%s]%s[/color][/font_size][/font]  [color=#6f7896]%s[/color]\n" % [hc, _esc(str(info.get("name", selected))), selected]
 	var kind := "agent à règles" if str(info.get("kind", "")) == "rule" else "agent LLM · modèle %s" % str(info.get("tier", ""))
 	s += "%s · hameau %s · %s · %d ans de pêche\n" % [str(info.get("archetype_label", "")), str(info.get("hamlet", "")), kind,
@@ -1079,7 +1079,7 @@ func _who(id: String) -> String:
 	var a = _agent(id)
 	if a == null:
 		return id
-	var col := Art.arch_color(str(a["info"].get("archetype", ""))).lightened(0.15)
+	var col := Art.agent_color(a["info"]).lightened(0.15)
 	return "[b][color=#%s]%s[/color][/b] [color=#6f7896]%s[/color]" % [col.to_html(false), str(a["info"].get("name", id)).split(" ")[0], id]
 
 

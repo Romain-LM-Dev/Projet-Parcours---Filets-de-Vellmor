@@ -335,6 +335,9 @@ class World:
             "price": self.econ["price_per_tonne"], "boat_capacity": self.max_catch,
             "min_catch": self.min_catch, "own_history": own, "norms": norm_lines, "known_catches": catches_txt,
             "last_season_catches": sorted(last_catches.values()),
+            # la règle votée qui s'applique à ce pêcheur, et s'il l'a soutenue (rappelée juste avant la question de prise)
+            "rule": ({"quota": norm.quota, "supported": agent.id in norm.supporters, "visible": self.visible}
+                     if norm else None),
             # chaque souvenir porte sa date : une parole de la veillée d'il y a deux saisons (« le lac a l'air bien rempli »)
             # ne doit pas passer pour l'état du lac d'aujourd'hui
             "pinned": [m.text for m in pinned],

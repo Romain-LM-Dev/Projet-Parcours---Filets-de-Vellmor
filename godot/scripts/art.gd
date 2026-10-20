@@ -23,14 +23,15 @@ const PROMISE := Color("#e7c27a")
 const INCIDENT := Color("#f39c4a")
 const INJECT := Color("#ffd166")
 
-# --- archétypes
-const ARCH := {
-	"ancienne_famille": Color("#5fa3e0"),
-	"nouveau_venu": Color("#f2864a"),
-	"taiseux": Color("#b78fd6"),
-	"beau_parleur": Color("#3fc4b0"),
-	"ancien": Color("#e2bd6a"),
+# --- hameaux : un pêcheur a la couleur de son hameau ; l'ancien a la sienne
+const HAMLET := {
+	"Ostrel": Color("#5fa3e0"),
+	"Bramois": Color("#f2864a"),
+	"Tilque": Color("#b78fd6"),
+	"Hennad": Color("#3fc4b0"),
 }
+const ELDER := Color("#e2bd6a")
+# --- archétypes (écrits en toutes lettres dans l'inspecteur)
 const ARCH_LABEL := {
 	"ancienne_famille": "famille ancienne", "nouveau_venu": "nouveau venu",
 	"taiseux": "taiseux", "beau_parleur": "beau parleur", "ancien": "l'ancien",
@@ -39,8 +40,11 @@ const ARCH_LABEL := {
 static var _fonts := {}
 
 
-static func arch_color(arch: String) -> Color:
-	return ARCH.get(arch, MUTED)
+## Couleur d'un agent : celle de son hameau (`info` : la fiche de l'agent, avec `hamlet` et `role`).
+static func agent_color(info: Dictionary) -> Color:
+	if str(info.get("role", "")) == "ancien":
+		return ELDER
+	return HAMLET.get(str(info.get("hamlet", "")), MUTED)
 
 
 static func _load_font(files: Array) -> Font:
@@ -105,14 +109,13 @@ static func box(bg: Color, radius: int = 10, border: Color = Color(0, 0, 0, 0), 
 
 
 ## Pion d'un agent. Forme = nature de l'agent (rond = LLM, carré arrondi = agent à règles),
-## anneau = taille du modèle (épais doré = grand, fin = petit), couleur = archétype.
+## anneau = taille du modèle (épais doré = grand, fin = petit), couleur = hameau.
 static func draw_token(ci: CanvasItem, p: Vector2, info: Dictionary, scale: float = 1.0, alpha: float = 1.0,
 		selected: bool = false, pulse: float = 0.0) -> void:
 	var role := str(info.get("role", "pecheur"))
-	var arch := str(info.get("archetype", ""))
 	var kind := str(info.get("kind", "llm"))
 	var tier := str(info.get("tier", ""))
-	var col := arch_color(arch)
+	var col := agent_color(info)
 	var r := (13.0 if role == "ancien" else 11.0) * scale
 	# ombre portée
 	ci.draw_circle(p + Vector2(1.5, 2.5) * scale, r + 2.0 * scale, Color(0, 0, 0, 0.30 * alpha))
