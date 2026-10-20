@@ -50,16 +50,15 @@ REFLEX_SCHEMA = {"type": "object", "properties": {"prise": {"type": "number"}}, 
 
 
 def boat_line(obs: dict) -> str:
-    lo = obs.get("min_catch", 0.0)
+    lo, hi = obs.get("min_catch", 0.0), round(obs["boat_capacity"], 2)
     if lo:
-        return (f"Une sortie rapporte au moins {lo:g} t (on ne revient jamais bredouille), et ta barque au plus "
-                f"{obs['boat_capacity']:.0f} tonnes par saison.")
-    return f"Ta barque rapporte au plus {obs['boat_capacity']:.0f} tonnes par saison."
+        return f"Une sortie rapporte au moins {lo:g} t (on ne revient jamais bredouille) et au plus {hi:g} t par saison."
+    return f"Une sortie rapporte au plus {hi:g} t par saison."
 
 
 def catch_range(obs: dict) -> str:
     lo = obs.get("min_catch", 0.0)
-    return f"entre {lo:g} et {obs['boat_capacity']:.0f}" + ("" if lo else " ; 0 si tu restes à quai")
+    return f"entre {lo:g} et {round(obs['boat_capacity'], 2):g}" + ("" if lo else " ; 0 si tu restes à quai")
 
 
 def reflex_messages(p, obs: dict) -> list[dict]:

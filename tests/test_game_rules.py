@@ -44,6 +44,31 @@ def test_a_quota_or_a_promise_below_the_minimum_counts_as_the_minimum(tmp_path):
     assert world.promises[(b.id, 2)][0] == 1.0
 
 
+# ---------------------------------------------------------------- au plus capacité du lac / (2 × pêcheurs)
+def test_no_trip_takes_more_than_the_lake_capacity_over_twice_the_fishers(tmp_path):
+    events = play(tmp_path, run_id="plafond", seasons=3, time__mode="sync")
+    start = events[0]["payload"]
+    limit = start["lake"]["capacity"] / (2 * start["population"]["fishers"])
+    catches = [e["payload"] for e in events if e["type"] == "catch"]
+    assert limit == 6.25 and catches and all(1.0 <= c["requested"] <= limit for c in catches)
+
+
+def test_a_quota_or_a_promise_above_the_limit_counts_as_the_limit(tmp_path):
+    world, asm = world_with_assembly(tmp_path)
+    a, b = world.fishers[:2]
+    speak(world, asm, a, proposition_quota=9.0)
+    speak(world, asm, b, promesse=8.0)
+    assert world.max_catch == 6.25
+    assert [p.quota for p in asm.proposals.values()] == [6.25]
+    assert world.promises[(b.id, 2)][0] == 6.25
+
+
+def test_the_ai_is_told_the_limit_of_a_trip():
+    obs = {**obs_for(38.0, hist(100.0, 70.0)), "min_catch": 1.0, "boat_capacity": 6.25}
+    text = catch_messages(PERSONA, obs, 100.0)[1]["content"]
+    assert "au plus 6.25 t" in text and "entre 1 et 6.25" in text
+
+
 # ---------------------------------------------------------------- au moins la moitié
 @pytest.mark.parametrize("supporters, adopted", [(4, True), (3, False)])
 def test_half_of_the_fishers_present_is_enough_to_adopt_a_rule(tmp_path, supporters, adopted):

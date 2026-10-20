@@ -29,7 +29,8 @@ lake:
 economy:
   price_per_tonne: 100        # écus
   upkeep_per_season: 150      # coût de la vie
-  boat_capacity: 10           # prise maximale par saison et par pêcheur (tonnes)
+  boat_capacity: 10           # prise maximale par saison et par pêcheur (tonnes) ; une sortie est aussi plafonnée à
+                              # capacité du lac / (2 × pêcheurs) : 6,25 t pour 100 t et 8 pêcheurs
   min_catch: 1                # prise minimale d'une sortie (tonnes) : on ne revient jamais bredouille
 
 scenario:

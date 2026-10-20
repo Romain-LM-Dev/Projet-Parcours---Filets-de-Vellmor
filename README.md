@@ -238,7 +238,7 @@ Une **saison** dure 30 jours simulés :
 Lac : capacité `12,5 t × nombre de pêcheurs` (même stock par tête quand on change d'échelle) ou limite choisie dans le menu,
 croissance logistique de taux `r` (1 par défaut, réglable dans le menu), rendement durable maximal `r·K/4` par saison, atteint quand on
 ramène le lac à la moitié de sa capacité. Économie : 100 écus la tonne, 150 écus de coût de la vie
-par saison, 120 écus de dette pour les nouveaux venus, barque limitée à 10 t.
+par saison, 120 écus de dette pour les nouveaux venus, une sortie rapporte entre 1 t et la capacité du lac divisée par deux fois le nombre de pêcheurs (6,25 t pour 100 t et 8 pêcheurs : à eux tous, la moitié du lac au plus), et jamais plus que la barque (10 t).
 
 Population (cycle de quatre archétypes de la fiche, répartis dans les quatre hameaux) :
 famille ancienne prudente, nouveau venu endetté, taiseux qui relève ses filets en cachette, beau

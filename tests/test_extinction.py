@@ -20,8 +20,9 @@ def kinds(events, kind):
 
 
 def tiny_lake(tmp_path, seasons=6, mode="sync", **over):
-    """Huit pêcheurs sur un lac de 15 t : les prises demandées le vident dès la première saison."""
-    return cfg_for(tmp_path, seasons=seasons, time__mode=mode, lake__capacity=15.0, **over)
+    """Huit pêcheurs sur un lac de 15 t parti à 40 % (6 t) : à eux tous ils peuvent en prendre la moitié de la capacité
+    (7,5 t), plus qu'il n'en reste : il est vide dès la première saison."""
+    return cfg_for(tmp_path, seasons=seasons, time__mode=mode, lake__capacity=15.0, lake__initial_ratio=0.4, **over)
 
 
 # ---------------------------------------------------------------- le lac

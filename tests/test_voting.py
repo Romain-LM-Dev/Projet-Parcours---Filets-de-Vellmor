@@ -37,13 +37,13 @@ def speak(world, asm, agent, **data):
 
 def test_nearby_quotas_are_one_proposal(tmp_path):
     world, asm = world_with_assembly(tmp_path)
-    for a, q in zip(world.fishers, (7.0, 7.3, 7.4, 7.5, 4.2, 4.3)):
+    for a, q in zip(world.fishers, (5.0, 5.3, 5.4, 5.5, 2.2, 2.3)):
         speak(world, asm, a, proposition_quota=q)
-    assert sorted(p.quota for p in asm.proposals.values()) == [4.2, 7.0]          # 7,3 / 7,4 / 7,5 rejoignent 7,0 ; 4,3 rejoint 4,2
+    assert sorted(p.quota for p in asm.proposals.values()) == [2.2, 5.0]          # 5,3 / 5,4 / 5,5 rejoignent 5,0 ; 2,3 rejoint 2,2
     by = {}
     for aid, (pid, _, _) in asm.support.items():
         by.setdefault(asm.proposals[pid].quota, []).append(aid)
-    assert len(by[7.0]) == 4 and len(by[4.2]) == 2
+    assert len(by[5.0]) == 4 and len(by[2.2]) == 2
 
 
 def test_distant_quotas_stay_apart(tmp_path):
@@ -55,11 +55,11 @@ def test_distant_quotas_stay_apart(tmp_path):
 
 def test_a_majority_on_close_quotas_adopts_a_rule(tmp_path):
     world, asm = world_with_assembly(tmp_path)
-    quotas = [7.0, 7.3, 7.4, 7.5, 7.2, 4.0, 3.0, 2.0]
+    quotas = [5.0, 5.3, 5.4, 5.5, 5.2, 3.0, 2.0, 1.0]
     for a, q in zip(world.fishers, quotas):
         speak(world, asm, a, proposition_quota=q)
     world.close_assembly(asm)
-    assert len(world.norms) == 1 and world.norms[0].quota == 7.0 and len(world.norms[0].supporters) == 5
+    assert len(world.norms) == 1 and world.norms[0].quota == 5.0 and len(world.norms[0].supporters) == 5
 
 
 def test_the_closing_vote_counts_what_people_said_without_supporting(tmp_path):
@@ -103,7 +103,7 @@ def test_votes_are_support_events_tied_to_the_voters_last_speech(tmp_path):
 
 def test_the_tolerances_are_settings(tmp_path):
     world, asm = world_with_assembly(tmp_path, "vote-cfg", scenario__proposal_merge_tolerance=0.0)
-    for a, q in zip(world.fishers, (7.0, 7.3)):
+    for a, q in zip(world.fishers, (5.0, 5.3)):
         speak(world, asm, a, proposition_quota=q)
     assert len(asm.proposals) == 2
 

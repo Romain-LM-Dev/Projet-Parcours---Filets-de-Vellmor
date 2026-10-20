@@ -110,11 +110,12 @@ def test_the_world_text_gives_the_old_sayings_with_the_right_tonnes():
 
 
 # ---------------------------------------------------------------- de bout en bout
-def play_greedy(tmp_path, run_id, capacity=40.0, seasons=4):
-    """Des pêcheurs qui demandent toujours 10 t, sur un petit lac : il s'effondre dès la première ou la deuxième saison."""
+def play_greedy(tmp_path, run_id, capacity=40.0, seasons=4, **over):
+    """Des pêcheurs qui demandent toujours 10 t (ramenées à la limite d'une sortie), sur un petit lac : il s'effondre en
+    quelques saisons."""
     rec = Recorder(prise=10.0)
     world, events = play_with_announcement(tmp_path, run_id, None, provider=rec, seasons=seasons, lake__capacity=capacity,
-                                            run__stop_on_extinction=False)      # on veut voir la suite sur un lac mort
+                                            run__stop_on_extinction=False, **over)      # on veut voir la suite sur un lac mort
     rec.close()
     return world, events, rec.requests
 
@@ -146,7 +147,8 @@ def test_every_prompt_carries_the_true_state_of_the_lake_as_that_fisher_saw_it(t
 
 
 def test_the_lake_is_called_empty_once_it_is_empty(tmp_path):
-    world, events, requests = play_greedy(tmp_path, "aw2")
+    # parti à 45 % (18 t) : les 20 t que les quatre pêcheurs peuvent prendre le vident dès la première saison
+    world, events, requests = play_greedy(tmp_path, "aw2", lake__initial_ratio=0.45)
     collapsed_at = next(e["season"] for e in events if e["type"] == "lake_collapsed")
     late = [r for r in requests if parse(r, world)[1] > collapsed_at]
     assert late, "la partie doit continuer après l'effondrement"

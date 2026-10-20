@@ -951,7 +951,8 @@ func _refresh_lake() -> void:
 	var cap := spin_capacity.value
 	var rate := spin_growth.value
 	var yield_max := rate * cap / 4.0
-	var reach := float(d.get("boat_capacity", 10.0)) * fishers.size()
+	# une sortie rapporte au plus la capacité du lac / (2 × pêcheurs) : à eux tous, la moitié du lac au plus
+	var reach := minf(float(d.get("boat_capacity", 10.0)) * fishers.size(), cap / 2.0)
 	btn_cap_auto.disabled = capacity_auto
 	btn_growth_default.disabled = is_equal_approx(rate, float(d.get("growth_rate", 1.0)))
 	lbl_lake.text = "lac de %s t · rendement durable max %s t par saison" % [_num(cap), _num(yield_max)]

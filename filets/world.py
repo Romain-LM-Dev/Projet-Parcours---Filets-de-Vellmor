@@ -145,6 +145,10 @@ class World:
             self.agents[p.id] = Agent(p, memory_of(p.id), arng, p.wealth, offset_days=round(arng.uniform(lo, hi), 3))
         self.fishers = [a for a in self.agents.values() if a.is_fisher]
         self.elder = next((a for a in self.agents.values() if not a.is_fisher), None)
+        # une sortie rapporte au plus la capacité du lac divisée par deux fois le nombre de pêcheurs (et jamais plus que la
+        # barque) : à eux tous, ils ne peuvent prendre que la moitié du lac en une saison ; et au moins la prise minimale
+        self.max_catch = min(self.econ["boat_capacity"], self.capacity / (2 * max(1, len(self.fishers))))
+        self.min_catch = min(self.econ.get("min_catch", 0.0), self.max_catch)
         values = {"capacity": f"{self.capacity:.0f}", "half_capacity": f"{self.capacity / 2:.0f}",
                   "n_fishers": len(self.fishers), "price": self.econ["price_per_tonne"],
                   "upkeep": self.econ["upkeep_per_season"]}
@@ -328,8 +332,8 @@ class World:
             "capacity": self.capacity, "collapse_ratio": self.lake.collapse_ratio, "stock_history": history,
             "n_fishers": len(self.fishers), "_entry": entry,
             "wealth": wealth, "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
-            "price": self.econ["price_per_tonne"], "boat_capacity": self.econ["boat_capacity"],
-            "min_catch": self.econ.get("min_catch", 0.0), "own_history": own, "norms": norm_lines, "known_catches": catches_txt,
+            "price": self.econ["price_per_tonne"], "boat_capacity": self.max_catch,
+            "min_catch": self.min_catch, "own_history": own, "norms": norm_lines, "known_catches": catches_txt,
             "last_season_catches": sorted(last_catches.values()),
             # chaque souvenir porte sa date : une parole de la veillée d'il y a deux saisons (« le lac a l'air bien rempli »)
             # ne doit pas passer pour l'état du lac d'aujourd'hui
@@ -340,8 +344,8 @@ class World:
         }
         state = {
             "stock_estimate": est, "stock_true": stock_true, "capacity": self.capacity, "n_fishers": len(self.fishers),
-            "quota": norm.quota if norm else None, "boat_capacity": self.econ["boat_capacity"],
-            "min_catch": self.econ.get("min_catch", 0.0),
+            "quota": norm.quota if norm else None, "boat_capacity": self.max_catch,      # limite d'une sortie
+            "min_catch": self.min_catch,
             "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
             "price": self.econ["price_per_tonne"], "wealth": wealth,
             "growth_rate": self.lake.r, "round": rnd,
@@ -559,9 +563,9 @@ class World:
         season = asm.season
         # proposition de règle
         q = to_number(d.get("proposition_quota"))
-        lo = self.econ.get("min_catch", 0.0)          # proposer ou promettre moins qu'une sortie ne rapporte, c'est la prise minimale
+        lo, hi = self.min_catch, self.max_catch      # proposer ou promettre hors de ce qu'une sortie rapporte, c'en est la borne
         if q is not None and 0 <= q <= self.econ["boat_capacity"]:
-            q = round(max(q, lo), 2)
+            q = round(min(max(q, lo), hi), 2)
             asm.stated[agent.id] = q
             twin = self._similar_proposal(asm, q)
             if twin is not None:
@@ -590,7 +594,7 @@ class World:
         if agent.is_fisher:
             pv = to_number(d.get("promesse"))
             if pv is not None and 0 <= pv <= self.econ["boat_capacity"]:
-                pv = max(pv, lo)
+                pv = min(max(pv, lo), hi)
                 asm.stated.setdefault(agent.id, round(pv, 2))     # une proposition de quota, si elle existe, prime sur la promesse
                 pe = self.events.emit("promise", {"agent": agent.id, "amount": round(pv, 2), "for_season": season + 1,
                                                   "utterance_id": u["event_id"]}, actor=agent.id)
