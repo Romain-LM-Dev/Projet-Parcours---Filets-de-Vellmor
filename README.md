@@ -34,10 +34,10 @@ Sous Windows, deux scripts font tout (voir `install.ps1` et `start.ps1`, ou leur
 ```powershell
 .\install.cmd                 # une fois : Python 3.13, .venv, dépendances, tests, Kafka, modèles Ollama (3B et 1,5B ; -Quality ajoute
                               # le 7B, -Open le modèle de décision tev1, -Data PostgreSQL + pgvector, S3 et embeddinggemma)
-.\start.cmd                   # moteur en salon + Godot : on règle la partie dans le menu, puis on la lance
-.\start.cmd -Kafka -Ollama    # avec Kafka (et ses services) et Ollama « rapide » (3B + 1,5B) présélectionné
-.\start.cmd -Ollama -OllamaProfile quality   # Ollama « qualité » (7B + 1,5B) : meilleur, mais bien plus lent
-.\start.cmd -Kafka -Ollama -OllamaProfile open -Data   # + modèle de décision open (tev1), RAG PostgreSQL + pgvector, stockage S3
+.\start.cmd                   # tout : Kafka et ses services, Ollama (Qwen + tev1), PostgreSQL + pgvector et S3, Godot,
+                              # le moteur en salon (Docker Desktop est lancé au besoin) ; on règle la partie dans le menu
+.\start.cmd -Light            # léger, sans Docker ni Ollama : le moteur seul avec le faux LLM
+.\start.cmd -OllamaProfile quality   # Ollama « qualité » (7B + 1,5B) : meilleur, mais bien plus lent
 .\stop.cmd                    # ferme le moteur, les services et les conteneurs (les données sont gardées)
 ```
 
@@ -123,7 +123,7 @@ Une barre au-dessus de la carte commande la partie en cours (touche **Espace** p
 ## Avec Kafka (configuration de référence)
 
 ```powershell
-.\start.cmd -Kafka -Ui                               # broker, 3 services (fenêtres séparées), Godot, moteur en salon
+.\start.cmd -Ui                                      # broker, 3 services (fenêtres séparées), Godot, moteur en salon
 ```
 
 ou à la main :
@@ -232,7 +232,7 @@ Une **saison** dure 30 jours simulés :
 | J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %) et décide de sa prise |
 | J20 | fermeture : une décision encore en cours est abandonnée et la sortie est perdue (`missed_window`, « sortie perdue ») |
 | J25 18:00 | veillée chez l'ancien (toute la vallée, par hameau, ou aucune) : 1 à 3 tours de parole (2 par défaut) ; une parole pas prête à la fermeture est une « réplique perdue » |
-| J29 | fin de veillée : une proposition soutenue par **plus de la moitié des pêcheurs présents** devient règle pour la saison suivante |
+| J29 | fin de veillée : une proposition soutenue par **au moins la moitié des pêcheurs présents** devient règle pour la saison suivante |
 | J29 21:36 | repeuplement logistique, bilan, promesses tenues ou trahies |
 
 Lac : capacité `12,5 t × nombre de pêcheurs` (même stock par tête quand on change d'échelle) ou limite choisie dans le menu,
@@ -275,7 +275,7 @@ chaque décision (`prompts.py`, `world.observe`) :
   justification (ce que l'agent constate du lac et en conclut) AVANT la prise, de sorte que le nombre s'écrit à la suite de ce
   raisonnement. Sans cela, les petits modèles oubliaient souvent le champ « prise » et la décision retombait sur la règle de repli, qui
   tient compte du stock : il faut toujours compter les décisions en repli (`decision.fallback`) quand on mesure l'effet d'un prompt.
-* **Les agents à règles ne demandent jamais plus que le lac qu'ils voient** : à stock estimé nul, même le plus endetté reste à quai.
+* **Les agents à règles ne demandent jamais plus que le lac qu'ils voient**, mais **une sortie rapporte toujours au moins `economy.min_catch` (1 t)** : on ne revient jamais bredouille. Une IA qui demande moins est ramenée à ce minimum (incident `invalid_value`), et un quota ou une promesse sous ce minimum vaut ce minimum.
 
 ## Le vote des règles
 
@@ -283,10 +283,10 @@ Avant, aucune règle n'était jamais adoptée : trois veillées avaient produit 
 dispersées. Maintenant, deux quotas à moins de `scenario.proposal_merge_tolerance` (0,75 t) sont la même proposition, et à la clôture un
 **vote** compte ce que chacun a dit : qui n'a soutenu aucune proposition vote pour la plus proche de son quota proposé ou promis, à
 `scenario.vote_tolerance` (1,5 t) près ; qui n'a rien dit de chiffré s'abstient. Chaque voix est un événement `support`. Une proposition
-soutenue par plus de la moitié des pêcheurs présents devient une règle.
+soutenue par au moins la moitié des pêcheurs présents (4 sur 8) devient une règle.
 
 **Le bulletin.** Beaucoup de pêcheurs à IA ne disent aucun chiffre et ne soutiennent rien : ils s'abstenaient, et des propositions
-manquaient la majorité d'une voix. Avant la clôture, chaque pêcheur à IA qui n'a rien soutenu remplit donc un **bulletin** : une
+manquaient le seuil d'une voix. Avant la clôture, chaque pêcheur à IA qui n'a rien soutenu remplit donc un **bulletin** : une
 question de quelques lignes (les propositions, leurs soutiens, l'état du lac), posée au petit modèle, dont la réponse est contrainte
 à l'identifiant d'une proposition ou « aucune » (10 tokens au plus, `llm_call` de nature `vote`, système 1). En asynchrone les
 bulletins se remplissent 6 h avant la fin de la veillée (`time.ballot_lead_days`) : une IA trop lente perd sa voix, comme sa réplique.
@@ -443,7 +443,7 @@ Les schémas versionnés de chaque type d'événement sont dans `schemas/` (sour
 pgvector (sur 127.0.0.1:5433, car le 5432 est souvent pris par un PostgreSQL installé) et un stockage objet compatible S3
 (SeaweedFS sur 127.0.0.1:8333 ; l'image Docker de MinIO n'est plus publiée sur Docker Hub, mais tout service S3 convient).
 `ollama pull embeddinggemma` installe le modèle de plongement (multilingue, 768 dimensions, calculé sur le processeur pour laisser
-la carte graphique aux LLM). Puis `python -m filets serve --config config/data.yaml` (ou `.\start.cmd -Data`). Si la base tombe en
+la carte graphique aux LLM). Puis `python -m filets serve --config config/data.yaml` (c'est ce que fait `.\start.cmd`). Si la base tombe en
 cours de partie, la recherche se rabat sur BM25 en mémoire et la partie continue. Tout se fait en asynchrone (asyncpg,
 miniopy-async, aiokafka, httpx). Voir [docs/architecture.md § 6](docs/architecture.md#6-stockage--postgresql--pgvector-et-stockage-objet).
 

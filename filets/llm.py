@@ -303,6 +303,11 @@ class SystemOneClient:
             kind = question.get("type")                  # la réponse ne redit pas le type : c'est celui de la question
             if kind == "choice" and ans.get("choice") is not None:
                 out[name] = ans["choice"]
+            elif kind == "score" and ans.get("probabilities"):
+                # le niveau le plus probable : avec 62 % sur « 3 t » et 29 % sur « 1 t », la moyenne pondérée (2,4 t) n'est le
+                # choix de personne
+                probs = ans["probabilities"]
+                out[name] = level_value(float(max(probs, key=probs.get)), values.get(name))
             elif kind == "score" and ans.get("score") is not None:
                 out[name] = level_value(float(ans["score"]), values.get(name))
             elif kind == "noul" and ans.get("noul") is not None:

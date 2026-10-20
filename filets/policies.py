@@ -19,30 +19,31 @@ def needs(s: dict) -> float:
     return (s["upkeep"] + s["debt_payment"]) / s["price"]
 
 
-def clamp(x: float, hi: float) -> float:
-    return round(max(0.0, min(hi, x)), 1)
+def clamp(x: float, hi: float, lo: float = 0.0) -> float:
+    return round(max(lo, min(hi, x)), 1)
 
 
 def catch_rule(archetype: str, s: dict) -> tuple[float, str]:
     share = sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"])
     quota = s.get("quota")
-    # personne ne demande plus que ce qu'il voit dans le lac : à stock estimé nul, même le plus endetté reste à quai
-    cap = min(s["boat_capacity"], max(0.0, s["stock_estimate"]))
+    # personne ne demande plus que ce qu'il voit dans le lac, mais une sortie rapporte toujours la prise minimale
+    lo = s.get("min_catch", 0.0)
+    cap = max(lo, min(s["boat_capacity"], max(0.0, s["stock_estimate"])))
     if archetype == "ancienne_famille":
         v = min(share, quota) if quota is not None else share
-        return clamp(v, cap), "prudence : part durable" + (" bornée par le quota adopté" if quota is not None else "")
+        return clamp(v, cap, lo), "prudence : part durable" + (" bornée par le quota adopté" if quota is not None else "")
     if archetype == "nouveau_venu":
         need = needs(s) + 1.0
         if quota is not None and quota >= 0.8 * need:
-            return clamp(quota, cap), "besoin couvert par le quota : respecte le quota"
-        return clamp(max(need, share), cap), "besoin : couvrir dépenses et dette (+1 t de marge)"
+            return clamp(quota, cap, lo), "besoin couvert par le quota : respecte le quota"
+        return clamp(max(need, share), cap, lo), "besoin : couvrir dépenses et dette (+1 t de marge)"
     if archetype == "taiseux":
         ref = quota if quota is not None else share
-        return clamp(1.4 * ref + 0.5, cap), "opportunisme discret : 140 % de la référence"
+        return clamp(1.4 * ref + 0.5, cap, lo), "opportunisme discret : 140 % de la référence"
     if archetype == "beau_parleur":
         ref = min(share, quota) if quota is not None else share
-        return clamp(0.8 * ref, cap), "petite pêche : 80 % de la référence"
-    return clamp(share, cap), "part durable"
+        return clamp(0.8 * ref, cap, lo), "petite pêche : 80 % de la référence"
+    return clamp(share, cap, lo), "part durable"
 
 
 def projected(stock: float, capacity: float, r: float) -> float:
@@ -57,8 +58,9 @@ def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
     out = {"message": "", "destinataire": "tous", "proposition_quota": None, "soutien": None,
            "promesse": None, "accuse": None}
     leading = s.get("leading_proposal")  # (id, quota) ou None
+    lo = s.get("min_catch", 0.0)          # un quota sous la prise minimale d'une sortie n'aurait pas de sens
     if archetype == "ancien":
-        q = round(sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"]) * 2) / 2
+        q = max(lo, round(sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"]) * 2) / 2)
         if leading is None or leading[1] > q + 0.5:   # soutient toute proposition au moins aussi prudente que la sienne
             out["proposition_quota"] = q
             out["message"] = f"Le lac a besoin de temps. Je propose que chacun s'en tienne à {q:g} tonnes la saison prochaine."
@@ -68,7 +70,7 @@ def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
         return out, "ancien : quota = ce qui dépasse la moitié du lac après repeuplement, partagé entre pêcheurs"
     planned, _ = catch_rule(archetype, {**s, "quota": leading[1] if leading else s.get("quota")})
     if archetype == "taiseux":
-        planned_said = round(planned / 1.4, 1)  # annonce ce qu'on attend de lui
+        planned_said = max(lo, round(planned / 1.4, 1))  # annonce ce qu'on attend de lui
         out["promesse"] = planned_said
         out["message"] = f"Je prendrai {planned_said:g} tonnes."
         if leading:
@@ -80,7 +82,7 @@ def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
         out["accuse"] = accused
         out["message"] = f"Certains ont pris bien plus que leur part. Je pêcherai {planned:g} tonnes, pas plus."
     elif archetype == "beau_parleur" and leading is None:
-        q = round(sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"]) * 2) / 2
+        q = max(lo, round(sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"]) * 2) / 2)
         out["proposition_quota"] = q
         out["message"] = f"Fixons-nous une règle : {q:g} tonnes chacun, et tout le monde y gagnera."
     else:

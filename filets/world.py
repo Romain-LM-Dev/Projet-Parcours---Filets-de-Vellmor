@@ -6,7 +6,7 @@ Calendrier d'une saison (jours simulés depuis le début de la saison, configura
     J20        fermeture : une sortie décidée après est perdue (incident `missed_window`)
     J25 18:00  veillée chez l'ancien (selon le mode de communication) : tours de parole,
                propositions de quota, soutiens, promesses, accusations
-    J29        fin de la veillée : adoption d'une règle si une majorité des pêcheurs présents la soutient
+    J29        fin de la veillée : adoption d'une règle si au moins la moitié des pêcheurs présents la soutient
     J29 21:36  repeuplement du lac, bilan de saison, promesses tenues ou trahies
 
 Mode synchrone : à chaque pas, tous les agents observent le même instantané, décident
@@ -329,7 +329,7 @@ class World:
             "n_fishers": len(self.fishers), "_entry": entry,
             "wealth": wealth, "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
             "price": self.econ["price_per_tonne"], "boat_capacity": self.econ["boat_capacity"],
-            "own_history": own, "norms": norm_lines, "known_catches": catches_txt,
+            "min_catch": self.econ.get("min_catch", 0.0), "own_history": own, "norms": norm_lines, "known_catches": catches_txt,
             "last_season_catches": sorted(last_catches.values()),
             # chaque souvenir porte sa date : une parole de la veillée d'il y a deux saisons (« le lac a l'air bien rempli »)
             # ne doit pas passer pour l'état du lac d'aujourd'hui
@@ -341,6 +341,7 @@ class World:
         state = {
             "stock_estimate": est, "stock_true": stock_true, "capacity": self.capacity, "n_fishers": len(self.fishers),
             "quota": norm.quota if norm else None, "boat_capacity": self.econ["boat_capacity"],
+            "min_catch": self.econ.get("min_catch", 0.0),
             "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
             "price": self.econ["price_per_tonne"], "wealth": wealth,
             "growth_rate": self.lake.r, "round": rnd,
@@ -558,8 +559,9 @@ class World:
         season = asm.season
         # proposition de règle
         q = to_number(d.get("proposition_quota"))
+        lo = self.econ.get("min_catch", 0.0)          # proposer ou promettre moins qu'une sortie ne rapporte, c'est la prise minimale
         if q is not None and 0 <= q <= self.econ["boat_capacity"]:
-            q = round(q, 2)
+            q = round(max(q, lo), 2)
             asm.stated[agent.id] = q
             twin = self._similar_proposal(asm, q)
             if twin is not None:
@@ -588,6 +590,7 @@ class World:
         if agent.is_fisher:
             pv = to_number(d.get("promesse"))
             if pv is not None and 0 <= pv <= self.econ["boat_capacity"]:
+                pv = max(pv, lo)
                 asm.stated.setdefault(agent.id, round(pv, 2))     # une proposition de quota, si elle existe, prime sur la promesse
                 pe = self.events.emit("promise", {"agent": agent.id, "amount": round(pv, 2), "for_season": season + 1,
                                                   "utterance_id": u["event_id"]}, actor=agent.id)
@@ -672,7 +675,7 @@ class World:
         adopted = None
         if tally:
             pid, sups = max(tally.items(), key=lambda kv: (len(kv[1]), -int(kv[0][1:])))
-            if len(sups) * 2 > len(fishers_present):
+            if len(sups) * 2 >= len(fishers_present):      # au moins la moitié des pêcheurs présents
                 pr = asm.proposals[pid]
                 ne = self.events.emit("norm_adopted", {
                     "proposal_id": pid, "quota": pr.quota, "scope": asm.scope, "effective_season": asm.season + 1,
@@ -961,9 +964,10 @@ class AsyncRunner:
                 if self.done:                      # calendrier terminé : on laisse finir les tâches sans avancer le monde
                     await asyncio.sleep(self.TICK)
                     continue
-                # tant qu'un agent réfléchit (appel LLM en cours), le temps simulé suit le temps réel ;
-                # sinon personne n'est désavantagé et il peut accélérer jusqu'à la prochaine échéance
-                self.c.advance_wall(dt, self.heap[0][0] if self.heap else None, busy=self.c.in_flight > 0)
+                # tant qu'un agent réfléchit (recherche dans sa mémoire comprise, avant même son appel LLM), le temps simulé
+                # suit le temps réel ; sinon personne n'est désavantagé et il peut accélérer jusqu'à la prochaine échéance
+                busy = self.c.in_flight > 0 or bool(self.thinking)
+                self.c.advance_wall(dt, self.heap[0][0] if self.heap else None, busy=busy)
                 await asyncio.sleep(self.TICK)
         finally:
             for t in list(self.tasks):

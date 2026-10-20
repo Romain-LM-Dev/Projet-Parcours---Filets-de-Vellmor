@@ -481,7 +481,7 @@ func on_event(ev: Dictionary) -> void:
 		"assembly_end":
 			var scope2 := str(p.get("scope", "valley"))
 			if p.get("adopted_proposal") == null and scope2 == "valley":
-				_banner("Pas d'accord ce soir", "Aucune règle n'a réuni la majorité", Art.MUTED)
+				_banner("Pas d'accord ce soir", "Aucune règle n'a réuni la moitié des pêcheurs", Art.MUTED)
 			if scope2 == "valley":
 				assembly_scope = ""
 			else:

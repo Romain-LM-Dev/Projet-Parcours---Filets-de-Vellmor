@@ -153,10 +153,10 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
     common = {**common, "system": system}                        # sans routage adaptatif, tout est système 2
     if data is not None and v is None:
         world.incident(agent.id, "invalid_value", f"prise absente : {str(data)[:150]}", "règle de repli", res.call_id)
-    if v is not None and not (0 <= v <= state["boat_capacity"]):
-        world.incident(agent.id, "invalid_value", f"prise {v} hors de [0, {state['boat_capacity']}]", "bornage",
-                       res.call_id)
-        v = max(0.0, min(state["boat_capacity"], v))
+    lo, hi = state.get("min_catch", 0.0), state["boat_capacity"]      # une sortie rapporte au moins la prise minimale
+    if v is not None and not (lo <= v <= hi):
+        world.incident(agent.id, "invalid_value", f"prise {v} hors de [{lo:g}, {hi:g}]", "bornage", res.call_id)
+        v = max(lo, min(hi, v))
     if v is None:
         v, rule = catch_rule(agent.archetype, state)
         fallback = True

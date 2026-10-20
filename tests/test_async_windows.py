@@ -49,6 +49,28 @@ def test_slow_models_lose_their_turn_and_the_season_does_not_wait_for_them(tmp_p
     assert verify("late", world.cfg)
 
 
+def test_searching_memory_is_thinking_so_the_evening_does_not_rush_past(tmp_path, monkeypatch):
+    """Avec la mémoire dans PostgreSQL, un agent cherche ses souvenirs (vecteurs, requête) avant d'appeler l'IA. Ce temps-là est
+    de la réflexion : le monde doit suivre le temps réel, pas sauter (×40) à la fin de la veillée. Avant, les 9 répliques de
+    chaque veillée se perdaient ainsi, et personne ne pouvait s'en souvenir."""
+    from filets.world import World
+
+    original = World.observe
+
+    async def recall(self, *args, **kwargs):
+        await asyncio.sleep(0.1)                  # la recherche dans la base
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(World, "observe", recall)
+    world, bus, _ = make_world(tmp_path, "recall", seasons=1, time__mode="async", time__fast=False,
+                               time__sim_hours_per_second=100)
+    play(world)
+    events = read_events(tmp_path, "recall")
+    assert not [e for e in kinds(events, "incident") if e["payload"]["incident_type"] == "missed_window"]
+    assert len(kinds(events, "utterance")) == 2 * len(world.agents)               # tout le monde parle, aux deux tours
+    assert all(any(m.kind == "parole" for m in a.memory.items) for a in world.agents.values())   # et s'en souvient
+
+
 def test_the_loss_is_dated_at_the_closing_of_the_window(tmp_path):
     world, bus, _ = make_world(tmp_path, "dated", latency_scale=5.0, seasons=1, time__mode="async", **FAST_WORLD)
     play(world)

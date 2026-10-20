@@ -30,6 +30,7 @@ economy:
   price_per_tonne: 100        # écus
   upkeep_per_season: 150      # coût de la vie
   boat_capacity: 10           # prise maximale par saison et par pêcheur (tonnes)
+  min_catch: 1                # prise minimale d'une sortie (tonnes) : on ne revient jamais bredouille
 
 scenario:
   communication: valley       # valley | hamlet | none

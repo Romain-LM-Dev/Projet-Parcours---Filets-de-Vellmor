@@ -81,7 +81,7 @@ Chaque tour de parole est un événement `utterance` (qui parle, à qui, ce qu'i
 * une **proposition** de quota ; deux quotas à moins de 0,75 t l'un de l'autre sont la même proposition (celui qui propose la deuxième la soutient) ;
 * un **soutien**, une **promesse**, une **accusation** ;
 * le **vote de clôture** : chaque pêcheur à IA qui n'a soutenu aucune proposition remplit un **bulletin** (une question à choix au modèle de décision, ou à défaut au petit modèle ; réponse : l'identifiant d'une proposition ou « aucune ») ; à défaut de réponse, il vote pour la proposition la plus proche de ce qu'il a dit vouloir (à 1,5 t près), ou s'abstient s'il n'a rien dit de chiffré ;
-* une proposition soutenue par **plus de la moitié des pêcheurs présents** devient une **règle** (`norm_adopted`) pour la saison suivante.
+* une proposition soutenue par **au moins la moitié des pêcheurs présents** devient une **règle** (`norm_adopted`) pour la saison suivante.
 
 ### Mémoire personnelle et collective
 
@@ -112,7 +112,7 @@ Chaque appel à un modèle coûte du temps, de l'énergie, et des tokens factur�
 
 **Le modèle de décision open (`config/ollama_open.yaml`, menu « Ollama · rapide + réflexes open »).** Un modèle de langage génère du texte, token après token, même pour répondre « 3 ». Un modèle de décision « système 1 » (`tev1` de Together AI, affiné à partir de Qwen 3.5, 0,8 Md de paramètres, environ 0,8 Go) répond à une **question typée** sur un état donné, via `POST /v1/systemone` d'Ollama, qui suit l'API « Jev » de TypeSafe. Le modèle demande Ollama 0.40.4 ou plus :
 
-* `score` : une échelle ordonnée (2 à 26 niveaux). La prise de routine est une échelle de 10 niveaux, de 0 t (« il reste à quai ») à la capacité de la barque. La réponse est le niveau moyen pondéré par les probabilités (3,5 tombe entre le niveau 3 et le niveau 4), et le moteur le convertit en tonnes ;
+* `score` : une échelle ordonnée (2 à 26 niveaux). La prise de routine est une échelle de 10 niveaux, de la prise minimale d'une sortie (1 t) à la capacité de la barque. La réponse est le niveau moyen pondéré par les probabilités (3,5 tombe entre le niveau 3 et le niveau 4), et le moteur le convertit en tonnes ;
 * `choice` : une option parmi 2 à 26. Le bulletin de vote propose les propositions de la veillée, plus « aucune » ;
 * `noul` : la probabilité que ce soit vrai.
 
@@ -141,7 +141,7 @@ Le moteur garde `confluent-kafka` pour publier : publier y est déjà un simple 
 ```
 docker compose --profile data up -d     # PostgreSQL 17 + pgvector (127.0.0.1:5433), SeaweedFS S3 (127.0.0.1:8333)
 ollama pull embeddinggemma              # plongements multilingues, 768 dimensions
-python -m filets serve --config config/data.yaml --llm ollama_open     # ou : .\start.ps1 -Kafka -Ollama -OllamaProfile open -Data
+python -m filets serve --config config/data.yaml --llm ollama_open     # ou simplement : .\start.cmd
 ```
 
 | Donnée | Où | Pourquoi |

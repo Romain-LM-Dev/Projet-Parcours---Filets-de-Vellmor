@@ -26,9 +26,10 @@ class FakeSystemOne:
     (depuis 0) avec `legend` et `probabilities` ; `choice` avec ses probabilités ; `noul` = probabilité de vrai ; `usage`."""
 
     def __init__(self, level: float = 3, choice: str | None = None, status: int = 200, models=("tev1:0.8b",),
-                 as_list: bool = False):
+                 as_list: bool = False, probs=None):
         self.requests: list[dict] = []
         self.level, self.choice, self.status, self.as_list = level, choice, status, as_list
+        self.probs = probs                # None : pic sur le niveau ; un dict : ces probabilités ; False : aucune
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -62,8 +63,12 @@ class FakeSystemOne:
                 for name, q in body["questions"].items():
                     if q["type"] == "score":
                         n = len(q["criteria"])
-                        answers[name] = {"score": outer.level, "legend": {str(i): c for i, c in enumerate(q["criteria"])},
-                                         "probabilities": {str(i): round(1 / n, 4) for i in range(n)}, "confidence": 0.8}
+                        peak = min(max(round(outer.level), 0), n - 1)
+                        answers[name] = {"type": "score", "score": outer.level, "confidence": 0.8,
+                                         "legend": {str(i): c for i, c in enumerate(q["criteria"])}}
+                        if outer.probs is not False:
+                            answers[name]["probabilities"] = outer.probs or {
+                                str(i): (0.9 if i == peak else 0.1 / (n - 1)) for i in range(n)}
                     elif q["type"] == "choice":
                         pick = outer.choice or next(iter(q["criteria"]))
                         answers[name] = {"choice": pick, "confidence": 0.9,
@@ -131,9 +136,18 @@ def test_the_client_turns_a_level_into_the_catch_it_stands_for():
     assert "values" not in sent                              # la correspondance niveau → tonnes reste de ce côté-ci
 
 
-def test_a_weighted_level_falls_between_two_catches():
+def test_the_most_probable_level_is_the_decision_not_the_weighted_mean():
+    """Réponse réelle de tev1 : 62 % sur le niveau 2, 29 % sur le niveau 0, score moyen 1,37. La prise est le niveau 2 (2,2 t)."""
+    probs = {"0": 0.29, "1": 0.07, "2": 0.62, "3": 0.01, "4": 0.002, "5": 0.002, "6": 0.001, "7": 0.001, "8": 0.001, "9": 0.0001}
+    s1 = FakeSystemOne(level=1.3746, probs=probs)
+    res = asyncio.run(ask(s1, prompts.reflex_system_one(PERSONA, obs_routine())))
+    s1.close()
+    assert json.loads(res.text)["prise"] == 2.2
+
+
+def test_without_probabilities_the_weighted_level_falls_between_two_catches():
     """3,5 : à mi-chemin entre le niveau 3 (3,3 t) et le niveau 4 (4,4 t)."""
-    s1 = FakeSystemOne(level=3.5)
+    s1 = FakeSystemOne(level=3.5, probs=False)
     res = asyncio.run(ask(s1, prompts.reflex_system_one(PERSONA, obs_routine())))
     s1.close()
     assert json.loads(res.text)["prise"] == 3.85
@@ -186,7 +200,8 @@ def test_routine_catches_go_to_the_decision_model_and_reflection_stays_with_qwen
     assert reflex and all(c["system"] == "S1" and c["model"] == "tev1:0.8b" and c["status"] == "ok" for c in reflex)
     assert all(c["tier"] != "reflexe" for c in calls if c.get("system") == "S2")
     decisions = [e["payload"] for e in events if e["type"] == "decision" and e["payload"].get("system") == "S1"]
-    assert decisions and all(d["tier"] == "reflexe" and not d["fallback"] and d["value"] == 3.3 for d in decisions)
+    level3 = prompts.catch_levels(10.0, lo=1.0)[3]                  # l'échelle part de la prise minimale (1 t) : 4 t
+    assert decisions and all(d["tier"] == "reflexe" and not d["fallback"] and d["value"] == level3 == 4.0 for d in decisions)
     assert all(d["justification"].startswith("Réflexe (système 1, tev1:0.8b)") and "Confiance 0.80" in d["justification"]
                for d in decisions)
     assert not [r for r in chat if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["prise"]]

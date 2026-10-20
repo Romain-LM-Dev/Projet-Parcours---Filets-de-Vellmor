@@ -1,28 +1,31 @@
 ﻿<#
 .SYNOPSIS
-  Démarre FILETS : le moteur (en « salon »), Godot, et au choix Kafka avec ses services, Ollama.
+  Démarre FILETS, tout compris par défaut : Kafka et ses services, Ollama (Qwen + tev1), PostgreSQL + pgvector et le stockage
+  objet, Godot, et le moteur en « salon ».
 
 .DESCRIPTION
-  Par défaut, le moteur ouvre un salon et attend : on règle la partie (mode, saisons, pêcheurs, moteur d'IA…) dans le
-  menu de démarrage de Godot, puis on la lance quand on veut. Pause, vitesse, changement de mode et arrêt se pilotent
-  depuis la barre du haut de Godot.
+  Le moteur ouvre un salon et attend : on règle la partie (mode, saisons, pêcheurs, moteur d'IA…) dans le menu de démarrage
+  de Godot, puis on la lance quand on veut. Pause, vitesse, changement de mode et arrêt se pilotent depuis la barre du haut
+  de Godot.
 
-  - Sans -Kafka : `python -m filets serve` (le moteur ouvre lui-même le pont vers Godot).
-  - Avec -Kafka : démarre le broker (docker compose), les services indicators / store / bridge chacun dans sa fenêtre,
-    puis le moteur `--bus kafka` ici (le service bridge ouvre le port 8765, pas le moteur).
-  - Avec -Ollama : vérifie le serveur et les modèles, et présélectionne Ollama dans le menu. Par défaut le réglage
-    « rapide » (Qwen 2.5 3B + 1,5B, qui tiennent ensemble dans 6 Go de mémoire graphique) ; -OllamaProfile quality
-    choisit le 7B (meilleur, mais bien plus lent : chaque changement de modèle coûte une trentaine de secondes) ;
-    -OllamaProfile open ajoute le modèle de décision open tev1 (0,8B, Ollama 0.40.4 ou plus) pour les réflexes et les votes.
-  - Avec -Data : démarre PostgreSQL + pgvector et le stockage objet S3 (docker compose --profile data), charge le modèle
-    de plongement, et prend config/data.yaml : RAG vectoriel, historique dans PostgreSQL, archives des parties.
-  - Avec -Auto : ancien comportement, sans menu : la partie démarre tout de suite (`python -m filets run`).
-  Ctrl+C arrête le moteur ; .\stop.ps1 ferme aussi les services Kafka et le broker.
+  Sans option :
+  - Docker Desktop est lancé s'il ne tourne pas ; un conteneur d'un autre projet qui tient un port de FILETS (9092, 5433,
+    8333) est signalé, et arrêté si on accepte (ses données sont gardées) ;
+  - Kafka (docker compose) et les services indicators / store / bridge, chacun dans sa fenêtre, puis le moteur `--bus kafka`
+    ici (le service bridge ouvre le port 8765, pas le moteur) ;
+  - Ollama : Qwen 2.5 3B + 1,5B et le modèle de décision open tev1 pour les réflexes et les votes (-OllamaProfile fast : sans
+    tev1 ; -OllamaProfile quality : le 7B, meilleur mais bien plus lent) ;
+  - PostgreSQL + pgvector et le stockage objet S3 (config/data.yaml) : RAG vectoriel, historique, archives des parties.
+  Avec -Light : rien de tout cela, donc ni Docker ni Ollama : le moteur seul avec le faux LLM, pour un essai rapide
+  (-Light -Ollama garde Ollama).
+  Avec -Auto : ancien comportement, sans menu : la partie démarre tout de suite (`python -m filets run`), sans config/data.yaml.
+  Ctrl+C arrête le moteur ; .\stop.ps1 ferme aussi les services et les conteneurs.
 
-.PARAMETER Kafka      Utilise Kafka (Docker Desktop doit être lancé).
-.PARAMETER Ollama     Vérifie Ollama et le présélectionne dans le menu (ou le fait utiliser avec -Auto).
-.PARAMETER OllamaProfile  fast (3B + 1,5B, défaut), quality (7B + 1,5B) ou open (3B + 1,5B + tev1 0,8B), avec -Ollama.
-.PARAMETER Data       PostgreSQL + pgvector et stockage objet (Docker Desktop doit être lancé) ; configuration config/data.yaml.
+.PARAMETER Light      Démarrage léger : ni Kafka, ni PostgreSQL, ni Ollama (faux LLM), donc sans Docker.
+.PARAMETER Kafka      Kafka et ses services (déjà là par défaut ; utile avec -Light).
+.PARAMETER Ollama     Vérifie Ollama et le présélectionne dans le menu (déjà là par défaut ; utile avec -Light).
+.PARAMETER OllamaProfile  open (3B + 1,5B + tev1 0,8B, défaut), fast (3B + 1,5B) ou quality (7B + 1,5B).
+.PARAMETER Data       PostgreSQL + pgvector et stockage objet (déjà là par défaut ; utile avec -Light).
 .PARAMETER NoGodot    Ne lance pas Godot.
 .PARAMETER NoEngine   Ne lance pas le moteur : à utiliser quand il tourne déjà (services ou Godot fermés par erreur, une partie
                       est en cours) ; relance les services Kafka et Godot, qui se rattachent à la partie en cours.
@@ -36,17 +39,18 @@
 .PARAMETER Extra      Arguments supplémentaires pour le moteur, ex. --set time.sim_hours_per_second=1
 
 .EXAMPLE
-  .\start.ps1
-  .\start.ps1 -Kafka -Ollama
-  .\start.ps1 -Kafka -Ollama -OllamaProfile open -Data
+  .\start.ps1                       # tout
+  .\start.ps1 -Light                # le moteur seul, faux LLM, sans Docker
+  .\start.ps1 -OllamaProfile fast   # sans tev1
   .\start.ps1 -Mode async -Agents 12
   .\start.ps1 -Auto -Mode sync -Seasons 5
 #>
 [CmdletBinding(PositionalBinding = $false)]   # sans cela, « --set x=y » serait lié à -Config au lieu d'aller dans -Extra
 param(
+    [switch]$Light,
     [switch]$Kafka,
     [switch]$Ollama,
-    [ValidateSet('fast', 'quality', 'open')][string]$OllamaProfile = 'fast',
+    [ValidateSet('fast', 'quality', 'open')][string]$OllamaProfile = 'open',
     [switch]$Data,
     [switch]$NoGodot,
     [switch]$NoEngine,
@@ -89,11 +93,43 @@ if (-not (Test-Path $venvPython)) { Fail "Environnement introuvable : lance d'ab
 # Un « -- » éventuel (séparateur) ne doit pas être transmis à filets.
 $Extra = @($Extra | Where-Object { $_ -and $_ -ne '--' })
 
+# Par défaut, tout ; -Light : le moteur seul (une option donnée en plus, comme -Ollama, reste prise en compte).
+if (-not $Light) { $Kafka = $true; $Ollama = $true; $Data = $true }
+
 # --- Le port du pont doit être libre : un ancien moteur ou un ancien pont l'occuperait --------------------------
 $busy = Get-NetTCPConnection -LocalPort $WsPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($busy) {
     $who = (Get-Process -Id $busy.OwningProcess -ErrorAction SilentlyContinue).ProcessName
     Fail "Le port $WsPort est déjà utilisé (processus $who, PID $($busy.OwningProcess)) : un ancien moteur ou pont tourne encore. Lance .\stop.ps1, ou ferme-le, puis relance."
+}
+
+# --- Docker : lancé s'il dort ; les ports de FILETS libérés des conteneurs d'autres projets --------------------------
+if ($Kafka -or $Data) {
+    Step 'Docker'
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Fail 'Docker est introuvable (installe Docker Desktop), ou lance .\start.cmd -Light.' }
+    docker info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        $desktop = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
+        if (Test-Path $desktop) {
+            Write-Host '    Démarrage de Docker Desktop (jusqu''à 2 min)...'
+            Start-Process -FilePath $desktop
+            for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Seconds 3; docker info *> $null; if ($LASTEXITCODE -eq 0) { break } }
+        }
+        if ($LASTEXITCODE -ne 0) { Fail "Docker Desktop n'est pas prêt : lance-le, attends qu'il le soit, puis relance (ou .\start.cmd -Light, sans Docker)." }
+    }
+    Ok 'Docker prêt'
+    $ports = @(9092) + $(if ($Data) { @(5433, 8333) } else { @() })
+    $others = @(docker ps --format '{{.Names}}|{{.Ports}}' | Where-Object { $_ -notmatch '^filets-' } | ForEach-Object {
+        $name, $map = $_ -split '\|', 2
+        if ($ports | Where-Object { $map -match ":$_->" }) { $name }
+    })
+    if ($others) {
+        Warn "Des conteneurs d'un autre projet tiennent les ports de FILETS : $($others -join ', ')"
+        $answer = Read-Host '    Les arrêter (leurs données sont gardées) ? [O/n]'
+        if ($answer -match '^[nN]') { Fail "Arrête-les toi-même (docker stop $($others -join ' ')), puis relance." }
+        docker stop @others *> $null
+        Ok "arrêtés : $($others -join ', ') (docker start $($others -join ' ') pour les relancer)"
+    }
 }
 
 # --- Ollama (modèles de langage, et modèle de plongement avec -Data) -----------------------------------------
@@ -138,9 +174,6 @@ if ($Ollama -or $Data) {
 # --- Données : PostgreSQL + pgvector, stockage objet S3 --------------------------------------------------------
 if ($Data) {
     Step 'PostgreSQL + pgvector et stockage objet'
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Fail 'Docker est introuvable (installe Docker Desktop).' }
-    docker info *> $null
-    if ($LASTEXITCODE -ne 0) { Fail "Docker Desktop n'est pas démarré : lance-le, attends qu'il soit prêt, puis relance." }
     docker compose --profile data up -d postgres objects
     if ($LASTEXITCODE -ne 0) { Fail 'docker compose --profile data up a échoué.' }
     $ready = $false
@@ -151,17 +184,13 @@ if ($Data) {
     if (-not $ready) { Fail 'PostgreSQL ne répond pas. Vérifie avec : docker compose logs postgres' }
     Ok 'PostgreSQL + pgvector prêt (127.0.0.1:5433)'
     Ok 'stockage objet S3 (127.0.0.1:8333, bucket « filets »)'
-    if (-not $Config) { $Config = 'config/data.yaml' }
+    if (-not $Config -and -not $Auto) { $Config = 'config/data.yaml' }   # -Auto garde la configuration de son moteur d'IA
 }
 
 # --- Kafka ---------------------------------------------------------------------------------------------------
 if ((Test-Path $pidFile) -and -not $NoEngine) { Remove-Item $pidFile -Force }
 if ($Kafka) {
     Step 'Kafka'
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Fail 'Docker est introuvable (installe Docker Desktop).' }
-    docker info *> $null
-    if ($LASTEXITCODE -ne 0) { Fail "Docker Desktop n'est pas démarré : lance-le, attends qu'il soit prêt, puis relance." }
-
     if ($Ui) { docker compose --profile ui up -d } else { docker compose up -d }
     if ($LASTEXITCODE -ne 0) { Fail 'docker compose up a échoué.' }
 

@@ -49,18 +49,31 @@ REFLEX_SCHEMA = {"type": "object", "properties": {"prise": {"type": "number"}}, 
                  "additionalProperties": False}
 
 
+def boat_line(obs: dict) -> str:
+    lo = obs.get("min_catch", 0.0)
+    if lo:
+        return (f"Une sortie rapporte au moins {lo:g} t (on ne revient jamais bredouille), et ta barque au plus "
+                f"{obs['boat_capacity']:.0f} tonnes par saison.")
+    return f"Ta barque rapporte au plus {obs['boat_capacity']:.0f} tonnes par saison."
+
+
+def catch_range(obs: dict) -> str:
+    lo = obs.get("min_catch", 0.0)
+    return f"entre {lo:g} et {obs['boat_capacity']:.0f}" + ("" if lo else " ; 0 si tu restes à quai")
+
+
 def reflex_messages(p, obs: dict) -> list[dict]:
     """La question du système 1 : la prise d'un pêcheur dont la situation est de routine (lac sain et stable, un engagement ou
     une règle à suivre, pas de rumeur, finances correctes). Seul ce qui sert à ce réflexe y figure."""
     cap, est = obs["capacity"], obs["stock_estimate"]
     lines = [f"Saison {obs['season']}. Le lac est à {100 * est / cap:.0f} % ({lake_level(est, cap, obs.get('collapse_ratio', 0.05))})"
-             f", il n'a pas baissé. Ta barque rapporte au plus {obs['boat_capacity']:.0f} tonnes par saison."]
+             f", il n'a pas baissé. {boat_line(obs)}"]
     if obs.get("pinned"):
         lines.append("Tes engagements : " + " ".join(obs["pinned"]))
     if obs.get("norms"):
         lines.append("Règles en vigueur : " + " ".join(obs["norms"]))
     lines.append(f"Tes finances : {obs['wealth']:.0f} écus ; dépenses de la saison : {obs['upkeep'] + obs['debt_payment']:.0f} écus.")
-    lines.append(f"Combien de tonnes pêches-tu ? Réponds en JSON : {{\"prise\": <tonnes, entre 0 et {obs['boat_capacity']:.0f}>}}")
+    lines.append(f"Combien de tonnes pêches-tu ? Réponds en JSON : {{\"prise\": <tonnes, {catch_range(obs)}>}}")
     who = f"Tu es {p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
     return [{"role": "system", "content": who}, {"role": "user", "content": "\n".join(lines)}]
 
@@ -205,8 +218,7 @@ def context_block(obs: dict, brief: bool = False) -> str:
         parts.append(
             f"Tes finances : {obs['wealth']:.0f} écus. Chaque saison te coûte {obs['upkeep']:.0f} écus pour vivre"
             + (f", plus {obs['debt_payment']:.0f} écus de remboursement de dette" if obs["debt_payment"] else "")
-            + f". Le poisson se vend {obs['price']:.0f} écus la tonne. Ta barque rapporte au plus "
-              f"{obs['boat_capacity']:.0f} tonnes par saison.")
+            + f". Le poisson se vend {obs['price']:.0f} écus la tonne. {boat_line(obs)}")
         if obs.get("own_history"):
             parts.append("Tes prises passées : " + ", ".join(obs["own_history"]) + ".")
     known = _cut(obs["known_catches"], 8, 90) if brief else obs["known_catches"]
@@ -230,7 +242,7 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         + ("Une rumeur qui te concerne, ou qui parle du lac, peut peser sur ta décision : tiens-en compte comme le "
            "ferait ton personnage.\n" if obs.get("rumors") else "")
         + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
-          f"\"prise\": <tonnes, entre 0 et {obs['boat_capacity']:.0f} ; 0 si tu restes à quai>}}"
+          f"\"prise\": <tonnes, {catch_range(obs)}>}}"
     )
     return [{"role": "system", "content": persona(p, capacity, brief)},
             {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
@@ -286,9 +298,9 @@ def ballot_messages(p, table: list[str], est: float, capacity: float, collapse_r
 # Un modèle comme `tev1` ne génère pas de texte : il choisit une option, ou un niveau dans une échelle, et donne les probabilités.
 # Ces fonctions décrivent la même décision que `reflex_messages` / `ballot_messages`, sous cette forme.
 
-def catch_levels(boat_capacity: float, n: int = 10) -> list[float]:
-    """Les niveaux de prise proposés au modèle de décision : de 0 à la capacité de la barque, en `n` paliers réguliers."""
-    return [round(i * boat_capacity / (n - 1), 1) for i in range(n)]
+def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:
+    """Les niveaux de prise proposés au modèle de décision : de la prise minimale à la capacité de la barque, en `n` paliers."""
+    return [round(lo + i * (boat_capacity - lo) / (n - 1), 1) for i in range(n)]
 
 
 def reflex_system_one(p, obs: dict) -> dict:
@@ -296,7 +308,7 @@ def reflex_system_one(p, obs: dict) -> dict:
     msgs = reflex_messages(p, obs)
     state = msgs[0]["content"].replace(" Réponds uniquement par un objet JSON.", "") + "\n" + \
         msgs[1]["content"].rsplit("\n", 1)[0]
-    levels = catch_levels(obs["boat_capacity"])
+    levels = catch_levels(obs["boat_capacity"], lo=obs.get("min_catch", 0.0))
     criteria = [f"{t:g} t" + (" : il reste à quai" if t == 0 else "") for t in levels]
     return {"state": state, "values": {"prise": levels},
             "questions": {"prise": {"type": "score", "criteria": criteria,
