@@ -97,6 +97,8 @@ func _initialize() -> void:
 	var lies := 0
 	var found := 0
 	var clues := 0
+	var votes := 0
+	var strong := 0
 	var reputations := {}
 	for ev in events:
 		var p: Dictionary = ev["payload"]
@@ -106,8 +108,14 @@ func _initialize() -> void:
 			found += 1
 		elif ev["type"] == "clue":
 			clues += 1
+		elif ev["type"] == "sanction_result":
+			votes += 1
 		elif ev["type"] == "trust":
 			reputations[str(p["subject"])] = float(p["reputation"])
+			if absf(float(p.get("delta", 0.0))) >= 0.2:
+				strong += 1
+	check(joined.count("VOTE X") == votes, "une ligne « VOTE » par proposition d'exclure ou de réautoriser (%d)" % votes)
+	check(joined.count("CONFIANCE") == strong, "une ligne « CONFIANCE » par jugement marqué d'un agent (%d, trouvé %d)" % [strong, joined.count("CONFIANCE")])
 	var established := joined.count("MENSONGE ÉTABLI")
 	check(established + joined.count("PRIS EN CACHETTE") + joined.count("ACCUSÉ À TORT") == found, "une ligne par mensonge établi par l'ancien (%d)" % found)
 	check(joined.count("MENSONGE") - established == lies, "une ligne « MENSONGE » par déclaration mensongère (%d)" % lies)

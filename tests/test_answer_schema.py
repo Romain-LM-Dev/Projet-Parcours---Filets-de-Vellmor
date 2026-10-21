@@ -32,14 +32,18 @@ def test_catch_schema_puts_the_reasoning_before_the_number():
 
 def test_speak_schema_asks_every_field_and_lets_the_optional_ones_be_null():
     fisher = answer_schema("speak", brief=True, fisher=True)
-    assert list(fisher["properties"]) == ["message", "destinataire", "proposition_quota", "soutien", "promesse", "accuse"]
+    assert list(fisher["properties"]) == ["message", "destinataire", "proposition_quota", "soutien", "promesse", "accuse",
+                                          "confiance", "exclure", "reautoriser"]
     assert fisher["required"] == list(fisher["properties"])
+    # son jugement de confiance : identifiant -> de −3 à +3, rien de plus
+    assert fisher["properties"]["confiance"]["additionalProperties"] == {"type": "integer", "minimum": -3, "maximum": 3}
     for k in ("proposition_quota", "promesse"):
         assert fisher["properties"][k]["type"] == ["number", "null"]
     for k in ("soutien", "accuse"):
         assert fisher["properties"][k]["type"] == ["string", "null"] and fisher["properties"][k]["maxLength"] == 8
     elder = answer_schema("speak", fisher=False)
     assert "promesse" not in elder["properties"] and "accuse" in elder["properties"]      # l'ancien ne promet pas de pêche
+    assert "confiance" in elder["properties"] and "exclure" not in elder["properties"]   # il juge, mais ne sanctionne pas
 
 
 # ---------------------------------------------------------------- le client
@@ -109,7 +113,8 @@ def test_every_ai_decision_of_a_game_asks_for_its_schema(tmp_path):
         assert fmt["type"] == "json_schema"
         props = list(fmt["json_schema"]["schema"]["properties"])
         assert props == (["justification", "prise", "declaration"] if '"prise"' in r["user"] else
-                         ["message", "destinataire", "proposition_quota", "soutien", "promesse", "accuse"]), props
+                         ["message", "destinataire", "proposition_quota", "soutien", "promesse", "accuse", "confiance",
+                          "exclure", "reautoriser"]), props
     decisions = [e for e in events if e["type"] == "decision" and e["payload"]["agent_kind"] == "llm"]
     assert decisions and not any(e["payload"]["fallback"] for e in decisions)
 

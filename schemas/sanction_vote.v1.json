@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "vote": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "proposal_id",
+    "agent",
+    "vote"
+  ],
+  "additionalProperties": false
+}

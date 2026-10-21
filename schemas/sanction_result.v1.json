@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "action": {
+      "enum": [
+        "exclure",
+        "reautoriser"
+      ]
+    },
+    "adopted": {
+      "type": "boolean"
+    },
+    "for": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "against": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "voters": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "proposal_id",
+    "target",
+    "action",
+    "adopted",
+    "for",
+    "against",
+    "voters"
+  ],
+  "additionalProperties": false
+}

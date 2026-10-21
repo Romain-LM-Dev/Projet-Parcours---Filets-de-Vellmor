@@ -217,6 +217,14 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
             acts.append(f"promet {to_number(data.get('promesse')):g} t")
         if data.get("accuse"):
             acts.append(f"accuse {data.get('accuse')}")
+        for action, verb in (("exclure", "propose d'exclure"), ("reautoriser", "propose de réautoriser")):
+            if data.get(action):
+                acts.append(f"{verb} {data.get(action)}")
+        judged = data.get("confiance")
+        if isinstance(judged, dict):
+            steps = [f"{k} {to_number(v):+g}" for k, v in judged.items() if to_number(v)]
+            if steps:
+                acts.append("confiance " + ", ".join(steps))
         just = f"« {str(data.get('message', '')).strip()[:300]} »" + (f" ({', '.join(acts)})" if acts else "")
     dec = world.events.emit("decision", {**common, "justification": just, "rule": rule, "fallback": fallback,
                                          "model": res.model, "tier": res.tier, "llm_call_id": res.call_id,
@@ -227,12 +235,52 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
 
 
 async def ballot(world, agent: Agent, asm) -> None:
-    """Le bulletin d'un pêcheur à IA qui n'a soutenu aucune proposition à la veillée : pour laquelle vote-t-il ? Une question de
-    quelques lignes au petit modèle (système 1), réponse contrainte à l'identifiant d'une proposition ou « aucune ». Sans cela,
-    ceux qui ne disent aucun chiffre s'abstenaient et aucune proposition n'atteignait la majorité. Une réponse inutilisable n'est
-    pas une erreur : le pêcheur reste sans voix ici, et la clôture compte ce qu'il a dit (`World.closing_vote`)."""
-    if asm.closed or agent.id in asm.support or not asm.proposals:
+    """Le bulletin d'un pêcheur à IA avant la clôture de la veillée : la proposition de règle qu'il soutient, s'il n'en a
+    soutenu aucune ; puis son vote sur chaque proposition d'exclure ou de réautoriser un pêcheur, selon sa confiance, sa morale
+    et ses intérêts."""
+    if asm.closed:
         return
+    if agent.id not in asm.support and asm.proposals:
+        await _quota_ballot(world, agent, asm)
+    pending = [s for s in asm.sanctions.values() if s.target != agent.id and agent.id not in s.votes]
+    if pending and not asm.closed:
+        await _sanction_ballot(world, agent, asm, pending)
+
+
+async def _sanction_ballot(world, agent: Agent, asm, pending: list) -> None:
+    """Pour ou contre chaque proposition d'exclure (ou de réautoriser) : quelques lignes (sa confiance envers le pêcheur visé, ce
+    qu'il sait de lui, sa propre situation), une réponse « oui » ou « non » par proposition (système 1). Sans réponse lisible,
+    il ne vote pas."""
+    row = world.trust[agent.id]
+    items = {}
+    for s in pending:
+        first, trust = world.first_name(s.target), row.get(s.target, 0.5)
+        items[s.id] = (f"{'interdire de pêche' if s.action == 'exclure' else 'laisser pêcher à nouveau'} {world.name(s.target)}, "
+                       f"proposé par {world.name(s.author)}. Ta confiance envers {first} : {prompts.trust_word(trust)} "
+                       f"({100 * trust:.0f} %). Ce que tu sais de lui : {world.sanction_brief(agent, s.target, asm.season)}.")
+    situation = (f"Tes finances : {agent.wealth:.0f} écus" + (" ; tu es toi-même interdit de pêche." if agent.id in world.banned
+                                                                  else "."))
+    data, res, _ = await _ask_llm(world, agent, "vote", prompts.sanction_messages(agent.profile, items, situation),
+                                  {"round": 98}, "S1", schema=prompts.sanction_schema(list(items)),
+                                  max_tokens=prompts.SANCTION_MAX_TOKENS,
+                                  system_one=prompts.sanction_system_one(agent.profile, items, situation))
+    for s in pending:
+        v = (data or {}).get(s.id)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):        # un modèle de décision : la probabilité du oui
+            yes = v >= 0.5
+        elif str(v).strip().lower() in ("oui", "non", "true", "false"):
+            yes = str(v).strip().lower() in ("oui", "true")
+        else:
+            continue
+        if not asm.closed:
+            world.vote_sanction(agent, s, yes)
+
+
+async def _quota_ballot(world, agent: Agent, asm) -> None:
+    """Pour quelle proposition de règle vote-t-il ? Une question de quelques lignes au petit modèle (système 1), réponse
+    contrainte à l'identifiant d'une proposition ou « aucune ». Sans cela, ceux qui ne disent aucun chiffre s'abstenaient et
+    aucune proposition n'atteignait la majorité. Une réponse inutilisable n'est pas une erreur : le pêcheur reste sans voix
+    ici, et la clôture compte ce qu'il a dit (`World.closing_vote`)."""
     est = world.lake.observe(agent.rng)
     table = [f"- {pr.id} : {pr.quota:g} t par pêcheur, proposée par {world.name(pr.author)}, "
              f"{sum(1 for v in asm.support.values() if v[0] == pr.id)} soutien(s)" for pr in asm.proposals.values()]

@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "action": {
+      "enum": [
+        "exclure",
+        "reautoriser"
+      ]
+    },
+    "scope": {
+      "type": "string"
+    },
+    "utterance_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "proposal_id",
+    "author",
+    "target",
+    "action",
+    "scope",
+    "utterance_id"
+  ],
+  "additionalProperties": false
+}

@@ -41,6 +41,7 @@ from pathlib import Path
 
 from . import prompts
 from .agents import Agent, _ask_llm, ballot, decide_catch, speak
+from .policies import sanction_vote
 from .clock import SimClock
 from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
@@ -56,32 +57,20 @@ from .vectors import PgVectorStore, make_embedder, postgres_dsn
 
 log = logging.getLogger("filets.world")
 
-# La confiance de chaque agent (pêcheurs et ancien) envers chaque pêcheur, de 0 (aucune) à 1 (totale), 0,5 au départ. Elle ne
-# bouge que sur ce qui est public : déclarations lues à la veillée, mensonges découverts, promesses, accusations, votes. Ceux
-# qui respectent la règle sont les plus durs avec ceux qui la dépassent.
+# La confiance de chaque agent (pêcheurs et ancien) envers chaque pêcheur, de 0 (aucune) à 1 (totale), 0,5 au départ. Le
+# moteur ne la fixe pas : chaque agent juge lui-même, à la veillée, ce que ce qu'il apprend de chacun change pour lui, selon sa
+# morale et ses intérêts (une IA dans sa réplique, champ `confiance` ; un agent à règles selon son caractère,
+# `policies.trust_rule`), de −3 à +3 pas de 0,1.
 TRUST_START = 0.5
-TRUST = {
-    # a déclaré plus que la règle (il l'avoue) : aux yeux de ceux qui la respectent (et de l'ancien), de −0,05 à peine
-    # au-dessus jusqu'à −0,20 au double de la règle ou plus ; aux yeux de ceux qui la dépassent aussi, moitié moins
-    "over_rule": -0.05,
-    "kept_rule": 0.03,          # a déclaré une prise dans la règle : aux yeux de ceux qui la respectent
-    "lie": -0.35,               # mensonge établi : aux yeux de tous ; toujours plus cher qu'un dépassement avoué
-    "denounced": 0.05,          # a dénoncé un menteur : aux yeux de ceux qui n'ont pas menti
-    "promise_kept": 0.05,       # promesse tenue, d'après ce que la vallée en sait
-    "promise_broken": -0.15,
-    "accused": -0.05,           # accusé avec une raison visible (déclaration au-delà de la règle, mensonge découvert)
-    "false_accusation": -0.05,  # a accusé sans raison visible
-    "same_side": 0.02,          # a soutenu la règle adoptée : aux yeux des autres soutiens
-    "suspected": -0.05,         # un indice contre lui, pas assez pour établir un mensonge : aux yeux de tous
-    "kept_away": 0.15,          # interdit de pêche, il s'est tenu à l'écart une saison (du moins, on ne l'a pas pris)
-}
+TRUST_STEP = 0.1
+LOYAL = 0.8        # un témoin ne dénonce pas devant tous celui à qui il fait confiance à ce point
 
 # Le lac a cinq zones : la rive de chaque hameau, où ses pêcheurs vont d'ordinaire, et le large.
 ZONES = [*HAMLETS, "large"]
 # Les indices et ce qu'ils pèsent dans le jugement de l'ancien (voir `World.weigh_evidence` et `scenario.detection`).
 DETECTION = {"radar": 0.95, "radar_error": 0.1, "witness": 0.4, "witness_error": 0.3, "seen_leaving": 0.3, "lifestyle": 0.5,
              "lake_error": 0.03, "margin_t": 0.3, "margin_ratio": 0.25, "proof": 2.0}
-EVIDENCE = {"radar": 3.0, "temoin": 1.0, "depart": 1.0, "train_de_vie": 0.5, "accusation": 0.5, "comptes": 0.5}
+EVIDENCE = {"radar": 3.0, "temoin": 1.0, "depart": 1.0, "train_de_vie": 0.5, "comptes": 0.5}
 HOW = {"radar": "le radar de l'ancien a mesuré sa barque", "temoins": "des voisins l'ont vu",
        "indices": "les indices concordaient"}
 
@@ -97,6 +86,18 @@ class Proposal:
 
 
 @dataclass
+class Sanction:
+    """Une proposition d'interdire un pêcheur de pêche (`exclure`), ou de lever son interdiction (`reautoriser`)."""
+    id: str
+    author: str
+    target: str
+    action: str
+    t: float
+    event_id: str
+    votes: dict[str, bool] = field(default_factory=dict)       # votant -> pour (True) ou contre (False)
+
+
+@dataclass
 class Assembly:
     scope: str                       # "valley" ou "hamlet:<nom>"
     participants: list[str]
@@ -107,6 +108,7 @@ class Assembly:
     support: dict[str, tuple[str, float, str]] = field(default_factory=dict)  # agent -> (proposal, t, event_id)
     stated: dict[str, float] = field(default_factory=dict)     # agent -> dernier quota qu'il a dit vouloir (proposé ou promis)
     accused: list[tuple[float, str]] = field(default_factory=list)     # (instant, accusé) : qui a été mis en cause, et quand
+    sanctions: dict[str, Sanction] = field(default_factory=dict)        # propositions d'exclure ou de réautoriser
     closed: bool = False
 
     @property
@@ -197,7 +199,6 @@ class World:
         self.reports: dict[tuple[str, int], dict] = {}
         self.lies: dict[str, dict] = {}
         self.trust = {o: {s.id: TRUST_START for s in self.fishers if s.id != o} for o in self.agents}
-        self._judged_season = 0
         # la détection : sorties de chaque saison ({agent, zone, landed, secret, radar, event_id}), indices (payload de `clue`
         # + saison, instant), comptes du lac, accusations ((instant, accusé, accusateur)), et ce que la vallée tient pour établi
         # ((agent, saison) -> {value, t, how, secret}) ; ses propres tirages, pour ne pas déplacer les autres hasards
@@ -216,6 +217,7 @@ class World:
         self.stop_requested = False
         self.stopped_reason = "completed"
         self._pid = itertools.count(1)
+        self._xid = itertools.count(1)       # propositions d'exclure ou de réautoriser : X1, X2…
         self.collapse_flagged = False
         self.obs_rng = random.Random(seed + 99)
         self.assemblies: list[Assembly] = []
@@ -318,34 +320,26 @@ class World:
         vals = [row[subject] for row in self.trust.values() if subject in row]
         return round(sum(vals) / len(vals), 3) if vals else TRUST_START
 
-    def shift_trust(self, subject: str, cause: str, deltas: dict[str, float], source_event_id: str | None = None):
-        """La confiance que chaque observateur de `deltas` accorde à `subject` change ; un événement `trust` le publie."""
-        vals = {}
-        for o, d in deltas.items():
-            if o == subject or o not in self.trust or not d:
+    def judge(self, observer: Agent, changes, source_event_id: str | None = None):
+        """`observer` revoit sa confiance envers les pêcheurs de `changes` (identifiant -> de −3 à +3, en dixièmes) : c'est son
+        jugement, selon sa morale et ses intérêts, et le moteur n'y ajoute rien. Une valeur illisible, hors des pêcheurs ou sur
+        soi-même est ignorée. Un événement `trust` par personne dont la confiance change."""
+        if not isinstance(changes, dict):
+            return
+        row = self.trust[observer.id]
+        for sid, raw in changes.items():
+            sid, steps = str(sid).strip().upper(), to_number(raw)
+            if sid not in row or steps is None:
                 continue
-            v = round(min(1.0, max(0.0, self.trust[o][subject] + d)), 3)
-            self.trust[o][subject] = vals[o] = v
-        if vals:
-            self.events.emit("trust", {"subject": subject, "cause": cause, "values": vals,
-                                       "reputation": self.reputation(subject), "source_event_id": source_event_id},
-                             actor=subject)
-
-    def suspect(self, aid: str, season: int) -> bool:
-        """Y a-t-il une raison visible de soupçonner `aid` : une déclaration au-delà de la règle (cette saison ou la précédente)
-        ou un mensonge découvert ?"""
-        now, tol, det = self.clock.now(), self.scn["quota_tolerance"], self.detection
-        if any(aid == a for a, _ in self.established):
-            return True
-        for c in self.clues:                      # un indice dit devant tous, qui dépasse nettement sa déclaration
-            if c["subject"] == aid and c["public"] and c["season"] >= season - 1 and c["estimate"] is not None and \
-                    self.beyond_declared(c["estimate"], c["declared"] or 0.0):
-                return True
-        for s in (season, season - 1):
-            known, norm = self.known_catch(aid, s, now), self.applicable_norm(self.agents[aid], s, now)
-            if known is not None and norm is not None and known > norm.quota + tol:
-                return True
-        return False
+            old = row[sid]
+            new = round(min(1.0, max(0.0, old + TRUST_STEP * round(max(-3.0, min(3.0, steps))))), 3)
+            if new == old:
+                continue
+            row[sid] = new
+            self.events.emit("trust", {
+                "subject": sid, "cause": f"jugement de {self.first_name(observer.id)}", "values": {observer.id: new},
+                "reputation": self.reputation(sid), "by": observer.id, "delta": round(new - old, 3),
+                "source_event_id": source_event_id}, actor=observer.id)
 
     # ------------------------------------------------------------ indices, jugement, interdiction, radar
     def beyond_declared(self, estimate: float, said: float) -> bool:
@@ -359,8 +353,9 @@ class World:
         """Le soir de la veillée, les indices de la saison sont réunis. Le radar a relevé les barques de sa zone (l'ancien le dit
         à tous) ; un voisin qui pêchait dans la même zone a pu voir une barque rentrer et en estimer la charge ; la barque d'un
         interdit a pu être vue partant à l'aube ; un train de vie peut ne pas coller avec une déclaration ; l'ancien fait les
-        comptes du lac. Qui n'a rien à se reprocher dit ce qu'il a vu ; qui a triché se tait (pour ne pas attirer l'attention).
-        Tout part des vraies sorties : un indice dit vrai, à l'erreur d'estimation près. Une fois par saison."""
+        comptes du lac. Qui n'a rien à se reprocher dit ce qu'il a vu ; qui a triché se tait (pour ne pas attirer l'attention),
+        et l'on ne dénonce pas un ami (confiance d'au moins `LOYAL`). Tout part des vraies sorties : un indice dit vrai, à l'erreur
+        d'estimation près. Une fois par saison."""
         if self._investigated_season >= season:
             return
         self._investigated_season = season
@@ -371,7 +366,8 @@ class World:
 
         def clue(kind: str, observer: str | None, trip: dict, estimate: float | None = None):
             subject = self.agents[trip["agent"]]
-            public = observer is None or observer == elder or not self.cheated(observer, season)
+            public = observer is None or observer == elder or \
+                (not self.cheated(observer, season) and self.trust[observer].get(subject.id, TRUST_START) < LOYAL)
             p = {"kind": kind, "observer": observer, "subject": subject.id, "zone": trip["zone"],
                  "estimate": None if estimate is None else round(max(0.0, estimate), 1), "public": public,
                  "declared": None if trip["secret"] else subject.declared.get(season)}
@@ -416,21 +412,15 @@ class World:
         self.events.emit("lake_audit", audit, actor=elder)
 
     def weigh_evidence(self, season: int):
-        """À la fin de la veillée, l'ancien pèse, pêcheur par pêcheur, les indices dits devant tous et les accusations des
-        pêcheurs qu'il croit (confiance d'au moins 0,4). Un mensonge est établi quand ils pèsent `proof` (radar 3, témoin 1,
-        départ vu 1, accusation 0,5, train de vie 0,5, comptes 0,5 s'ils ne tombent pas juste) et que la charge estimée dépasse
-        nettement la déclaration ; pour un interdit, toute sortie prouvée est une faute. Sinon, un indice fait un soupçon. Seuls
-        les indices comptent, jamais la vérité : l'ancien peut se tromper (`wrongful`)."""
+        """À l'ouverture de la veillée, l'ancien dit ce que les indices dits devant tous établissent, pêcheur par pêcheur. Un
+        mensonge est établi quand ils pèsent `proof` (radar 3, témoin 1, départ vu 1, train de vie 0,5, comptes 0,5 s'ils ne
+        tombent pas juste) et que la charge estimée dépasse nettement la déclaration ; pour un interdit, toute sortie prouvée est
+        une faute. Il relate, il ne sanctionne pas : ce que chacun en pense, et ce que la vallée décide, appartient aux pêcheurs.
+        Seuls les indices comptent, jamais la vérité : l'ancien peut se tromper (`wrongful`)."""
         if self._weighed_season >= season:
             return
         self._weighed_season = season
         det = self.detection
-        judge = self.elder.id if self.elder else None
-        credible: dict[str, set[str]] = {}
-        for _, accused, accuser in self.accusations.get(season, []):
-            trust = self.trust[judge].get(accuser, TRUST_START) if judge else self.reputation(accuser)
-            if trust >= 0.4:
-                credible.setdefault(accused, set()).add(accuser)
         books = EVIDENCE["comptes"] if self.audits.get(season, {}).get("significant") else 0.0
         for trip in self.trips.get(season, []):
             a = self.agents[trip["agent"]]
@@ -439,23 +429,18 @@ class World:
                 continue
             nums = [(EVIDENCE[c["kind"]], c["estimate"]) for c in clues if c["estimate"] is not None]
             est = sum(w * e for w, e in nums) / sum(w for w, _ in nums) if nums else None
-            weight = sum(EVIDENCE[c["kind"]] for c in clues) + min(1.0, EVIDENCE["accusation"] * len(credible.get(a.id, ())))
+            weight = sum(EVIDENCE[c["kind"]] for c in clues)
             said = 0.0 if trip["secret"] else a.declared.get(season, trip["landed"])
             if trip["secret"]:
                 caught = weight >= det["proof"]
-                suspected = not caught
             else:
-                big = est is not None and self.beyond_declared(est, said)
-                caught = big and weight + books >= det["proof"]
-                suspected = big and not caught
+                caught = est is not None and self.beyond_declared(est, said) and weight + books >= det["proof"]
             if caught:
                 self.establish(a, season, trip, said, est, clues)
-            elif suspected:
-                self.shift_trust(a.id, "soupçonné", {o: TRUST["suspected"] for o in self.trust}, clues[0]["event_id"])
 
     def establish(self, a: Agent, season: int, trip: dict, said: float, est: float | None, clues: list[dict]):
-        """L'ancien tient pour établi que `a` a menti (ou est sorti en cachette) : il le dit à tous, chacun s'en souvient, la
-        vallée lui retire sa confiance et sait gré aux témoins. La vallée retient l'estimation des indices, pas la vérité."""
+        """L'ancien tient pour établi que `a` a menti (ou est sorti en cachette) : il le dit à tous, et chacun s'en souvient. La
+        vallée retient l'estimation des indices, pas la vérité."""
         kinds = {c["kind"] for c in clues}
         how = "radar" if "radar" in kinds else ("temoins" if kinds & {"temoin", "depart"} else "indices")
         witnesses = sorted({c["observer"] for c in clues if c["observer"] and c["kind"] != "radar"})
@@ -479,37 +464,6 @@ class World:
                 text = (f"{a.profile.name} a menti à l'ancien à la saison {season} : il a déclaré {said:g} t, les indices "
                         f"disent {about} ({HOW[how]}).")
             self.remember(o, text, "mensonge", 0.9, source_event_id=ev["event_id"])
-        self.shift_trust(a.id, "sortie en cachette prouvée" if trip["secret"] else "mensonge établi",
-                         {o: TRUST["lie"] for o in self.trust}, ev["event_id"])
-        for w in witnesses:
-            self.shift_trust(w, "a témoigné", {o.id: TRUST["denounced"] for o in self.agents.values()
-                                               if not self.cheated(o.id, season)}, ev["event_id"])
-
-    def kept_away(self, season: int):
-        """Un interdit qu'on n'a pas pris dehors cette saison regagne un peu la confiance de tous (qu'il soit resté à quai ou
-        qu'il ait pêché sans être vu : la vallée ne sait que ce qu'elle voit)."""
-        for aid, since in list(self.banned.items()):
-            if since <= season and (aid, season) not in self.established:
-                self.shift_trust(aid, "se tient à l'écart", {o: TRUST["kept_away"] for o in self.trust})
-
-    def update_bans(self, season: int):
-        """Sous `scenario.ban_below` de réputation, un pêcheur est interdit de pêche dès la saison suivante ; il retrouve le droit
-        de pêcher quand elle remonte à `scenario.ban_lift`. Interdit, il ne déclare plus rien : il reste à quai, ou pêche en
-        cachette."""
-        below, lift = float(self.scn.get("ban_below", 0.05)), float(self.scn.get("ban_lift", 0.5))
-        for a in self.fishers:
-            rep = self.reputation(a.id)
-            if a.id not in self.banned and rep <= below:
-                self.banned[a.id] = season + 1
-                ev = self.events.emit("ban", {"agent": a.id, "banned": True, "reputation": rep}, actor=a.id)
-                self.remember(a, f"La vallée m'a interdit de pêche à partir de la saison {season + 1} : plus personne ne me "
-                                 f"fait confiance. Je ne pourrai pêcher à nouveau qu'après avoir regagné sa confiance.",
-                              "interdiction", 1.0, source_event_id=ev["event_id"])
-            elif a.id in self.banned and rep >= lift:
-                del self.banned[a.id]
-                ev = self.events.emit("ban", {"agent": a.id, "banned": False, "reputation": rep}, actor=a.id)
-                self.remember(a, "La vallée m'a rendu le droit de pêcher : j'ai regagné sa confiance.", "interdiction", 0.9,
-                              source_event_id=ev["event_id"])
 
     def place_radar(self, zone: str, by: str):
         self.radar_zone, self.radar_by = zone, by
@@ -576,44 +530,53 @@ class World:
                              f"déclarations en expliquent {au['declared']:g} t.")
         return lines[-7:]
 
-    def judge_declarations(self, season: int):
-        """À l'ouverture de la veillée, l'ancien lit les déclarations de la saison : qui a déclaré plus que la règle perd la
-        confiance de ceux qui la respectent (et un peu celle des autres), qui l'a tenue gagne un peu la leur. Ce que chacun
-        pense de lui-même compte : un tricheur caché est moins sévère. Une fois par saison."""
-        if self._judged_season >= season:
-            return
-        self._judged_season = season
-        now, tol = self.clock.now(), self.scn["quota_tolerance"]
-
-        def follows(o: Agent) -> bool | None:          # None : aucune règle ne le concerne, il ne juge pas
-            if not o.is_fisher:
-                return True
-            n = self.applicable_norm(o, season, now)
-            return None if n is None else o.catches.get(season, 0.0) <= n.quota + tol
-
-        stance = {o.id: follows(o) for o in self.agents.values()}
+    def trust_facts(self, agent: Agent, season: int, horizon: float, since: float | None) -> dict[str, dict]:
+        """Ce que l'agent vient d'apprendre de chaque pêcheur, la matière de son jugement (`policies.trust_rule` pour un agent à
+        règles ; une IA lit les mêmes faits dans son contexte). `since` None (sa première parole de la veillée) : les faits de
+        la saison (déclaration et règle, mensonge établi, sortie en cachette prouvée, promesse, témoignage, interdit resté à
+        l'écart) ; sinon, seulement les accusations portées contre lui depuis sa dernière parole."""
+        out: dict[str, dict] = {}
+        for t, accused, accuser in self.accusations.get(season, []):
+            if accused == agent.id and accuser != agent.id and t <= horizon and (since is None or t > since):
+                out.setdefault(accuser, {})["accused_me"] = True
+        if since is not None:
+            return out
+        tol, ptol = self.scn["quota_tolerance"], self.scn["promise_tolerance"]
         for a in self.fishers:
-            norm, rep = self.applicable_norm(a, season, now), self.reports.get((a.id, season))
-            if norm is None or rep is None:
+            if a.id == agent.id or not self.can_see(agent, a):
                 continue
-            known = self.known_catch(a.id, season, now)
-            over = known > norm.quota + tol
-            deltas = {}
-            for o in self.agents.values():
-                if o.id == a.id or stance[o.id] is None or not self.can_see(o, a):
-                    continue
-                if over:
-                    deltas[o.id] = self.over_rule_penalty(known, norm.quota, stance[o.id])
-                elif stance[o.id]:
-                    deltas[o.id] = TRUST["kept_rule"]
-            self.shift_trust(a.id, "dépasse la règle" if over else "respecte la règle", deltas, rep["event_id"])
+            f = out.setdefault(a.id, {})
+            known, norm = self.known_catch(a.id, season, horizon), self.applicable_norm(a, season, horizon)
+            if known is not None and norm is not None:
+                f["over"] = 0.0 if known <= norm.quota + tol else (known - norm.quota) / max(norm.quota, 0.1)
+            found = self.established.get((a.id, season))
+            if found is not None and found["t"] <= horizon:
+                f["secret" if found["secret"] else "lie"] = True
+            promise = self.promises.get((a.id, season))
+            if promise is not None and known is not None:
+                f["promise"] = known <= promise[0] + ptol
+            f["testified"] = any(c["observer"] == a.id and c["public"] and c["season"] == season and c["t"] <= horizon
+                                 for c in self.clues)
+            since_ban = self.banned.get(a.id)
+            f["stayed_away"] = since_ban is not None and since_ban <= season and found is None and \
+                not any(c["subject"] == a.id and c["public"] and c["season"] == season for c in self.clues)
+            if not any(v for v in f.values() if v is not None) and f.get("over") is None:
+                del out[a.id]
+        return out
 
-    @staticmethod
-    def over_rule_penalty(declared: float, quota: float, follows: bool) -> float:
-        """Ce qu'un dépassement avoué coûte aux yeux d'un observateur : de −0,05 à peine au-dessus de la règle jusqu'à −0,20
-        au double ou plus pour qui la respecte ; moitié moins pour qui la dépasse aussi. Toujours moins qu'un mensonge établi."""
-        hit = TRUST["over_rule"] * (1 + 3 * min(1.0, (declared - quota) / max(quota, 0.1)))
-        return round(hit if follows else hit / 2, 3)          # au millième, comme la confiance elle-même
+    def promise_lines(self, agent: Agent, season: int, horizon: float) -> list[str]:
+        """Les promesses faites à la dernière veillée pour cette saison, et ce que la vallée sait de leur sort."""
+        lines = []
+        for (aid, s), (promised, _) in self.promises.items():
+            if s != season or aid == agent.id or not self.can_see(agent, self.agents[aid]):
+                continue
+            known = self.known_catch(aid, season, horizon)
+            if known is None:
+                continue
+            kept = known <= promised + self.scn["promise_tolerance"]
+            lines.append(f"{self.first_name(aid)} avait promis {promised:g} t au plus : {known:g} t "
+                         + ("(promesse tenue)" if kept else "(promesse trahie)"))
+        return lines
 
     def known_catches(self, agent: Agent, horizon: float, season: int) -> tuple[list[str], list[str], dict]:
         """Les déclarations des autres que l'agent connaît (une ligne par saison, les trois dernières), et la vérité de ceux dont
@@ -644,8 +607,8 @@ class World:
         honest, out = [], []
         if agent.is_fisher:      # ce que la vallée pense de lui : de quoi peser un dépassement, un mensonge
             rep = self.reputation(agent.id)
-            out.append(f"ta réputation dans la vallée : {prompts.trust_word(rep)} ({100 * rep:.0f} %) ; sous "
-                       f"{100 * float(self.scn.get('ban_below', 0.05)):.0f} %, elle t'interdirait de pêcher.")
+            out.append(f"ta réputation dans la vallée : {prompts.trust_word(rep)} ({100 * rep:.0f} %) ; ceux qui ne te font "
+                       "plus confiance peuvent proposer de t'interdire de pêche.")
         if agent.id in self.banned:
             out.append(f"la vallée t'a interdit de pêche (depuis la saison {self.banned[agent.id]}) tant que tu n'as pas "
                        "regagné sa confiance : ta seule prise possible est en cachette.")
@@ -783,8 +746,16 @@ class World:
         }
         if assembly:
             visible_u = [u for u in assembly.utterances if u["sim_time"] <= horizon]
+            row = self.trust[agent.id]
+
+            def speaker(aid: str) -> str:      # chaque parole se pèse à la confiance qu'on fait à celui qui la dit
+                if aid == agent.id:
+                    return "toi"
+                trusted = f", ta confiance : {prompts.trust_word(row[aid])}" if aid in row else ""
+                return f"{self.name(aid)} ({aid}{trusted})"
+
             obs["transcript"] = [
-                f"{self.name(u['payload']['speaker'])} ({u['payload']['speaker']})"
+                speaker(u["payload"]["speaker"])
                 + ("" if u["payload"]["to"] == "tous" else f", à {self.name(u['payload']['to'])}")
                 + f" : « {u['payload']['text']} »" for u in visible_u[-12:]]
             used += [u["event_id"] for u in visible_u[-12:]]
@@ -797,8 +768,20 @@ class World:
                                         f"soutiens : {', '.join(sup) or 'aucun'}")
                 used.append(pr.event_id)
                 if best is None or len(sup) > best[2]:
-                    best = (pr.id, pr.quota, len(sup))
+                    best = (pr.id, pr.quota, len(sup), pr.author)
             state["leading_proposal"] = (best[0], best[1]) if best else None
+            state["leading_trust"] = row.get(best[3], 1.0) if best else 1.0
+            obs["sanctions"] = [
+                f"{s.id} : {'interdire de pêche' if s.action == 'exclure' else 'laisser pêcher à nouveau'} "
+                f"{self.name(s.target)} ({s.target}), proposé par {self.name(s.author)} ; pour : "
+                f"{', '.join(a for a, v in s.votes.items() if v) or 'personne'}"
+                for s in assembly.sanctions.values() if s.t <= horizon]
+            obs["promises"] = self.promise_lines(agent, season, horizon)
+            mine = [u for u in visible_u if u["payload"]["speaker"] == agent.id]
+            state["facts"] = self.trust_facts(agent, season, horizon,
+                                              mine[-1]["payload"]["info_horizon"] if mine else None)
+            state["present"] = [a for a in assembly.participants if self.agents[a].is_fisher and a != agent.id]
+            state["banned_ids"] = list(self.banned)
             obs["participants"] = [{"id": a, "name": self.name(a), "label": self.agents[a].profile.archetype_label}
                                    for a in assembly.participants]
             obs["scope_label"] = assembly.label
@@ -1008,10 +991,10 @@ class World:
 
     # ------------------------------------------------------------ veillée
     def open_assemblies(self, season: int, close_t: float) -> list[Assembly]:
-        # le soir de la veillée (qu'elle se tienne ou non) : les indices de la saison réunis, puis les déclarations lues ;
-        # l'ancien pèsera les indices à la fin de la veillée, avec les accusations qu'il aura entendues
+        # le soir de la veillée (qu'elle se tienne ou non) : les indices de la saison réunis, et ce qu'ils établissent, relaté
+        # par l'ancien ; ce que chacun en pense, et ce que la vallée en décide, se dira à la veillée
         self.investigate(season)
-        self.judge_declarations(season)
+        self.weigh_evidence(season)
         if self.comm == "none":
             return []
         if self.comm == "valley":
@@ -1098,17 +1081,16 @@ class World:
                                                      "utterance_id": u["event_id"]}, actor=agent.id)
                 asm.accused.append((now, accused.id))
                 self.accusations.setdefault(season, []).append((now, accused.id, agent.id))
-                # devant les autres présents : l'accusé perd un peu s'il y a une raison visible, l'accusateur sinon
-                others = [x for x in asm.participants if x not in (agent.id, accused.id)]
-                if self.suspect(accused.id, season):
-                    self.shift_trust(accused.id, "accusé avec raison", {o: TRUST["accused"] for o in others}, ae["event_id"])
-                else:
-                    self.shift_trust(agent.id, "accuse sans preuve", {o: TRUST["false_accusation"] for o in others},
-                                     ae["event_id"])
                 if accused.id in asm.participants:
                     self.remember(accused, f"{agent.profile.name} m'a accusé devant tous d'avoir trop pêché.",
                                   "accusation", 0.95, pinned=True, expires_season=season + 1,
                                   source_event_id=u["event_id"])
+        # ce qu'il pense désormais de chacun (son jugement), et ce qu'il propose à la vallée : exclure ou réautoriser
+        self.judge(agent, d.get("confiance"), u["event_id"])
+        if agent.is_fisher:
+            for action in ("exclure", "reautoriser"):
+                if d.get(action):
+                    self.propose_sanction(agent, asm, d[action], action, u)
         # ce que chacun retient
         self.remember(agent, f"À la veillée, j'ai dit : « {text} »", "parole", 0.4, source_event_id=u["event_id"])
         for pid in asm.participants:
@@ -1138,6 +1120,72 @@ class World:
         return any(p.author == agent.id for p in asm.proposals.values()) and \
             any(p.author != agent.id and p.t > heard for p in asm.proposals.values())
 
+    def propose_sanction(self, agent: Agent, asm: Assembly, raw, action: str, u: dict):
+        """`agent` propose d'interdire de pêche (`exclure`) un pêcheur, ou de le laisser pêcher à nouveau (`reautoriser`) ; si la
+        même proposition est déjà sur la table, il la soutient. On n'exclut pas un exclu, on ne réautorise pas un libre, et l'on
+        ne se vise pas soi-même. L'auteur vote pour."""
+        tid = str(raw).strip().upper()
+        target = self.agents.get(tid)
+        if target is None or not target.is_fisher or tid == agent.id or (action == "exclure") == (tid in self.banned):
+            return
+        same = next((s for s in asm.sanctions.values() if s.target == tid and s.action == action), None)
+        if same is None:
+            sid = f"X{next(self._xid)}"
+            pe = self.events.emit("sanction_proposal", {"proposal_id": sid, "author": agent.id, "target": tid,
+                                                        "action": action, "scope": asm.scope, "utterance_id": u["event_id"]},
+                                  actor=agent.id)
+            same = asm.sanctions[sid] = Sanction(sid, agent.id, tid, action, self.clock.now(), pe["event_id"])
+            if tid in asm.participants and action == "exclure":
+                self.remember(target, f"{agent.profile.name} a proposé devant tous de m'interdire de pêche.", "sanction",
+                              0.95, pinned=True, expires_season=asm.season + 1, source_event_id=pe["event_id"])
+        self.vote_sanction(agent, same, True)
+
+    def vote_sanction(self, agent: Agent, s: Sanction, yes: bool):
+        if agent.id == s.target or agent.id in s.votes or not agent.is_fisher:
+            return
+        s.votes[agent.id] = yes
+        self.events.emit("sanction_vote", {"proposal_id": s.id, "agent": agent.id, "vote": yes}, actor=agent.id)
+
+    def policy_voter(self, agent: Agent) -> bool:
+        """Vote-t-il selon son caractère (agent à règles, ou faux LLM, qui ne sait pas répondre à un bulletin) ?"""
+        return agent.profile.kind == "rule" or self.cfg["llm"]["tiers"]["petit"]["provider"] == "scripted"
+
+    def close_sanctions(self, asm: Assembly):
+        """À la clôture, chaque proposition d'exclure ou de réautoriser est tranchée : les pêcheurs présents (sauf celui qu'elle
+        vise) qui n'ont pas encore voté le font selon leur caractère s'ils votent ainsi ; adoptée avec au moins la moitié
+        d'entre eux, elle prend effet dès la saison suivante. Les IA ont voté par leur bulletin, selon leur confiance, leur
+        morale et leurs intérêts."""
+        for s in asm.sanctions.values():
+            voters = [a for a in asm.participants if self.agents[a].is_fisher and a != s.target]
+            for aid in voters:
+                a = self.agents[aid]
+                if aid not in s.votes and self.policy_voter(a):
+                    self.vote_sanction(a, s, sanction_vote(a.archetype, self.trust[aid][s.target], s.action))
+            yes = sorted(a for a, v in s.votes.items() if v)
+            adopted = bool(voters) and len(yes) * 2 >= len(voters)
+            res = self.events.emit("sanction_result", {
+                "proposal_id": s.id, "target": s.target, "action": s.action, "adopted": adopted, "for": yes,
+                "against": sorted(a for a, v in s.votes.items() if not v), "voters": len(voters)}, actor=s.target)
+            name = self.agents[s.target].profile.name
+            what = "l'interdire de pêche" if s.action == "exclure" else "lui rendre le droit de pêcher"
+            for aid in asm.participants:
+                self.remember(self.agents[aid], f"À la veillée, la vallée a {'décidé' if adopted else 'refusé'} de {what} : "
+                                                f"{name} ({len(yes)} voix sur {len(voters)}).", "sanction", 0.9,
+                              source_event_id=res["event_id"])
+            if not adopted:
+                continue
+            target = self.agents[s.target]
+            if s.action == "exclure":
+                self.banned[s.target] = asm.season + 1
+            else:
+                self.banned.pop(s.target, None)
+            self.events.emit("ban", {"agent": s.target, "banned": s.action == "exclure",
+                                     "reputation": self.reputation(s.target), "proposal_id": s.id, "for": yes,
+                                     "voters": len(voters)}, actor=s.target)
+            self.remember(target, "La vallée m'a interdit de pêche : tant qu'elle ne me fera pas de nouveau confiance, je ne "
+                                  "pourrai pêcher qu'en cachette." if s.action == "exclure" else
+                          "La vallée m'a rendu le droit de pêcher.", "interdiction", 1.0, source_event_id=res["event_id"])
+
     def _support(self, agent: Agent, asm: Assembly, pid: str, u: dict):
         se = self.events.emit("support", {"agent": agent.id, "proposal_id": pid, "utterance_id": u["event_id"]},
                               actor=agent.id)
@@ -1150,12 +1198,36 @@ class World:
         return min(near, key=lambda p: (abs(p.quota - q), p.id), default=None)
 
     def ballot_candidates(self, asm: Assembly) -> list[Agent]:
-        """Les pêcheurs à IA qui n'ont encore soutenu aucune proposition (et qu'on peut donc interroger). Pas avec le faux LLM :
-        il ne sait pas répondre à un bulletin, la clôture compte alors ce que chacun a dit."""
-        if asm.closed or not asm.proposals or self.cfg["llm"]["tiers"]["petit"]["provider"] == "scripted":
+        """Les pêcheurs à IA qui ont encore un bulletin à remplir : aucune proposition de règle soutenue, ou une proposition
+        d'exclure ou de réautoriser sur laquelle ils n'ont pas voté. Pas avec le faux LLM : il ne sait pas répondre à un
+        bulletin, la clôture compte alors ce que chacun a dit (et le fait voter selon son caractère sur les sanctions)."""
+        if asm.closed or self.cfg["llm"]["tiers"]["petit"]["provider"] == "scripted":
             return []
-        return [self.agents[a] for a in asm.participants if self.agents[a].is_fisher and a not in asm.support
-                and self.agents[a].profile.kind == "llm"]
+        out = []
+        for aid in asm.participants:
+            a = self.agents[aid]
+            if not a.is_fisher or a.profile.kind != "llm":
+                continue
+            if (asm.proposals and aid not in asm.support) or \
+                    any(s.target != aid and aid not in s.votes for s in asm.sanctions.values()):
+                out.append(a)
+        return out
+
+    def sanction_brief(self, observer: Agent, target: str, season: int) -> str:
+        """Ce que `observer` sait de `target` cette saison, en une ligne : de quoi voter sur son exclusion."""
+        now, bits = self.clock.now(), []
+        known, norm = self.known_catch(target, season, now), self.applicable_norm(self.agents[target], season, now)
+        if known is not None:
+            bits.append(f"déclare {known:g} t" + (f" pour une règle de {norm.quota:g} t" if norm else ""))
+        found = self.established.get((target, season))
+        if found is not None:
+            bits.append("pris à pêcher en cachette" if found["secret"] else "mensonge établi par l'ancien")
+        if target in self.banned:
+            bits.append(f"interdit de pêche depuis la saison {self.banned[target]}")
+        promise = self.promises.get((target, season))
+        if promise is not None and known is not None:
+            bits.append("promesse tenue" if known <= promise[0] + self.scn["promise_tolerance"] else "promesse trahie")
+        return " ; ".join(bits) or "rien de particulier cette saison"
 
     async def ballots(self, asms: list[Assembly]) -> None:
         """Le bulletin de chacun, en même temps (synchrone : juste avant la clôture)."""
@@ -1199,14 +1271,12 @@ class World:
                 self.norms.append(Norm(asm.scope, pr.quota, asm.season + 1, pid, self.clock.now(),
                                        ne["event_id"], sorted(sups)))
                 adopted = pid
-                for s in sups:          # ceux qui ont voté la même règle se font un peu plus confiance
-                    self.shift_trust(s, "a soutenu la règle adoptée", {o: TRUST["same_side"] for o in sups},
-                                     ne["event_id"])
                 for aid in asm.participants:
                     self.remember(self.agents[aid], f"Règle adoptée chez l'ancien ({asm.label}) : pas plus de "
                                                     f"{pr.quota:g} t par pêcheur à partir de la saison {asm.season + 1}, "
                                                     f"soutenue par {len(sups)} pêcheurs sur {len(fishers_present)}.",
                                   "regle", 0.9, source_event_id=ne["event_id"])
+        self.close_sanctions(asm)
         self.events.emit("assembly_end", {"scope": asm.scope, "adopted_proposal": adopted,
                                           "utterances": len(asm.utterances)})
 
@@ -1229,13 +1299,10 @@ class World:
                 # qu'elle éclate
                 known = self.known_catch(a.id, season, now)
                 known_kept = (landed if known is None else known) <= promised + tol
-                oe = self.events.emit("promise_outcome", {
+                self.events.emit("promise_outcome", {
                     "agent": a.id, "promise_event_id": pe_id, "promised": promised, "landed": round(landed, 3),
                     "kept": kept, "season": season, "declared": round(a.declared.get(season, landed), 3),
                     "known_kept": known_kept}, actor=a.id)
-                self.shift_trust(a.id, "promesse tenue" if known_kept else "promesse trahie",
-                                 {o: TRUST["promise_kept" if known_kept else "promise_broken"] for o in self.trust},
-                                 oe["event_id"])
                 if not kept:
                     self.remember(a, f"J'avais promis {promised:g} t pour la saison {season} et j'en ai pris "
                                      f"{landed:g}. " + ("Personne ne le sait." if known_kept else "Tout le monde le sait."),
@@ -1243,8 +1310,6 @@ class World:
             a.wealth -= self.econ["upkeep_per_season"] + a.profile.debt_payment
             self.remember(a, f"Bilan de la saison {season} : {landed:g} t pêchées, il me reste {a.wealth:.0f} écus.",
                           "bilan", 0.5)
-        self.kept_away(season)
-        self.update_bans(season)
         self.move_radar()
         self.events.emit("season_end", {
             "stock": round(self.lake.stock, 3),
@@ -1295,6 +1360,10 @@ class World:
         if audit and audit[0]["significant"]:
             facts.append(f"Les comptes du lac ne tombent pas juste : il a perdu environ {audit[0]['drop']:g} t, les "
                          f"déclarations n'en expliquent que {audit[0]['declared']:g}.")
+        for r in of("sanction_result"):          # ce que la vallée a voté : exclure ou réautoriser
+            what = "d'interdire de pêche" if r["action"] == "exclure" else "de laisser pêcher à nouveau"
+            facts.append(f"La vallée a {'voté' if r['adopted'] else 'refusé'} {what} {self.first_name(r['target'])} "
+                         f"({len(r['for'])} voix sur {r['voters']}).")
         if self.banned:
             facts.append("Interdits de pêche : " + both([self.first_name(b) for b in self.banned]) + ".")
         start = next((p["stock"] for p in of("season_start")), None)

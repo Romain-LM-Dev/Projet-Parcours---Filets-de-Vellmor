@@ -29,7 +29,7 @@ STYLE = (
 BRIEF_STYLE = " Sois très bref : une seule phrase courte (20 mots au plus) pour chaque champ de texte."
 
 # longueur de réponse permise (tokens) : assez pour un JSON complet, pas pour un discours
-BRIEF_MAX_TOKENS = {"catch": 125, "speak": 150}
+BRIEF_MAX_TOKENS = {"catch": 125, "speak": 200}
 
 
 def is_brief(cfg_llm: dict) -> bool:
@@ -201,8 +201,8 @@ def rule_reminder(obs: dict) -> str:
         return ""
     who = "tu l'as soutenue" if rule["supported"] else "tu ne l'as pas soutenue, mais la vallée l'a adoptée"
     return (f"Règle votée à la veillée : pas plus de {rule['quota']:g} t par pêcheur cette saison ({who}). "
-            "La dépasser, c'est trahir la parole de la vallée : ceux qui la respectent te retireront de leur confiance, "
-            "d'autant plus que tu dépasses ; et sans plus personne pour te croire, la vallée t'interdirait de pêcher.\n")
+            "La dépasser, c'est trahir la parole de la vallée : chacun en jugera selon sa morale, et ceux qui ne te font plus "
+            "confiance peuvent proposer de t'interdire de pêche.\n")
 
 
 def trust_word(v: float) -> str:
@@ -256,6 +256,10 @@ def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dic
         if fisher:
             props["promesse"] = {"type": ["number", "null"]}
         props["accuse"] = {"type": ["string", "null"], "maxLength": 8}
+        props["confiance"] = {"type": "object", "additionalProperties": {"type": "integer", "minimum": -3, "maximum": 3}}
+        if fisher:
+            props["exclure"] = {"type": ["string", "null"], "maxLength": 8}
+            props["reautoriser"] = {"type": ["string", "null"], "maxLength": 8}
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
@@ -278,6 +282,8 @@ def context_block(obs: dict, brief: bool = False) -> str:
     parts.append("Règles en vigueur entre pêcheurs :\n" + _bullets(obs["norms"], "aucune règle n'a été adoptée"))
     parts.append("Prises que les autres ont déclarées à l'ancien (tu ne connais que ces chiffres) :\n"
                  + _bullets(known, "aucune déclaration connue") + social_line(obs))
+    if obs.get("promises"):
+        parts.append("Promesses de la dernière veillée, et ce qu'on en sait :\n" + _bullets(obs["promises"]))
     parts.append(carnet_block(obs) + clues_block(obs))
     parts.append("Tes souvenirs qui reviennent :\n" + _bullets(memories, "aucun souvenir précis"))
     parts.append("Ce qu'on raconte dans la vallée (archives, comptes, récits) :\n" + _bullets(documents, "rien de particulier"))
@@ -295,10 +301,10 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
              "ferait ton personnage.\n" if obs.get("rumors") else "")
     if obs.get("banned"):
         ask = (
-            "C'est le moment de décider. La vallée t'a interdit de pêche : tant que tu n'as pas regagné sa confiance, tu n'as "
-            "pas le droit de sortir. Tu peux rester à quai (0 t), ou pêcher en cachette, loin de ta rive ; mais le radar de la "
-            "vallée surveille une partie du lac (on ne sait pas laquelle) et un voisin peut voir ta barque partir. Pris, tu "
-            "perdrais encore la confiance de tous ; à quai, tu la regagnes peu à peu.\n"
+            "C'est le moment de décider. La vallée a voté ton exclusion : tant qu'elle ne vote pas de te laisser pêcher à "
+            "nouveau, tu n'as pas le droit de sortir. Tu peux rester à quai (0 t), ou pêcher en cachette, loin de ta rive ; mais "
+            "le radar de la vallée surveille une partie du lac (on ne sait pas laquelle) et un voisin peut voir ta barque partir. "
+            "Pris, tu perdrais encore la confiance des autres ; à quai, tu peux espérer la regagner.\n"
             + lake_reminder(obs) + rumor
             + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
               f"\"prise\": <0 si tu restes à quai, sinon les tonnes pêchées en cachette, jusqu'à {obs['boat_capacity']:g}>, "
@@ -312,8 +318,8 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
             + rumor
             + "En rentrant, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ce chiffre. Tu peux mentir, mais "
               "les voisins qui pêchent du même côté voient les barques rentrer et le radar de la vallée mesure celles d'une "
-              "partie du lac (on ne sait pas laquelle) : un dépassement avoué coûte un peu de confiance, un mensonge découvert "
-              "en coûte bien plus.\n"
+              "partie du lac (on ne sait pas laquelle) : un dépassement avoué se pardonne plus facilement qu'un mensonge "
+              "découvert.\n"
             + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
               f"\"prise\": <tonnes, {catch_range(obs)}>, "
               "\"declaration\": <tonnes que tu déclares à l'ancien : ta prise, ou moins si tu la caches>}"
@@ -342,6 +348,8 @@ def veillee_block(obs: dict) -> str:
                      "par saison.")
     parts.append("Règles en vigueur : " + ("; ".join(obs["norms"]) + "." if obs["norms"] else "aucune règle adoptée."))
     parts.append("Prises déclarées à l'ancien :\n" + _bullets(obs["known_catches"][-3:], "aucune déclaration connue"))
+    if obs.get("promises"):
+        parts.append("Promesses de la dernière veillée, et ce qu'on en sait :\n" + _bullets(obs["promises"]))
     parts.append(carnet_block(obs) + clues_block(obs))
     if obs.get("memories"):
         parts.append("Souvenirs :\n" + _bullets(_cut(obs["memories"][:2], 2, 140)))
@@ -364,16 +372,26 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     if fisher:
         fields.append("\"promesse\": <tonnes que tu annonces pêcher la saison prochaine, ou null>")
     fields.append("\"accuse\": \"<identifiant d'un pêcheur que tu accuses d'avoir trop pêché>\" ou null")
+    # la confiance : c'est l'agent qui dit ce que chaque acte, chaque parole change pour lui (le moteur n'y ajoute rien)
+    fields.append("\"confiance\": {\"<identifiant>\": <de -3 à +3>} pour ceux envers qui ce que tu sais et entends ce soir "
+                  "change ta confiance, selon ta morale et tes intérêts (-3 : tu ne le crois plus du tout, +3 : il a gagné ta "
+                  "confiance) ; {} si rien ne change")
+    if fisher:
+        fields.append("\"exclure\": \"<identifiant d'un pêcheur que tu proposes d'interdire de pêche>\" ou null")
+        fields.append("\"reautoriser\": \"<identifiant d'un pêcheur interdit que tu proposes de laisser pêcher à nouveau>\" "
+                      "ou null")
     rumor_hint = ("Une rumeur court : tu peux la relayer, la démentir, t'en défendre si elle te vise, ou accuser quelqu'un. "
                   if obs.get("rumors") else "")
     if obs.get("clues"):
-        rumor_hint += ("Les indices peuvent te faire soupçonner quelqu'un (ou te viser) : une accusation pèse dans le jugement "
-                       "de l'ancien. ")
+        rumor_hint += "Les indices peuvent te faire soupçonner quelqu'un (ou te viser) : à toi de juger qui croire. "
+    sanctions = ("Propositions d'exclure ou de réautoriser sur la table :\n" + _bullets(obs["sanctions"]) + "\n\n"
+                 if obs.get("sanctions") else "")
     ask = (
         f"Veillée chez l'ancien ({obs['scope_label']}), tour de parole {obs['round']}. Présents : {people}.\n\n"
-        f"Ce qui a déjà été dit ce soir :\n{transcript}\n\nPropositions de règle sur la table :\n{proposals}\n\n"
-        "À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser, "
-        f"ou simplement donner ton avis. {rumor_hint}Rien ne t'oblige à tenir parole.\n"
+        f"Ce qui a déjà été dit ce soir :\n{transcript}\n\nPropositions de règle sur la table :\n{proposals}\n\n{sanctions}"
+        "À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser"
+        + (", proposer d'interdire un pêcheur de pêche (ou d'en réautoriser un)" if fisher else "")
+        + f", ou simplement donner ton avis. {rumor_hint}Rien ne t'oblige à tenir parole.\n"
         + lake_reminder(obs)
         + "Réponds en JSON : {" + ", ".join(fields) + "}"
     )
@@ -439,6 +457,31 @@ def reflex_system_one(p, obs: dict) -> dict:
             "questions": {"prise": {"type": "score", "criteria": criteria,
                                     "instructions": "Combien de tonnes ce pêcheur pêche-t-il cette saison, vu l'état du lac, "
                                                     "ses engagements et les règles ?"}}}
+
+
+# Le vote sur une exclusion (ou une réautorisation) : « oui » ou « non » par proposition, selon sa confiance envers le pêcheur
+# visé, sa morale (le caractère) et ses intérêts (sa situation).
+SANCTION_MAX_TOKENS = 40
+
+
+def sanction_schema(ids: list[str]) -> dict:
+    return {"type": "object", "properties": {i: {"enum": ["oui", "non"]} for i in ids}, "required": list(ids),
+            "additionalProperties": False}
+
+
+def sanction_messages(p, items: dict[str, str], situation: str) -> list[dict]:
+    who = f"Tu es {p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    body = ("La veillée touche à sa fin. La vallée vote sur ces propositions ; tu votes selon ta confiance, ta morale et tes "
+            f"intérêts. {situation}\n" + "\n".join(f"- {i} : {t}" for i, t in items.items())
+            + "\nRéponds en JSON : {" + ", ".join(f"\"{i}\": \"oui\" ou \"non\"" for i in items) + "}")
+    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
+
+
+def sanction_system_one(p, items: dict[str, str], situation: str) -> dict:
+    """Le même vote en questions typées : une question oui/non par proposition (la probabilité du oui)."""
+    state = f"{p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits}\n{situation}"
+    return {"state": state, "questions": {i: {"type": "noul", "instructions": f"Ce pêcheur vote-t-il pour : {t}"}
+                                          for i, t in list(items.items())[:25]}}
 
 
 def ballot_system_one(p, proposals: dict[str, str], est: float, capacity: float, collapse_ratio: float = 0.05) -> dict:

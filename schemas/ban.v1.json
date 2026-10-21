@@ -9,6 +9,18 @@
     },
     "reputation": {
       "type": "number"
+    },
+    "proposal_id": {
+      "type": "string"
+    },
+    "for": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "voters": {
+      "type": "integer"
     }
   },
   "required": [

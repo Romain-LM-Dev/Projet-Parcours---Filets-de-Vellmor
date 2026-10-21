@@ -347,47 +347,62 @@ d'ordinaire, et le large. Le soir de la veillée, les indices de la saison sont 
 * **les comptes du lac** : l'ancien mesure ce que la pêche lui a fait perdre (à ±3 % de la capacité) et le compare au total
   déclaré (`lake_audit`).
 
-Qui n'a rien à se reprocher dit devant tous ce qu'il a vu ; **qui a triché se tait** (son indice reste à lui, dans son carnet). Les
-IA lisent ces indices (« Indices et soupçons dans la vallée ») et peuvent accuser. À la fin de la veillée, l'ancien **pèse** les
-indices dits devant tous et les accusations des pêcheurs qu'il croit : radar 3, témoin 1, départ vu 1, accusation 0,5, train de vie
-0,5, comptes 0,5 s'ils ne tombent pas juste. Le mensonge est **établi** (`lie_discovered`) quand ce poids atteint 2 et que la charge
-estimée dépasse la déclaration d'au moins 1 t et 25 % ; pour un interdit, toute sortie prouvée est une faute. En dessous, un indice
-fait un **soupçon** (−0,05 de confiance). La vallée retient alors l'estimation des indices, pas la vérité ; et comme seuls les
-indices comptent, l'ancien peut se tromper : le fil l'écrit `ACCUSÉ À TORT` (vu de vous seul).
+Qui n'a rien à se reprocher dit devant tous ce qu'il a vu, sauf contre un ami (confiance de 0,8 et plus) ; **qui a triché se tait**
+(son indice reste à lui, dans son carnet). Dès l'ouverture de la veillée, l'ancien **relate ce que les indices établissent** : il
+pèse ceux qui ont été dits devant tous (radar 3, témoin 1, départ vu 1, train de vie 0,5, comptes 0,5 s'ils ne tombent pas juste).
+Le mensonge est **établi** (`lie_discovered`) quand ce poids atteint 2 et que la charge estimée dépasse la déclaration de plus de
+25 % (et d'au moins 0,3 t) ; pour un interdit, toute sortie prouvée est une faute. La vallée retient l'estimation des indices, pas
+la vérité ; et comme seuls les indices comptent, l'ancien peut se tromper : le fil l'écrit `ACCUSÉ À TORT` (vu de vous seul). Il
+relate, il ne sanctionne pas : les IA lisent ces faits (« Indices et soupçons dans la vallée »), jugent, accusent, et proposent
+d'exclure si elles le veulent.
 
-**Interdit de pêche.** Quand sa réputation tombe à presque rien (`scenario.ban_below`, 5 %), un pêcheur est **interdit de pêche** à
-partir de la saison suivante (événement `ban`), jusqu'à ce qu'elle remonte à 50 % (`scenario.ban_lift`). Il ne déclare plus rien :
-il reste à quai, ou **pêche en cachette**, loin de sa rive, plutôt au large (sa prise est marquée `secret` dans le journal). Chaque
-saison où on ne le prend pas dehors, il regagne un peu la confiance de tous (+0,15) ; pris, il la reperd (−0,35). Son IA décide
-toujours en réflexion (système 2) : rester à quai ou risquer la cachette.
+**La confiance, chacun la juge.** Chaque agent (pêcheurs et ancien) a une confiance envers chaque pêcheur, de 0 à 1, à 0,5 au
+départ. Le moteur ne la fixe pas : à la veillée, **chaque agent dit lui-même ce que ce qu'il a appris de chacun change pour lui**,
+selon sa morale et ses intérêts (de −3 à +3, par pas de 0,1). Une IA le dit dans sa réplique (champ `confiance` : `{"F02": -2}`),
+après avoir lu les faits relatés par l'ancien (déclarations, indices, mensonges établis, sort des promesses) et ce qui se dit ce
+soir-là, chaque parole précédée de la confiance qu'elle fait à celui qui la dit. Un agent à règles juge selon son caractère
+(`policies.trust_rule`) :
 
-**La confiance.** Chaque agent (pêcheurs et ancien) a une confiance envers chaque pêcheur, de 0 à 1, à 0,5 au départ. Elle ne
-bouge que sur ce qui est public, et ceux qui respectent la règle sont les plus durs avec ceux qui la dépassent :
+| ce qu'il apprend d'un pêcheur | famille ancienne | nouveau venu | taiseux | beau parleur |
+|---|---|---|---|---|
+| dépasse la règle un peu / beaucoup (avoué) | −0,1 / −0,2 | 0 / −0,1 | 0 | −0,1 |
+| tient la règle | +0,1 | 0 | 0 | +0,1 |
+| mensonge établi / pris à pêcher en cachette | −0,3 / −0,3 | −0,2 / −0,1 | −0,1 / 0 | −0,3 / −0,2 |
+| promesse trahie / tenue | −0,2 / +0,1 | −0,1 / +0,1 | 0 | −0,3 / +0,2 |
+| m'accuse | −0,1 | −0,3 | −0,3 | −0,2 |
+| a témoigné contre un tricheur | +0,1 | 0 | −0,1 | +0,1 |
+| interdit, resté à l'écart (personne ne l'a vu dehors) | +0,1 | +0,2 | +0,1 | +0,1 |
 
-| ce qui arrive | qui change d'avis | effet |
-|---|---|---|
-| dépassement avoué : déclaration au-delà de la règle (dès 0,05 t, sans autre marge) | ceux qui respectent la règle (et l'ancien) / ceux qui la dépassent aussi | de −0,05 (à peine au-dessus) à −0,20 (le double ou plus) / moitié moins |
-| déclaration dans la règle | ceux qui respectent la règle | +0,03 |
-| mensonge établi, ou sortie en cachette prouvée | tout le monde | −0,35 (toujours plus qu'avouer) |
-| un indice contre lui, sans preuve (soupçon) | tout le monde | −0,05 |
-| a témoigné contre un menteur | ceux qui n'ont pas triché | +0,05 |
-| interdit, on ne l'a pas pris dehors de la saison | tout le monde | +0,15 |
-| promesse tenue / trahie (d'après ce qu'on sait) | tout le monde | +0,05 / −0,15 |
-| accusé avec une raison visible / accusation sans raison visible | les autres présents | −0,05 pour l'accusé / pour l'accusateur |
-| a soutenu la règle adoptée | les autres soutiens | +0,02 |
+La famille ancienne tient à la règle ; le nouveau venu, endetté, pardonne à qui pêche pour vivre mais pas à qui l'accuse ; le
+taiseux ne juge guère les autres, mais en veut à qui dénonce ; le beau parleur tient à la parole donnée. Pour tous, un dépassement
+avoué se pardonne mieux qu'un mensonge établi. Chaque jugement est un événement `trust` (qui juge, `by`, de combien, `delta`, la
+confiance qui en résulte et la **réputation**, moyenne de la confiance des autres).
 
-Chaque changement est un événement `trust` (la confiance de chaque observateur, et la **réputation** : la moyenne de la confiance
-des autres). Les IA la lisent dans leur **carnet** (« Ta confiance envers les autres : Loïc faible, Théo forte ; les autres,
-moyenne »), avec leur propre réputation (« ta réputation dans la vallée : faible (32 %) ; sous 5 %, elle t'interdirait de
-pêcher »), leurs vraies prises et ce qu'elles en ont déclaré : un pêcheur sait s'il a menti, et si son mensonge a éclaté. La question
-de prise leur dit ce que coûte chaque choix : dépasser la règle coûte un peu de confiance, d'autant plus qu'on la dépasse ; l'avouer en
-coûte moins que d'être pris à mentir. Sur un lac bien rempli, le repère des anciens rappelle qu'au-dessus de la moitié le lac ne se
-repeuple presque plus et qu'on peut pêcher ce surplus sans l'abîmer (la vallée votait 2 t chacun pour 6 t de surplus par pêcheur).
+**La confiance oriente les réactions.** Les IA la lisent dans leur **carnet** (« Ta confiance envers les autres : Loïc faible,
+Théo forte ; les autres, moyenne », et leur propre réputation) et devant chaque parole de la veillée. Un témoin ne dénonce pas devant
+tous celui à qui il fait toute confiance (0,8 et plus) ; un agent à règles ne soutient pas la proposition de quelqu'un qu'il ne croit
+plus ; l'ancien place le radar là où il se méfie le plus.
+
+**Exclure de la pêche, ou réautoriser : la vallée vote.** À la veillée, un pêcheur peut proposer d'**interdire un autre de pêche**
+(champ `exclure`) ou de **laisser pêcher à nouveau un exclu** (`reautoriser`), selon sa confiance, ses intérêts et sa morale
+(`sanction_proposal`). Les autres pêcheurs présents (sauf celui qui est visé) votent : les IA par un bulletin (« oui » ou « non »,
+avec leur confiance envers lui et ce qu'elles savent de lui), les agents à règles selon leur caractère (`sanction_vote`). Avec au
+moins la moitié des voix, la décision prend effet dès la saison suivante (`sanction_result`, `ban`). L'ancien relate les faits et
+les comptes ; il ne propose ni ne vote de sanction.
+
+**Interdit de pêche.** Un exclu ne déclare plus rien : il reste à quai, ou **pêche en cachette**, loin de sa rive, plutôt au large
+(sa prise est marquée `secret` dans le journal). Pris, il perd encore la confiance de ceux qui le jugent ; resté à l'écart, il peut la
+regagner, jusqu'à ce que quelqu'un propose de le réautoriser. Son IA décide toujours en réflexion (système 2) : rester à quai ou
+risquer la cachette. La question de prise de chacun rappelle ce que coûte chaque choix : dépasser la règle, c'est s'exposer au
+jugement des autres et à une proposition d'exclusion ; un dépassement avoué se pardonne plus facilement qu'un mensonge découvert.
+Sur un lac bien rempli, le repère des anciens rappelle qu'au-dessus de la moitié le lac ne se repeuple presque plus et qu'on peut
+pêcher ce surplus sans l'abîmer (la vallée votait 2 t chacun pour 6 t de surplus par pêcheur).
 
 Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), s'il est interdit, sa dernière prise et sa
 déclaration (en rouge si elle ment) et ses mensonges établis ; sur la carte, le radar balaie sa zone et un anneau rouge barré
 marque les interdits ; le fil écrit `MENSONGE` et `EN CACHETTE` (vus de vous seul), `INDICE` (ou `INDICE GARDÉ`), `COMPTES`,
-`MENSONGE ÉTABLI`, `PRIS EN CACHETTE`, `ACCUSÉ À TORT`, `INTERDIT DE PÊCHE`, `LEVÉE` et `RADAR` ; l'onglet *Agent* liste ses prises
+`MENSONGE ÉTABLI`, `PRIS EN CACHETTE`, `ACCUSÉ À TORT`, `CONFIANCE` (un jugement marqué, d'au moins 0,2), `EXCLUSION` et
+`RÉAUTORISATION` (une proposition), `VOTE`, `INTERDIT DE PÊCHE`, `RÉAUTORISÉ` et `RADAR` ; l'onglet *Agent* liste ses prises
 (« S2 5.5 t (déclaré 4.0) ») et qui se méfie de lui.
 
 ## Moins de tokens, des agents plus cohérents

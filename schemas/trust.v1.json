@@ -18,6 +18,12 @@
         "string",
         "null"
       ]
+    },
+    "by": {
+      "type": "string"
+    },
+    "delta": {
+      "type": "number"
     }
   },
   "required": [

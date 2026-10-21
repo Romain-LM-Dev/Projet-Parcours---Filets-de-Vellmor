@@ -88,14 +88,20 @@ PAYLOADS: dict[str, dict] = {
     "lie_discovered": obj({"agent": STR, "lie_season": INT, "declared": NUM, "landed": NUM,
                            "how": {"enum": ["radar", "temoins", "indices"]}, "secret": BOOL, "wrongful": BOOL},
                           {"estimated": NUM_OR_NULL, "witnesses": IDS, "report_event_id": STR_OR_NULL}),
-    # interdit de pêche (réputation tombée à presque rien), ou levée de l'interdiction (confiance regagnée)
-    "ban": obj({"agent": STR, "banned": BOOL, "reputation": NUM}),
+    # interdit de pêche, ou levée de l'interdiction, par un vote de la vallée (`proposal_id`, ses voix `for` sur `voters`)
+    "ban": obj({"agent": STR, "banned": BOOL, "reputation": NUM}, {"proposal_id": STR, "for": IDS, "voters": INT}),
     # où le radar de la vallée surveille le lac (une zone : un hameau ou « large »), et qui l'y a mis
     "radar_placed": obj({"zone": STR, "by": {"enum": ["ancien", "vallee", "joueur"]}}),
     # la confiance que les autres (`values` : observateur → 0..1) accordent à `subject` vient de changer ; `reputation` :
     # la moyenne de la confiance de tous les autres envers lui
     "trust": obj({"subject": STR, "cause": STR, "values": {"type": "object"}, "reputation": NUM},
-                 {"source_event_id": STR_OR_NULL}),
+                 {"source_event_id": STR_OR_NULL, "by": STR, "delta": NUM}),     # `by` : celui qui a jugé, de `delta`
+    # une proposition d'interdire de pêche un pêcheur (`exclure`) ou de lever son interdiction (`reautoriser`), les votes, l'issue
+    "sanction_proposal": obj({"proposal_id": STR, "author": STR, "target": STR,
+                              "action": {"enum": ["exclure", "reautoriser"]}, "scope": STR, "utterance_id": STR}),
+    "sanction_vote": obj({"proposal_id": STR, "agent": STR, "vote": BOOL}),
+    "sanction_result": obj({"proposal_id": STR, "target": STR, "action": {"enum": ["exclure", "reautoriser"]},
+                            "adopted": BOOL, "for": IDS, "against": IDS, "voters": INT}),
     "sale": obj({"agent": STR, "hamlet": STR, "tonnes": NUM, "price": NUM, "income": NUM, "wealth": NUM}),
     "lake_update": obj({"stock": NUM, "capacity": NUM, "cause": {"enum": ["init", "catch", "regrowth", "injection"]}},
                        {"delta": NUM}),

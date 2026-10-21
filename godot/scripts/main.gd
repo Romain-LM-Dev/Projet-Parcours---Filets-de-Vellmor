@@ -838,9 +838,22 @@ func _on_event(ev: Dictionary) -> void:
 				a["banned"] = bool(p.get("banned", false))
 				trust_dirty = true
 			if bool(p.get("banned", false)):
-				_feed(lab + _tag("INTERDIT DE PÊCHE", "#ff6a5c") + " %s n'a plus la confiance de personne (%d %%) : interdit de pêche jusqu'à la regagner (50 %%)" % [_who(id), roundi(float(p.get("reputation", 0)) * 100.0)], [id])
+				_feed(lab + _tag("INTERDIT DE PÊCHE", "#ff6a5c") + " la vallée a voté l'exclusion de %s : il ne peut plus pêcher qu'en cachette  [color=#6f7896](réputation %d %%)[/color]" % [_who(id), roundi(float(p.get("reputation", 0)) * 100.0)], [id])
 			else:
-				_feed(lab + _tag("LEVÉE", "#58d08a") + " %s a regagné la confiance de la vallée (%d %%) : il peut de nouveau pêcher" % [_who(id), roundi(float(p.get("reputation", 0)) * 100.0)], [id])
+				_feed(lab + _tag("RÉAUTORISÉ", "#58d08a") + " la vallée a voté de laisser %s pêcher à nouveau  [color=#6f7896](réputation %d %%)[/color]" % [_who(id), roundi(float(p.get("reputation", 0)) * 100.0)], [id])
+		"sanction_proposal":
+			var target := str(p.get("target", ""))
+			var author := str(p.get("author", ""))
+			var excl := str(p.get("action", "")) == "exclure"
+			_feed(lab + _tag("EXCLUSION" if excl else "RÉAUTORISATION", "#ff8a5c" if excl else "#58d08a") + " %s propose %s %s [b](%s)[/b]" % [
+				_who(author), "d'interdire de pêche" if excl else "de laisser pêcher à nouveau", _who(target), str(p.get("proposal_id", ""))], [author, target])
+		"sanction_result":
+			var target := str(p.get("target", ""))
+			var excl := str(p.get("action", "")) == "exclure"
+			var ok := bool(p.get("adopted", false))
+			_feed(lab + _tag("VOTE " + str(p.get("proposal_id", "")), "#58d08a" if ok else "#8f97b2") + " %s de %s %s : %d pour, %d contre, sur %d votants" % [
+				"exclusion" if excl else "réautorisation", _who(target), "[b]adoptée[/b]" if ok else "rejetée",
+				p.get("for", []).size(), p.get("against", []).size(), int(p.get("voters", 0))], [target])
 		"radar_placed":
 			var zone := str(p.get("zone", ""))
 			var by: String = {"joueur": "vous", "ancien": "l'ancien", "vallee": "la vallée"}.get(str(p.get("by", "")), "")
@@ -858,6 +871,14 @@ func _on_event(ev: Dictionary) -> void:
 				for o in vals:
 					a["trust_from"][str(o)] = float(vals[o])
 				trust_dirty = true
+			# un jugement marqué (au moins 0,2) : c'est l'agent qui a décidé ce que l'acte changeait pour lui
+			var d := float(p.get("delta", 0.0))
+			if absf(d) >= 0.2 and p.get("by") != null:
+				var by := str(p.get("by"))
+				var sub := str(p.get("subject", ""))
+				_feed(lab + _tag("CONFIANCE", "#b78fd6") + " %s %s %s [color=%s](%+.1f)[/color]" % [_who(by),
+					"retire de sa confiance à" if d < 0 else "accorde davantage sa confiance à", _who(sub),
+					"#ff8a7e" if d < 0 else "#58d08a", d], [by, sub])
 		"sale":
 			var a = _agent(str(p.get("agent", "")))
 			if a:

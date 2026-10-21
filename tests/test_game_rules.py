@@ -74,8 +74,8 @@ def test_the_question_reminds_the_fisher_of_the_rule_the_valley_voted():
     obs = {**obs_for(70.0, hist(100.0, 80.0)), "min_catch": 1.0, "rule": {"quota": 2.0, "supported": True, "visible": True}}
     ask = catch_messages(PERSONA, obs, 100.0)[1]["content"].split("C'est le moment de décider")[1]
     assert "Règle votée à la veillée : pas plus de 2 t par pêcheur cette saison (tu l'as soutenue)" in ask
-    assert "ceux qui la respectent te retireront de leur confiance, d'autant plus que tu dépasses" in ask
-    assert "un dépassement avoué coûte un peu de confiance, un mensonge découvert en coûte bien plus" in ask
+    assert "chacun en jugera selon sa morale, et ceux qui ne te font plus confiance peuvent proposer de t'interdire" in ask
+    assert "un dépassement avoué se pardonne plus facilement qu'un mensonge découvert" in ask
     assert "ce que tu fais de la règle votée" in ask
     assert "tu déclareras ta prise à l'ancien" in ask and '"declaration"' in ask       # il peut mentir, en le sachant risqué
     assert ask.index("Règle votée") < ask.index("Réponds en JSON")       # juste avant la question, là où les petits modèles lisent

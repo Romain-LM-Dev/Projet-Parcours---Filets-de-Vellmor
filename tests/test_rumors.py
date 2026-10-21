@@ -38,8 +38,11 @@ class Recorder:
     """Faux fournisseur compatible OpenAI : enregistre ce qu'on lui demande, répond avec un JSON valide."""
 
     def __init__(self, prise: float = 3.0, reject: tuple = (), propose_first: float | None = None,
-                 recit: str | None = "Le lac a donné, mais la parole n'a pas tenu."):
+                 recit: str | None = "Le lac a donné, mais la parole n'a pas tenu.", confiance: dict | None = None,
+                 sanction: str = "oui"):
         self.recit = recit                        # récit de l'ancien ; None : une réponse sans récit
+        self.confiance = confiance                # le jugement de confiance renvoyé dans chaque réplique (None : aucun)
+        self.sanction = sanction                  # le vote sur chaque proposition d'exclure ou de réautoriser
         self.requests: list[dict] = []
         self.propose_first, self.proposed = propose_first, False
         self.reject = reject                      # formats de réponse refusés par ce fournisseur (HTTP 400), ex. ("json_schema",)
@@ -71,12 +74,17 @@ class Recorder:
                     content = json.dumps({"vote": ids[0] if ids else "aucune"})
                 elif '"recit"' in user:                                 # récit de la saison par l'ancien
                     content = json.dumps({"recit": outer.recit} if outer.recit else {"autre": "rien"})
+                elif '" ou "non"' in user:                              # vote sur des propositions d'exclure, de réautoriser
+                    content = json.dumps({x: outer.sanction for x in re.findall(r'"(X\d+)": "oui" ou "non"', user)})
                 else:
                     quota = None
                     if outer.propose_first is not None and not outer.proposed:
                         outer.proposed, quota = True, outer.propose_first      # le premier à parler propose un quota, personne d'autre
-                    content = json.dumps({"message": "Je compte pêcher trois tonnes.", "destinataire": "tous",
-                                          "proposition_quota": quota, "soutien": None, "promesse": 3, "accuse": None})
+                    speech = {"message": "Je compte pêcher trois tonnes.", "destinataire": "tous",
+                              "proposition_quota": quota, "soutien": None, "promesse": 3, "accuse": None}
+                    if outer.confiance is not None:
+                        speech["confiance"] = outer.confiance
+                    content = json.dumps(speech)
                 out = json.dumps({"choices": [{"message": {"content": content}}],
                                   "usage": {"prompt_tokens": 100, "completion_tokens": 20}}).encode()
                 self.send_response(200)
