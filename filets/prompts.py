@@ -323,9 +323,10 @@ def narration_messages(p, facts: list[str], capacity: float) -> list[dict]:
     dans le journal de la partie (il n'invente rien, il raconte)."""
     ask = ("La saison vient de finir. Voici ce qui s'est passé, tel qu'on l'a vu au marché et à la veillée :\n"
            + "\n".join(f"- {f}" for f in facts)
-           + "\n\nRaconte cette saison en 2 à 4 phrases, avec ta voix d'ancien, comme au coin du feu : qui a pêché beaucoup "
-             "ou peu, qui a tenu ou trahi sa parole, ce que la vallée a décidé, ce que tu penses de l'état du lac. "
-             "N'invente rien : seulement ces faits. Réponds en JSON : {\"recit\": \"<ton récit>\"}")
+           + "\n\nRaconte cette saison en 2 à 4 phrases, avec ta voix d'ancien, comme au coin du feu, et ce que tu en penses. "
+             "N'invente rien : ne parle que de ce qui est dans cette liste. S'il n'y est question ni de promesses, ni de "
+             "règle, ni d'accusation, n'en parle pas. Pour le lac, reprends le mot de la liste. "
+             "Réponds en JSON : {\"recit\": \"<ton récit>\"}")
     return [{"role": "system", "content": persona(p, capacity, True)}, {"role": "user", "content": ask}]
 
 

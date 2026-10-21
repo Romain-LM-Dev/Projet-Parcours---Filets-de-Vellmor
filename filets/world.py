@@ -754,8 +754,10 @@ class World:
             each = ", ".join(f"{self.first_name(a)} {v:g} t" for a, v in sorted(landed.items(), key=lambda kv: -kv[1]))
             facts.append(f"Prises : {each} (en tout {sum(landed.values()):g} t).")
         start = next((p["stock"] for p in of("season_start")), None)
+        level = prompts.lake_level(self.lake.stock, self.capacity, self.lake.collapse_ratio)
         facts.append((f"Le lac : {start:.0f} t au début de la saison, " if start is not None else "Le lac : ")
-                     + f"{self.lake.stock:.0f} t après le repeuplement, sur {self.capacity:.0f} t possibles.")
+                     + f"{self.lake.stock:.0f} t après le repeuplement, sur {self.capacity:.0f} t possibles "
+                       f"({100 * self.lake.stock / self.capacity:.0f} % : {level}).")
         for inj in of("injection"):
             if inj["injection_type"] == "drought":
                 facts.append("Une sécheresse a frappé le lac : son stock a baissé d'un coup.")
