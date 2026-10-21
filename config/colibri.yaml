@@ -1,0 +1,21 @@
+# Colibri (https://github.com/JustVugg/colibri) : Qwen3.6-35B-A3B, un mélange d'experts de 35 milliards de paramètres dont
+# 3 sont actifs pour chaque mot. Colibri garde la partie dense en mémoire et va chercher les experts là où ils sont (carte
+# graphique, RAM, puis disque) : un modèle de ce niveau tourne sur une carte de 6 Go et 16 Go de RAM.
+# Un seul modèle sert tout : la réflexion et la parole (API OpenAI), et les réflexes et les votes par POST /v1/systemone,
+# où il lit la probabilité de chaque option au lieu d'écrire (le format de tev1) : rien d'autre à garder en mémoire.
+# Le serveur décode plusieurs agents à la fois (une place de cache par conversation, COLI_KV_SLOTS, voir start.ps1).
+#   installation : README, « Colibri » ; puis .\start.ps1 -Colibri
+extends: default.yaml
+run: {label: colibri}
+llm:
+  reflection: adaptive
+  tiers:
+    grand:   {provider: colibri, model: qwen3.6-colibri}
+    petit:   {provider: colibri, model: qwen3.6-colibri}
+    reflexe: {provider: colibri_s1, model: qwen3.6-colibri}
+  providers:
+    # json_schema : Colibri s'en sert pour deviner les tokens à l'avance (plus rapide), sans contraindre la réponse ;
+    # pas de seed : il l'ignore. Autant de requêtes à la fois que de places de cache côté serveur.
+    colibri:    {base_url: "http://127.0.0.1:8000/v1", api_key_env: null, rpm: 0, timeout_s: 300, max_concurrency: 4,
+                 json_schema: true, local: colibri}
+    colibri_s1: {base_url: "http://127.0.0.1:8000/v1", kind: systemone, local: colibri, timeout_s: 120, max_concurrency: 4}

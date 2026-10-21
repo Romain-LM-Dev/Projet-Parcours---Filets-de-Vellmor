@@ -15,7 +15,9 @@ runs/*
 # propre à la machine : projet Godot importé, chemin de Godot, processus lancés par start.ps1
 godot/.godot/
 godot.path
+colibri.path
 .filets-services.pids
+.filets-colibri
 
 # éditeur / système
 .vscode/

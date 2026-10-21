@@ -155,6 +155,18 @@ async def preflight(cfg: dict, progress: Callable[[str], None] | None = None) ->
             if not os.environ.get(pcfg["api_key_env"]):
                 raise GameRequestError(f"la variable d'environnement {pcfg['api_key_env']} est absente "
                                        f"(nécessaire pour {prov})")
+        if pcfg.get("local") == "colibri":
+            # Colibri charge son modèle au démarrage du serveur : il suffit qu'il réponde et serve le bon modèle
+            base = pcfg["base_url"].rstrip("/")
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as http:
+                    served = {m.get("id") for m in (await http.get(f"{base}/models")).json().get("data", [])}
+            except (httpx.HTTPError, ValueError, AttributeError):
+                raise GameRequestError(f"Colibri ne répond pas sur {base} : lancez .\\start.ps1 -Colibri") from None
+            if not models <= served:
+                raise GameRequestError(f"Colibri sert {', '.join(sorted(served)) or 'aucun modèle'}, "
+                                       f"pas {', '.join(sorted(models - served))}")
+            continue
         if prov == "ollama" or pcfg.get("local"):
             base = pcfg["base_url"].rstrip("/")
             root = base[:-3] if base.endswith("/v1") else base

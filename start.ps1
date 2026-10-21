@@ -18,6 +18,8 @@
   - PostgreSQL + pgvector et le stockage objet S3 (config/data.yaml) : RAG vectoriel, historique, archives des parties.
   Avec -Light : rien de tout cela, donc ni Docker ni Ollama : le moteur seul avec le faux LLM, pour un essai rapide
   (-Light -Ollama garde Ollama).
+  Avec -Colibri : Qwen3.6 35B servi par Colibri (README, « Colibri ») remplace Qwen 2.5 et tev1 ; Ollama ne garde que le
+  plongement du RAG.
   Avec -Auto : ancien comportement, sans menu : la partie démarre tout de suite (`python -m filets run`), sans config/data.yaml.
   Ctrl+C arrête le moteur ; .\stop.ps1 ferme aussi les services et les conteneurs.
 
@@ -25,6 +27,8 @@
 .PARAMETER Kafka      Kafka et ses services (déjà là par défaut ; utile avec -Light).
 .PARAMETER Ollama     Vérifie Ollama et le présélectionne dans le menu (déjà là par défaut ; utile avec -Light).
 .PARAMETER OllamaProfile  open (3B + 1,5B + tev1 0,8B, défaut), fast (3B + 1,5B) ou quality (7B + 1,5B).
+.PARAMETER Colibri    Les IA pensent avec Qwen3.6 35B servi par Colibri (démarré s'il ne tourne pas) au lieu d'Ollama.
+.PARAMETER ColibriPath  Dossier de Colibri (sinon : COLIBRI_DIR, ou le fichier colibri.path).
 .PARAMETER Data       PostgreSQL + pgvector et stockage objet (déjà là par défaut ; utile avec -Light).
 .PARAMETER NoGodot    Ne lance pas Godot.
 .PARAMETER NoEngine   Ne lance pas le moteur : à utiliser quand il tourne déjà (services ou Godot fermés par erreur, une partie
@@ -42,6 +46,7 @@
   .\start.ps1                       # tout
   .\start.ps1 -Light                # le moteur seul, faux LLM, sans Docker
   .\start.ps1 -OllamaProfile fast   # sans tev1
+  .\start.ps1 -Colibri              # Qwen3.6 35B par Colibri
   .\start.ps1 -Mode async -Agents 12
   .\start.ps1 -Auto -Mode sync -Seasons 5
 #>
@@ -51,6 +56,8 @@ param(
     [switch]$Kafka,
     [switch]$Ollama,
     [ValidateSet('fast', 'quality', 'open')][string]$OllamaProfile = 'open',
+    [switch]$Colibri,
+    [string]$ColibriPath,
     [switch]$Data,
     [switch]$NoGodot,
     [switch]$NoEngine,
@@ -81,6 +88,10 @@ if ($OllamaProfile -eq 'quality') {
 }
 # Modèles facultatifs : s'ils manquent, la partie se joue quand même (les réflexes passent par Qwen 1,5B).
 $OptionalModels = if ($OllamaProfile -eq 'open') { @('tev1:0.8b') } else { @() }
+if ($Colibri) {
+    # Qwen3.6 par Colibri remplace les modèles de langage d'Ollama, qui ne garde que le plongement du RAG (-Data)
+    $OllamaModels = @(); $OptionalModels = @(); $OllamaLlm = 'colibri'; $OllamaConfig = 'config/colibri.yaml'
+}
 $EmbedModel = 'embeddinggemma'      # plongements du RAG vectoriel (-Data), voir config/data.yaml
 
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -174,6 +185,42 @@ if ($Ollama -or $Data) {
     }
 }
 
+# --- Colibri : Qwen3.6 35B à la place des modèles de langage d'Ollama ---------------------------------------------
+if ($Colibri) {
+    Step 'Colibri'
+    $colibriDir = $ColibriPath
+    if (-not $colibriDir) { $colibriDir = $env:COLIBRI_DIR }
+    $colibriFile = Join-Path $PSScriptRoot 'colibri.path'
+    if (-not $colibriDir -and (Test-Path $colibriFile)) { $colibriDir = (Get-Content $colibriFile -TotalCount 1).Trim() }
+    $coli = if ($colibriDir) { Join-Path $colibriDir 'c\coli' } else { $null }
+    if (-not $coli -or -not (Test-Path $coli)) {
+        Fail 'Colibri introuvable : passe -ColibriPath, définis COLIBRI_DIR, ou écris son dossier dans le fichier colibri.path (installation : README, « Colibri »).'
+    }
+    function Get-ColibriStatus { try { return (py -3 $coli status --json | ConvertFrom-Json) } catch { return $null } }
+    $st = Get-ColibriStatus
+    if (-not $st -or -not $st.setup.ready) {
+        Fail "Colibri n'est pas prêt (installation inachevée ?) : py -3 `"$coli`" status dit où il en est."
+    }
+    # la RAM est comptée (16 Go) : on décharge les modèles de langage d'Ollama que FILETS aurait chargés
+    if ($ollamaExe) { foreach ($m in @('qwen2.5:7b', 'qwen2.5:3b', 'qwen2.5:1.5b', 'tev1:0.8b')) { & $ollamaExe stop $m *> $null } }
+    if ($st.server.state -ne 'ready') {
+        if ($st.server.state -ne 'loading') {
+            Write-Host '    Démarrage du serveur Colibri...'
+            $env:COLI_KV_SLOTS = '4'           # une place de cache par conversation : quatre agents décodés ensemble
+            py -3 $coli start --background --no-browser *> $null
+            Set-Content -Path (Join-Path $PSScriptRoot '.filets-colibri') -Value $coli    # stop.ps1 l'arrêtera
+        }
+        Write-Host '    Chargement du modèle (jusqu''à 5 min)...'
+        for ($i = 0; $i -lt 100 -and $st.server.state -ne 'ready'; $i++) { Start-Sleep -Seconds 3; $st = Get-ColibriStatus }
+        if ($st.server.state -ne 'ready') { Fail "Colibri ne répond pas : py -3 `"$coli`" logs -n 50 dit pourquoi." }
+    }
+    $colibriUrl = $st.server.urls.openai_base_url
+    Ok "Colibri prêt : $($st.server.model_id) sur $colibriUrl ($($st.server.backend))"
+    if ($colibriUrl -ne 'http://127.0.0.1:8000/v1') {
+        Warn "config/colibri.yaml attend Colibri sur http://127.0.0.1:8000/v1 : libère le port 8000, puis relance Colibri."
+    }
+}
+
 # --- Données : PostgreSQL + pgvector, stockage objet S3 --------------------------------------------------------
 if ($Data) {
     Step 'PostgreSQL + pgvector et stockage objet'
@@ -253,7 +300,7 @@ if ($NoEngine) {
 }
 if ($Auto) {
     Step 'Partie immédiate (sans menu)'
-    if (-not $Config) { $Config = if ($Ollama) { $OllamaConfig } else { 'config/default.yaml' } }
+    if (-not $Config) { $Config = if ($Ollama -or $Colibri) { $OllamaConfig } else { 'config/default.yaml' } }
     $engineArgs = @('-m', 'filets', 'run', '--config', $Config, '--mode', $Mode)
     if ($Kafka) { $engineArgs += @('--bus', 'kafka') } else { $engineArgs += '--ws' }
 } else {
@@ -261,7 +308,7 @@ if ($Auto) {
     if (-not $Config) { $Config = 'config/default.yaml' }
     $engineArgs = @('-m', 'filets', 'serve', '--config', $Config, '--mode', $Mode)
     if ($Kafka)  { $engineArgs += @('--bus', 'kafka') }
-    if ($Ollama) { $engineArgs += @('--llm', $OllamaLlm) }
+    if ($Ollama -or $Colibri) { $engineArgs += @('--llm', $OllamaLlm) }
 }
 if ($PSBoundParameters.ContainsKey('Agents'))  { $engineArgs += @('--agents',  $Agents) }
 if ($PSBoundParameters.ContainsKey('Seasons')) { $engineArgs += @('--seasons', $Seasons) }

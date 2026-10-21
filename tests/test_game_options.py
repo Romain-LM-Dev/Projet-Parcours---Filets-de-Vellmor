@@ -27,7 +27,7 @@ def test_catalog_describes_the_new_options():
     assert d["reflection"] == "rapide" and d["assembly_rounds"] == 2 and d["capacity"] is None
     assert d["capacity_per_fisher"] == 12.5 and d["boat_capacity"] == 10.0 and d["growth_rate"] == 1.0
     ids = [o["id"] for o in cat["llm_options"]]
-    assert ids == ["scripted", "ollama_fast", "ollama_open", "ollama", "groq"]
+    assert ids == ["scripted", "ollama_fast", "ollama_open", "ollama", "colibri", "groq"]
     assert all("config" not in o for o in cat["llm_options"])               # un détail d'implémentation, pas pour le menu
     assert all(o["async_speed"] in SPEEDS for o in cat["llm_options"])      # une vitesse que le menu sait afficher
     reflections = {r["id"] for r in cat["reflections"]}
