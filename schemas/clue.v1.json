@@ -1,0 +1,49 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "enum": [
+        "radar",
+        "temoin",
+        "depart",
+        "train_de_vie"
+      ]
+    },
+    "observer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "subject": {
+      "type": "string"
+    },
+    "zone": {
+      "type": "string"
+    },
+    "estimate": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "public": {
+      "type": "boolean"
+    },
+    "declared": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "observer",
+    "subject",
+    "zone",
+    "estimate",
+    "public"
+  ],
+  "additionalProperties": false
+}

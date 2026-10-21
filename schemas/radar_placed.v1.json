@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "zone": {
+      "type": "string"
+    },
+    "by": {
+      "enum": [
+        "ancien",
+        "vallee",
+        "joueur"
+      ]
+    }
+  },
+  "required": [
+    "zone",
+    "by"
+  ],
+  "additionalProperties": false
+}

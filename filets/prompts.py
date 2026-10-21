@@ -229,6 +229,15 @@ def carnet_block(obs: dict) -> str:
     return "Ton carnet (ce que toi seul sais) :\n" + _bullets(lines, "rien à noter")
 
 
+def clues_block(obs: dict) -> str:
+    """Les indices que l'agent connaît (radar, barques vues rentrer ou partir, train de vie, comptes du lac) et les interdits
+    de pêche : de quoi soupçonner quelqu'un, ou s'inquiéter pour soi. Vide (aucun token) s'il n'y en a pas."""
+    lines = list(obs.get("clues") or [])
+    if obs.get("banned_others"):
+        lines.append("interdits de pêche par la vallée : " + ", ".join(obs["banned_others"]) + ".")
+    return ("\n\nIndices et soupçons dans la vallée :\n" + _bullets(lines)) if lines else ""
+
+
 def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dict:
     """Forme exacte de la réponse, pour les fournisseurs qui savent la faire respecter (Ollama : voir `llm.OpenAICompatClient`).
     Tous les champs sont présents, dans cet ordre : pour une prise, la justification (ce que l'agent constate du lac) vient AVANT
@@ -265,29 +274,45 @@ def context_block(obs: dict, brief: bool = False) -> str:
     parts.append("Règles en vigueur entre pêcheurs :\n" + _bullets(obs["norms"], "aucune règle n'a été adoptée"))
     parts.append("Prises que les autres ont déclarées à l'ancien (tu ne connais que ces chiffres) :\n"
                  + _bullets(known, "aucune déclaration connue") + social_line(obs))
-    parts.append(carnet_block(obs))
+    parts.append(carnet_block(obs) + clues_block(obs))
     parts.append("Tes souvenirs qui reviennent :\n" + _bullets(memories, "aucun souvenir précis"))
     parts.append("Ce qu'on raconte dans la vallée (archives, comptes, récits) :\n" + _bullets(documents, "rien de particulier"))
     return "\n\n".join(parts)
 
 
 def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[dict]:
-    seen = "ce que tu constates du lac, ce que tu fais de la règle votée" if obs.get("rule") else "ce que tu constates du lac"
+    if obs.get("banned"):
+        seen = "ce que tu constates du lac, ce que tu fais de ton interdiction"
+    else:
+        seen = "ce que tu constates du lac, ce que tu fais de la règle votée" if obs.get("rule") else "ce que tu constates du lac"
     just = f"<1 phrase courte : {seen}, et ce que tu en conclus>" if brief else \
         f"<1 à 3 phrases, à la première personne : {seen}, et ce que tu en conclus>"
-    ask = (
-        "C'est le moment de décider combien tu vas pêcher cette saison.\n"
-        + lake_reminder(obs)
-        + rule_reminder(obs)
-        + ("Une rumeur qui te concerne, ou qui parle du lac, peut peser sur ta décision : tiens-en compte comme le "
-           "ferait ton personnage.\n" if obs.get("rumors") else "")
-        + "En rentrant, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ce chiffre. Tu peux mentir, mais un "
-          "mensonge finit souvent par se savoir (un voisin a vu ta barque, l'ancien fait ses comptes au marché), et la vallée "
-          "ne l'oublie pas.\n"
-        + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
-          f"\"prise\": <tonnes, {catch_range(obs)}>, "
-          "\"declaration\": <tonnes que tu déclares à l'ancien : ta prise, ou moins si tu la caches>}"
-    )
+    rumor = ("Une rumeur qui te concerne, ou qui parle du lac, peut peser sur ta décision : tiens-en compte comme le "
+             "ferait ton personnage.\n" if obs.get("rumors") else "")
+    if obs.get("banned"):
+        ask = (
+            "C'est le moment de décider. La vallée t'a interdit de pêche : tant que tu n'as pas regagné sa confiance, tu n'as "
+            "pas le droit de sortir. Tu peux rester à quai (0 t), ou pêcher en cachette, loin de ta rive ; mais le radar de la "
+            "vallée surveille une partie du lac (on ne sait pas laquelle) et un voisin peut voir ta barque partir. Pris, tu "
+            "perdrais encore la confiance de tous ; à quai, tu la regagnes peu à peu.\n"
+            + lake_reminder(obs) + rumor
+            + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
+              f"\"prise\": <0 si tu restes à quai, sinon les tonnes pêchées en cachette, jusqu'à {obs['boat_capacity']:g}>, "
+              "\"declaration\": 0}"
+        )
+    else:
+        ask = (
+            "C'est le moment de décider combien tu vas pêcher cette saison.\n"
+            + lake_reminder(obs)
+            + rule_reminder(obs)
+            + rumor
+            + "En rentrant, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ce chiffre. Tu peux mentir, mais "
+              "les voisins qui pêchent du même côté voient les barques rentrer, le radar de la vallée mesure celles d'une partie "
+              "du lac (on ne sait pas laquelle), et la vallée n'oublie pas un mensonge.\n"
+            + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
+              f"\"prise\": <tonnes, {catch_range(obs)}>, "
+              "\"declaration\": <tonnes que tu déclares à l'ancien : ta prise, ou moins si tu la caches>}"
+        )
     return [{"role": "system", "content": persona(p, capacity, brief)},
             {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
 
@@ -312,7 +337,7 @@ def veillee_block(obs: dict) -> str:
                      "par saison.")
     parts.append("Règles en vigueur : " + ("; ".join(obs["norms"]) + "." if obs["norms"] else "aucune règle adoptée."))
     parts.append("Prises déclarées à l'ancien :\n" + _bullets(obs["known_catches"][-3:], "aucune déclaration connue"))
-    parts.append(carnet_block(obs))
+    parts.append(carnet_block(obs) + clues_block(obs))
     if obs.get("memories"):
         parts.append("Souvenirs :\n" + _bullets(_cut(obs["memories"][:2], 2, 140)))
     return "\n\n".join(parts)
@@ -336,6 +361,9 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     fields.append("\"accuse\": \"<identifiant d'un pêcheur que tu accuses d'avoir trop pêché>\" ou null")
     rumor_hint = ("Une rumeur court : tu peux la relayer, la démentir, t'en défendre si elle te vise, ou accuser quelqu'un. "
                   if obs.get("rumors") else "")
+    if obs.get("clues"):
+        rumor_hint += ("Les indices peuvent te faire soupçonner quelqu'un (ou te viser) : une accusation pèse dans le jugement "
+                       "de l'ancien. ")
     ask = (
         f"Veillée chez l'ancien ({obs['scope_label']}), tour de parole {obs['round']}. Présents : {people}.\n\n"
         f"Ce qui a déjà été dit ce soir :\n{transcript}\n\nPropositions de règle sur la table :\n{proposals}\n\n"

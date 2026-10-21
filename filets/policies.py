@@ -29,6 +29,11 @@ def catch_rule(archetype: str, s: dict) -> tuple[float, str]:
     # personne ne demande plus que ce qu'il voit dans le lac, mais une sortie rapporte toujours la prise minimale
     lo = s.get("min_catch", 0.0)
     cap = max(lo, min(s["boat_capacity"], max(0.0, s["stock_estimate"])))
+    if s.get("banned"):
+        # interdit de pêche : le taiseux sort quand même, en cachette, avec une petite prise ; les autres restent à quai
+        if archetype == "taiseux":
+            return clamp(max(1.0, 0.6 * share), cap), "interdit de pêche : sort en cachette, une petite prise"
+        return 0.0, "interdit de pêche : reste à quai"
     if archetype == "ancienne_famille":
         v = min(share, quota) if quota is not None else share
         return clamp(v, cap, lo), "prudence : part durable" + (" bornée par le quota adopté" if quota is not None else "")

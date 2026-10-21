@@ -72,13 +72,26 @@ PAYLOADS: dict[str, dict] = {
     ),
     "catch": obj({"agent": STR, "hamlet": STR, "requested": NUM, "landed": NUM, "stock_observed": NUM,
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
-                  "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM}),
+                  "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM},
+                 {"zone": STR, "secret": BOOL}),       # où il a pêché ; en cachette (interdit de pêche)
     # ce que le pêcheur déclare à l'ancien en rentrant : les autres ne connaissent que `declared` ; la vraie prise (`landed`)
     # n'est connue que de lui et du joueur
     "report": obj({"agent": STR, "hamlet": STR, "declared": NUM, "landed": NUM, "catch_event_id": STR}),
-    # un mensonge éclate : dénoncé par un voisin honnête (`temoin`, `by`) ou découvert par l'ancien au marché (`marche`)
+    # un indice sur la prise de `subject` : relevé du radar, barque vue rentrer (estimation de sa charge), barque d'un interdit vue
+    # partant, train de vie ; `public` : dit devant tous à la veillée (sinon, gardé par celui qui l'a vu)
+    "clue": obj({"kind": {"enum": ["radar", "temoin", "depart", "train_de_vie"]}, "observer": STR_OR_NULL, "subject": STR,
+                 "zone": STR, "estimate": NUM_OR_NULL, "public": BOOL}, {"declared": NUM_OR_NULL}),
+    # les comptes du lac par l'ancien : ce que la pêche lui a fait perdre, ce que les déclarations en expliquent
+    "lake_audit": obj({"drop": NUM, "declared": NUM, "gap": NUM, "significant": BOOL}),
+    # un mensonge (ou une sortie en cachette) tenu pour établi par l'ancien sur des indices ; `landed` : la vérité (pour le
+    # joueur), `estimated` : ce que la vallée en croit ; `wrongful` : il n'avait pas menti (erreur de jugement)
     "lie_discovered": obj({"agent": STR, "lie_season": INT, "declared": NUM, "landed": NUM,
-                           "how": {"enum": ["temoin", "marche"]}, "report_event_id": STR}, {"by": STR_OR_NULL}),
+                           "how": {"enum": ["radar", "temoins", "indices"]}, "secret": BOOL, "wrongful": BOOL},
+                          {"estimated": NUM_OR_NULL, "witnesses": IDS, "report_event_id": STR_OR_NULL}),
+    # interdit de pêche (réputation tombée à presque rien), ou levée de l'interdiction (confiance regagnée)
+    "ban": obj({"agent": STR, "banned": BOOL, "reputation": NUM}),
+    # où le radar de la vallée surveille le lac (une zone : un hameau ou « large »), et qui l'y a mis
+    "radar_placed": obj({"zone": STR, "by": {"enum": ["ancien", "vallee", "joueur"]}}),
     # la confiance que les autres (`values` : observateur → 0..1) accordent à `subject` vient de changer ; `reputation` :
     # la moyenne de la confiance de tous les autres envers lui
     "trust": obj({"subject": STR, "cause": STR, "values": {"type": "object"}, "reputation": NUM},
@@ -123,7 +136,7 @@ PAYLOADS: dict[str, dict] = {
 
 COMMAND_TYPES = [
     # injections dans la partie en cours
-    "drought", "set_communication", "set_visibility", "announcement",
+    "drought", "set_communication", "set_visibility", "announcement", "place_radar",
     # pilotage de la partie en cours
     "pause", "resume", "set_speed", "set_mode", "stop",
     # salon : lancer une partie configurée dans le menu, ou y revenir

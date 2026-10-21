@@ -60,6 +60,7 @@ var sim_time := 0.0
 var light := 1.0
 var phase := ""
 var assembly_scope := ""            # "" | "valley" | "hamlet"
+var radar_zone := ""                # où le radar de la vallée surveille le lac (un hameau ou « large »)
 var hamlet_fires: Array = []        # hameaux qui tiennent veillée
 var room_alpha := 0.0
 var dry := 0.0
@@ -355,6 +356,7 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0) -> void:
 	stock_ratio = 1.0
 	dry = 0.0
 	assembly_scope = ""
+	radar_zone = ""
 	hamlet_fires.clear()
 	var per_hamlet := {}
 	for a in agent_list:
@@ -439,16 +441,26 @@ func on_event(ev: Dictionary) -> void:
 			var id: String = str(p.get("agent", ""))
 			if agents.has(id):
 				var a: Dictionary = agents[id]
+				if bool(p.get("secret", false)):
+					_mark(id, "en cachette", Color("#ff8a5c"), 3.5)       # vu du joueur seul
 				if animate:
 					var h := str(a["info"].get("hamlet", ""))
 					var dk: Dictionary = deco["docks"].get(h, {})
-					var spot := _fishing_spot(a)
+					var spot := _fishing_spot(a, str(p.get("zone", "")))
 					if dk.is_empty():
 						a["path"] = [[spot, 1.4], [a["home"], 0.0]]
 					else:
 						a["path"] = [[dk["shore"], 0.0], [dk["tip"], 0.0], [spot, 1.6], [dk["tip"], 0.0],
 							[dk["shore"], 0.0], [a["home"], 0.0]]
 					a["landed"] = float(p.get("landed", 0.0))
+		"radar_placed":
+			radar_zone = str(p.get("zone", ""))
+		"ban":
+			var id: String = str(p.get("agent", ""))
+			if agents.has(id):
+				agents[id]["banned"] = bool(p.get("banned", false))
+				_mark(id, "interdit de pêche" if agents[id]["banned"] else "de nouveau libre",
+					Art.ACCUSE if agents[id]["banned"] else Color("#58d08a"), 4.0)
 		"assembly_start":
 			var scope: String = str(p.get("scope", "valley"))
 			var parts: Array = p.get("participants", [])
@@ -557,14 +569,35 @@ func _move(id: String, target: Vector2, speed: float = 3.0) -> void:
 		a["path"] = []
 
 
-func _fishing_spot(a: Dictionary) -> Vector2:
-	# chaque pêcheur a son coin, du côté de son hameau : les barques ne se superposent pas
-	var h := str(a["info"].get("hamlet", ""))
+func _fishing_spot(a: Dictionary, zone: String = "") -> Vector2:
+	# chaque pêcheur a son coin, du côté de son hameau (ou de la zone où il pêche en cachette) : les barques ne se superposent pas
+	var h := zone if HAMLET_POS.has(zone) else str(a["info"].get("hamlet", ""))
+	if zone == "large":
+		return lake_point(randf() * TAU, randf_range(0.05, 0.25))
 	var th: float = _hamlet_angle(h) if HAMLET_POS.has(h) else randf() * TAU
 	var k := order.find(a["id"])
 	var slot := float(k % 3) - 1.0
 	var depth := 0.38 + 0.2 * float((k / 3) % 2)
 	return lake_point(th + slot * 0.42 + randf_range(-0.08, 0.08), depth + randf_range(-0.05, 0.05))
+
+
+## Le radar : au large, au centre du lac ; sinon devant la rive du hameau qu'il surveille.
+func _radar_pos() -> Vector2:
+	return LAKE_C if radar_zone == "large" else lake_point(_hamlet_angle(radar_zone), 0.62)
+
+
+func _draw_radar(ci: CanvasItem) -> void:
+	if radar_zone != "large" and not HAMLET_POS.has(radar_zone):
+		return
+	var p := _px(_radar_pos())
+	var col := Color("#7fe0c8")
+	ci.draw_arc(p, 38.0, 0, TAU, 40, Color(col, 0.35), 1.2, true)
+	ci.draw_arc(p, 22.0, 0, TAU, 32, Color(col, 0.25), 1.0, true)
+	var sweep := fmod(t * 1.6, TAU)
+	ci.draw_line(p, p + Vector2(cos(sweep), sin(sweep)) * 38.0, Color(col, 0.8), 1.6, true)
+	ci.draw_arc(p, 30.0, sweep - 0.7, sweep, 12, Color(col, 0.35), 8.0, true)
+	ci.draw_circle(p, 4.0, col)
+	Art.pill(ci, p + Vector2(-22, 42), "radar", Color(col, 0.9), Color("#0b1f1a"), 10, "ui_black")
 
 
 func _link(a: String, b: String, col: Color, width: float, ttl: float, kind: String) -> void:
@@ -759,6 +792,7 @@ func _draw_under(ci: CanvasItem) -> void:
 		var r: float = float(s["r"]) * (1.15 - a)
 		ci.draw_arc(p, r, 0, TAU, 28, Color(1, 1, 1, 0.55 * a), 1.4, true)
 		ci.draw_arc(p, r * 0.55, 0, TAU, 20, Color(1, 1, 1, 0.35 * a), 1.0, true)
+	_draw_radar(ci)
 
 
 func _darkness() -> float:
@@ -948,6 +982,10 @@ func _draw_tokens(ci: CanvasItem) -> void:
 			_draw_boat(ci, p, float(a["heading"]), Art.agent_color(info), float(a["fishing"]))
 		Art.draw_token(ci, p - (Vector2(0, 7) if on_water else Vector2.ZERO), info, 0.78 if on_water else 1.0, 1.0,
 			id == selected, t)
+		if bool(a.get("banned", false)):        # interdit de pêche : un anneau barré rouge
+			var q := p - (Vector2(0, 7) if on_water else Vector2.ZERO)
+			ci.draw_arc(q, 15.0, 0, TAU, 28, Art.ACCUSE, 2.2, true)
+			ci.draw_line(q + Vector2(-10, -10), q + Vector2(10, 10), Art.ACCUSE, 2.2, true)
 		var first := str(info.get("name", id)).split(" ")[0]
 		var lbl := first if id != hovered else "%s · %s" % [str(info.get("name", id)), str(info.get("archetype_label", ""))]
 		var fs := 11

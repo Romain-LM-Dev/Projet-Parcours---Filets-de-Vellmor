@@ -331,11 +331,33 @@ prise (champ `declaration`, aucun token de plus) ; un réflexe déclare la véri
 règle quand il pêche au-delà (sauf si l'un de ses mensonges vient d'éclater). `scenario.catches_visible` dit si les déclarations sont
 lues à toute la vallée ou au seul hameau (menu : « Les déclarations à l'ancien sont lues à toute la vallée »).
 
-**Un mensonge finit souvent par se savoir.** Avant chaque veillée, chaque mensonge encore caché éclate avec la probabilité
-`base + par_saison × son âge + par_tonne × tonnes cachées` (`scenario.lie_discovery` : 35 %, +20 % par saison, +3 % par tonne,
-au plus 95 % ; environ 90 % au bout de trois veillées). Un voisin qui n'a pas menti le dénonce (de préférence du même hameau), sinon
-l'ancien le découvre en faisant ses comptes au marché (`lie_discovered`). Chacun s'en souvient, et la vraie prise du menteur remplace
-alors sa déclaration dans ce que tous savent.
+**Un mensonge se découvre sur des indices, pas au hasard.** Le lac a cinq zones : la rive de chaque hameau, où ses pêcheurs vont
+d'ordinaire, et le large. Le soir de la veillée, les indices de la saison sont réunis (événements `clue`, réglages
+`scenario.detection`) :
+
+* **le radar de la vallée** surveille une zone par saison : il repère les barques qui sortent et mesure leur charge (à ±10 %).
+  L'ancien le place **en secret** à la fin de chaque saison, là où il se méfie le plus (la rive du hameau qu'il croit le moins, ou le
+  large s'il y a des interdits), et une fois sur quatre ailleurs, pour que personne ne puisse compter dessus. Le joueur peut le
+  placer lui-même depuis la barre du bas (« Radar : … ») et le rendre à l'ancien (« l'ancien décide ») ;
+* **les voisins** qui pêchent dans la même zone voient une barque rentrer (40 %) et en estiment la charge (à ±30 %) ;
+* **la barque d'un interdit** est vue partant à l'aube par son hameau (30 %) ;
+* **le train de vie** : déclarer moins qu'il ne faut pour vivre, et pourtant vivre comme avant, se remarque (50 %) ;
+* **les comptes du lac** : l'ancien mesure ce que la pêche lui a fait perdre (à ±3 % de la capacité) et le compare au total
+  déclaré (`lake_audit`).
+
+Qui n'a rien à se reprocher dit devant tous ce qu'il a vu ; **qui a triché se tait** (son indice reste à lui, dans son carnet). Les
+IA lisent ces indices (« Indices et soupçons dans la vallée ») et peuvent accuser. À la fin de la veillée, l'ancien **pèse** les
+indices dits devant tous et les accusations des pêcheurs qu'il croit : radar 3, témoin 1, départ vu 1, accusation 0,5, train de vie
+0,5, comptes 0,5 s'ils ne tombent pas juste. Le mensonge est **établi** (`lie_discovered`) quand ce poids atteint 2 et que la charge
+estimée dépasse la déclaration d'au moins 1 t et 25 % ; pour un interdit, toute sortie prouvée est une faute. En dessous, un indice
+fait un **soupçon** (−0,05 de confiance). La vallée retient alors l'estimation des indices, pas la vérité ; et comme seuls les
+indices comptent, l'ancien peut se tromper : le fil l'écrit `ACCUSÉ À TORT` (vu de vous seul).
+
+**Interdit de pêche.** Quand sa réputation tombe à presque rien (`scenario.ban_below`, 5 %), un pêcheur est **interdit de pêche** à
+partir de la saison suivante (événement `ban`), jusqu'à ce qu'elle remonte à 50 % (`scenario.ban_lift`). Il ne déclare plus rien :
+il reste à quai, ou **pêche en cachette**, loin de sa rive, plutôt au large (sa prise est marquée `secret` dans le journal). Chaque
+saison où on ne le prend pas dehors, il regagne un peu la confiance de tous (+0,15) ; pris, il la reperd (−0,30). Son IA décide
+toujours en réflexion (système 2) : rester à quai ou risquer la cachette.
 
 **La confiance.** Chaque agent (pêcheurs et ancien) a une confiance envers chaque pêcheur, de 0 à 1, à 0,5 au départ. Elle ne
 bouge que sur ce qui est public, et ceux qui respectent la règle sont les plus durs avec ceux qui la dépassent :
@@ -344,8 +366,10 @@ bouge que sur ce qui est public, et ceux qui respectent la règle sont les plus 
 |---|---|---|
 | déclaration au-delà de la règle | ceux qui respectent la règle (et l'ancien) / ceux qui la dépassent aussi | −0,10 / −0,03 |
 | déclaration dans la règle | ceux qui respectent la règle | +0,03 |
-| mensonge découvert | tout le monde | −0,30 |
-| a dénoncé un menteur | ceux qui n'ont pas menti | +0,05 |
+| mensonge établi, ou sortie en cachette prouvée | tout le monde | −0,30 |
+| un indice contre lui, sans preuve (soupçon) | tout le monde | −0,05 |
+| a témoigné contre un menteur | ceux qui n'ont pas triché | +0,05 |
+| interdit, on ne l'a pas pris dehors de la saison | tout le monde | +0,15 |
 | promesse tenue / trahie (d'après ce qu'on sait) | tout le monde | +0,05 / −0,15 |
 | accusé avec une raison visible / accusation sans raison visible | les autres présents | −0,05 pour l'accusé / pour l'accusateur |
 | a soutenu la règle adoptée | les autres soutiens | +0,02 |
@@ -354,9 +378,11 @@ Chaque changement est un événement `trust` (la confiance de chaque observateur
 des autres). Les IA la lisent dans leur **carnet** (« Ta confiance envers les autres : Loïc faible, Théo forte ; les autres,
 moyenne »), avec leurs vraies prises et ce qu'elles en ont déclaré : un pêcheur sait s'il a menti, et si son mensonge a éclaté.
 
-Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), sa dernière prise et sa déclaration (en rouge si
-elle ment) et ses mensonges découverts ; le fil écrit `MENSONGE` (vu de vous seul) et `MENSONGE DÉCOUVERT` ; l'onglet *Agent*
-liste ses prises (« S2 5.5 t (déclaré 4.0) ») et qui se méfie de lui.
+Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), s'il est interdit, sa dernière prise et sa
+déclaration (en rouge si elle ment) et ses mensonges établis ; sur la carte, le radar balaie sa zone et un anneau rouge barré
+marque les interdits ; le fil écrit `MENSONGE` et `EN CACHETTE` (vus de vous seul), `INDICE` (ou `INDICE GARDÉ`), `COMPTES`,
+`MENSONGE ÉTABLI`, `PRIS EN CACHETTE`, `ACCUSÉ À TORT`, `INTERDIT DE PÊCHE`, `LEVÉE` et `RADAR` ; l'onglet *Agent* liste ses prises
+(« S2 5.5 t (déclaré 4.0) ») et qui se méfie de lui.
 
 ## Moins de tokens, des agents plus cohérents
 
@@ -371,8 +397,10 @@ réflexion `rapide` ou `adaptive` :
 * **un carnet** dans chaque décision, court et toujours là : vraies prises et déclarations, engagements, confiance envers les autres.
   C'est ce qui garde un personnage cohérent d'une décision à l'autre, là où des souvenirs retrouvés au hasard ne le garantissent pas.
 
-Mesuré avec le faux LLM (8 pêcheurs à IA, réflexion adaptative, 5 saisons, tokens estimés) : 165 000 → 86 000 tokens (−48 %) ; une
-réplique 1 456 → 1 016 tokens, 90 → 47 répliques ; une décision de pêche réfléchie coûte 13 % de plus (carnet, déclaration).
+Mesuré avec la vraie IA (Ollama, Qwen 2.5 3B + 1,5B et tev1, 8 pêcheurs, 2 saisons, même graine, avant et après) : 74 000 → 51 000
+tokens (−31 %) ; une réplique 1 966 → 1 489 tokens, 28 → 20 appels de parole ; aucun repli, aucun incident, même durée de partie. Avec
+le faux LLM (5 saisons, tokens estimés) : 165 000 → 86 000 tokens (−48 %). Une décision de pêche réfléchie coûte un peu plus
+(carnet, déclaration, indices).
 
 ## Les annonces du joueur ont un effet
 

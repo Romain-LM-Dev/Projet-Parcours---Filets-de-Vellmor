@@ -71,7 +71,18 @@ TRUST = {
     "accused": -0.05,           # accusé avec une raison visible (déclaration au-delà de la règle, mensonge découvert)
     "false_accusation": -0.05,  # a accusé sans raison visible
     "same_side": 0.02,          # a soutenu la règle adoptée : aux yeux des autres soutiens
+    "suspected": -0.05,         # un indice contre lui, pas assez pour établir un mensonge : aux yeux de tous
+    "kept_away": 0.15,          # interdit de pêche, il s'est tenu à l'écart une saison (du moins, on ne l'a pas pris)
 }
+
+# Le lac a cinq zones : la rive de chaque hameau, où ses pêcheurs vont d'ordinaire, et le large.
+ZONES = [*HAMLETS, "large"]
+# Les indices et ce qu'ils pèsent dans le jugement de l'ancien (voir `World.weigh_evidence` et `scenario.detection`).
+DETECTION = {"radar": 0.95, "radar_error": 0.1, "witness": 0.4, "witness_error": 0.3, "seen_leaving": 0.3, "lifestyle": 0.5,
+             "lake_error": 0.03, "margin_t": 1.0, "margin_ratio": 0.25, "proof": 2.0}
+EVIDENCE = {"radar": 3.0, "temoin": 1.0, "depart": 1.0, "train_de_vie": 0.5, "accusation": 0.5, "comptes": 0.5}
+HOW = {"radar": "le radar de l'ancien a mesuré sa barque", "temoins": "des voisins l'ont vu",
+       "indices": "les indices concordaient"}
 
 
 @dataclass
@@ -184,9 +195,22 @@ class World:
         # connaissent ; et les déclarations mensongères, par événement `report` ({agent, season, declared, landed, found_t})
         self.reports: dict[tuple[str, int], dict] = {}
         self.lies: dict[str, dict] = {}
-        self.lie_rng = random.Random(seed + 7)       # ses propres tirages : les mensonges ne déplacent pas les autres hasards
         self.trust = {o: {s.id: TRUST_START for s in self.fishers if s.id != o} for o in self.agents}
         self._judged_season = 0
+        # la détection : sorties de chaque saison ({agent, zone, landed, secret, radar, event_id}), indices (payload de `clue`
+        # + saison, instant), comptes du lac, accusations ((instant, accusé, accusateur)), et ce que la vallée tient pour établi
+        # ((agent, saison) -> {value, t, how, secret}) ; ses propres tirages, pour ne pas déplacer les autres hasards
+        self.detection = {**DETECTION, **(self.scn.get("detection") or {})}
+        self.trips: dict[int, list[dict]] = {}
+        self.clues: list[dict] = []
+        self.audits: dict[int, dict] = {}
+        self.accusations: dict[int, list[tuple[float, str, str]]] = {}
+        self.established: dict[tuple[str, int], dict] = {}
+        self.lie_rng = random.Random(seed + 7)
+        self._investigated_season = self._weighed_season = 0
+        self.banned: dict[str, int] = {}         # pêcheur interdit de pêche -> saison où l'interdiction a pris effet
+        self.radar_zone: str | None = None       # où le radar de la vallée surveille le lac, et qui l'y a mis
+        self.radar_by = "ancien"
         self.season = 0
         self.stop_requested = False
         self.stopped_reason = "completed"
@@ -270,16 +294,23 @@ class World:
         return self.visible or not observer.is_fisher or observer.profile.hamlet == subject.profile.hamlet
 
     def known_catch(self, aid: str, season: int, horizon: float) -> float | None:
-        """Ce que la vallée sait de la prise de `aid` à cette saison : sa déclaration, ou la vérité si son mensonge a éclaté."""
+        """Ce que la vallée sait de la prise de `aid` à cette saison : sa déclaration, ou, si l'ancien a établi qu'il mentait, ce
+        que les indices en disent (une estimation, pas la vérité)."""
+        found = self.established.get((aid, season))
+        if found is not None and found["t"] <= horizon and found["value"] is not None:
+            return found["value"]
         rep = self.reports.get((aid, season))
         if rep is None or rep["sim_time"] > horizon:
             return None
-        lie = self.lies.get(rep["event_id"])
-        p = rep["payload"]
-        return p["landed"] if lie and lie["found_t"] is not None and lie["found_t"] <= horizon else p["declared"]
+        return rep["payload"]["declared"]
 
     def lied(self, aid: str, season: int) -> bool:
         return any(lie["agent"] == aid and lie["season"] == season for lie in self.lies.values())
+
+    def cheated(self, aid: str, season: int) -> bool:
+        """A-t-il triché cette saison (déclaration mensongère, ou sortie en cachette d'un interdit) ? La vérité, que lui seul
+        connaît : c'est elle qui le fait se taire quand il a vu quelque chose."""
+        return self.lied(aid, season) or any(t["agent"] == aid and t["secret"] for t in self.trips.get(season, []))
 
     def reputation(self, subject: str) -> float:
         vals = [row[subject] for row in self.trust.values() if subject in row]
@@ -301,50 +332,240 @@ class World:
     def suspect(self, aid: str, season: int) -> bool:
         """Y a-t-il une raison visible de soupçonner `aid` : une déclaration au-delà de la règle (cette saison ou la précédente)
         ou un mensonge découvert ?"""
-        now, tol = self.clock.now(), self.scn["quota_tolerance"]
-        if any(lie["agent"] == aid and lie["found_t"] is not None for lie in self.lies.values()):
+        now, tol, det = self.clock.now(), self.scn["quota_tolerance"], self.detection
+        if any(aid == a for a, _ in self.established):
             return True
+        for c in self.clues:                      # un indice dit devant tous, qui dépasse nettement sa déclaration
+            if c["subject"] == aid and c["public"] and c["season"] >= season - 1 and c["estimate"] is not None and \
+                    c["estimate"] - (c["declared"] or 0.0) > det["margin_t"]:
+                return True
         for s in (season, season - 1):
             known, norm = self.known_catch(aid, s, now), self.applicable_norm(self.agents[aid], s, now)
             if known is not None and norm is not None and known > norm.quota + tol:
                 return True
         return False
 
-    def discover_lies(self, season: int):
-        """Avant la veillée, chaque mensonge encore caché peut éclater : un voisin qui n'a pas menti a vu la barque rentrer (il le
-        dénonce), ou, à défaut, l'ancien fait ses comptes au marché. La chance grandit avec le temps et ce qui a été caché."""
-        cfg = {"base": 0.35, "per_season": 0.2, "per_tonne": 0.03, "max": 0.95, **(self.scn.get("lie_discovery") or {})}
-        now = self.clock.now()
-        for lie in self.lies.values():
-            if lie["found_t"] is not None or lie["season"] > season:
+    # ------------------------------------------------------------ indices, jugement, interdiction, radar
+    def investigate(self, season: int):
+        """Le soir de la veillée, les indices de la saison sont réunis. Le radar a relevé les barques de sa zone (l'ancien le dit
+        à tous) ; un voisin qui pêchait dans la même zone a pu voir une barque rentrer et en estimer la charge ; la barque d'un
+        interdit a pu être vue partant à l'aube ; un train de vie peut ne pas coller avec une déclaration ; l'ancien fait les
+        comptes du lac. Qui n'a rien à se reprocher dit ce qu'il a vu ; qui a triché se tait (pour ne pas attirer l'attention).
+        Tout part des vraies sorties : un indice dit vrai, à l'erreur d'estimation près. Une fois par saison."""
+        if self._investigated_season >= season:
+            return
+        self._investigated_season = season
+        det, rng, now = self.detection, self.lie_rng, self.clock.now()
+        trips = self.trips.get(season, [])
+        by_agent = {t["agent"]: t for t in trips}
+        elder = self.elder.id if self.elder else None
+
+        def clue(kind: str, observer: str | None, trip: dict, estimate: float | None = None):
+            subject = self.agents[trip["agent"]]
+            public = observer is None or observer == elder or not self.cheated(observer, season)
+            p = {"kind": kind, "observer": observer, "subject": subject.id, "zone": trip["zone"],
+                 "estimate": None if estimate is None else round(max(0.0, estimate), 1), "public": public,
+                 "declared": None if trip["secret"] else subject.declared.get(season)}
+            ev = self.events.emit("clue", p, actor=observer or subject.id)
+            self.clues.append({**p, "season": season, "t": now, "event_id": ev["event_id"]})
+            if not public:                         # il l'a vu, et le garde pour lui
+                self.remember(self.agents[observer], f"J'ai vu {self.clue_text(p, observer)} ; je ne l'ai dit à personne.",
+                              "indice", 0.7, source_event_id=ev["event_id"])
+
+        def noisy(v: float, err: float) -> float:
+            return v * (1 + rng.uniform(-err, err))
+
+        for t in trips:
+            if t["radar"] and rng.random() < det["radar"]:
+                clue("radar", elder, t, noisy(t["landed"], det["radar_error"]))
+            for o in self.fishers:                 # les barques qui pêchaient dans la même zone
+                mine = by_agent.get(o.id)
+                if o.id != t["agent"] and mine is not None and mine["zone"] == t["zone"] and rng.random() < det["witness"]:
+                    clue("temoin", o.id, t, noisy(t["landed"], det["witness_error"]))
+            home = self.agents[t["agent"]].profile.hamlet
+            neighbours = [o for o in self.fishers if o.id != t["agent"] and o.profile.hamlet == home]
+            if t["secret"]:
+                for o in neighbours:
+                    if rng.random() < det["seen_leaving"]:
+                        clue("depart", o.id, t)
+            else:
+                # déclarer moins qu'il ne faut pour vivre, et pourtant vivre comme avant (payer sa dette, son entretien)
+                a = self.agents[t["agent"]]
+                need = (self.econ["upkeep_per_season"] + a.profile.debt_payment) / self.econ["price_per_tonne"]
+                if a.declared.get(season, t["landed"]) < need <= a.catches.get(season, 0.0):
+                    for o in neighbours:
+                        if rng.random() < det["lifestyle"]:
+                            clue("train_de_vie", o.id, t)
+        # les comptes du lac : ce que la pêche lui a fait perdre (mesuré à lake_error × capacité près), ce que les déclarations
+        # en expliquent
+        err = det["lake_error"] * self.capacity
+        drop = max(0.0, sum(t["landed"] for t in trips) + rng.uniform(-err, err))
+        declared = sum(self.agents[t["agent"]].declared.get(season, 0.0) for t in trips if not t["secret"])
+        audit = {"drop": round(drop, 1), "declared": round(declared, 1), "gap": round(drop - declared, 1),
+                 "significant": drop - declared > 2 * err}
+        self.audits[season] = {**audit, "t": now}
+        self.events.emit("lake_audit", audit, actor=elder)
+
+    def weigh_evidence(self, season: int):
+        """À la fin de la veillée, l'ancien pèse, pêcheur par pêcheur, les indices dits devant tous et les accusations des
+        pêcheurs qu'il croit (confiance d'au moins 0,4). Un mensonge est établi quand ils pèsent `proof` (radar 3, témoin 1,
+        départ vu 1, accusation 0,5, train de vie 0,5, comptes 0,5 s'ils ne tombent pas juste) et que la charge estimée dépasse
+        nettement la déclaration ; pour un interdit, toute sortie prouvée est une faute. Sinon, un indice fait un soupçon. Seuls
+        les indices comptent, jamais la vérité : l'ancien peut se tromper (`wrongful`)."""
+        if self._weighed_season >= season:
+            return
+        self._weighed_season = season
+        det = self.detection
+        judge = self.elder.id if self.elder else None
+        credible: dict[str, set[str]] = {}
+        for _, accused, accuser in self.accusations.get(season, []):
+            trust = self.trust[judge].get(accuser, TRUST_START) if judge else self.reputation(accuser)
+            if trust >= 0.4:
+                credible.setdefault(accused, set()).add(accuser)
+        books = EVIDENCE["comptes"] if self.audits.get(season, {}).get("significant") else 0.0
+        for trip in self.trips.get(season, []):
+            a = self.agents[trip["agent"]]
+            clues = [c for c in self.clues if c["season"] == season and c["subject"] == a.id and c["public"]]
+            if not clues:
                 continue
-            hidden = lie["landed"] - lie["declared"]
-            chance = min(cfg["max"], cfg["base"] + cfg["per_season"] * (season - lie["season"]) + cfg["per_tonne"] * hidden)
-            if self.lie_rng.random() >= chance:
+            nums = [(EVIDENCE[c["kind"]], c["estimate"]) for c in clues if c["estimate"] is not None]
+            est = sum(w * e for w, e in nums) / sum(w for w, _ in nums) if nums else None
+            weight = sum(EVIDENCE[c["kind"]] for c in clues) + min(1.0, EVIDENCE["accusation"] * len(credible.get(a.id, ())))
+            said = 0.0 if trip["secret"] else a.declared.get(season, trip["landed"])
+            if trip["secret"]:
+                caught = weight >= det["proof"]
+                suspected = not caught
+            else:
+                big = est is not None and est - said > max(det["margin_t"], det["margin_ratio"] * said)
+                caught = big and weight + books >= det["proof"]
+                suspected = big and not caught
+            if caught:
+                self.establish(a, season, trip, said, est, clues)
+            elif suspected:
+                self.shift_trust(a.id, "soupçonné", {o: TRUST["suspected"] for o in self.trust}, clues[0]["event_id"])
+
+    def establish(self, a: Agent, season: int, trip: dict, said: float, est: float | None, clues: list[dict]):
+        """L'ancien tient pour établi que `a` a menti (ou est sorti en cachette) : il le dit à tous, chacun s'en souvient, la
+        vallée lui retire sa confiance et sait gré aux témoins. La vallée retient l'estimation des indices, pas la vérité."""
+        kinds = {c["kind"] for c in clues}
+        how = "radar" if "radar" in kinds else ("temoins" if kinds & {"temoin", "depart"} else "indices")
+        witnesses = sorted({c["observer"] for c in clues if c["observer"] and c["kind"] != "radar"})
+        value = None if est is None else round(est, 1)
+        self.established[(a.id, season)] = {"value": value, "t": self.clock.now(), "how": how, "secret": trip["secret"]}
+        rep = self.reports.get((a.id, season))
+        ev = self.events.emit("lie_discovered", {
+            "agent": a.id, "lie_season": season, "declared": said, "landed": trip["landed"], "how": how,
+            "secret": trip["secret"], "wrongful": not self.cheated(a.id, season), "estimated": value,
+            "witnesses": witnesses, "report_event_id": rep["event_id"] if rep else None}, actor=a.id)
+        about = f"environ {value:g} t" if value is not None else "une quantité inconnue"
+        for o in self.agents.values():
+            if o.id == a.id:
+                fault = "suis sorti pêcher en cachette" if trip["secret"] else f"avais menti en déclarant {said:g} t"
+                text = (f"La vallée a établi que je {fault} à la saison {season} ({HOW[how]}) : "
+                        f"elle croit que j'ai pris {about}.")
+            elif trip["secret"]:
+                text = (f"{a.profile.name}, interdit de pêche, est sorti pêcher en cachette à la saison {season} "
+                        f"({HOW[how]}) : {about}.")
+            else:
+                text = (f"{a.profile.name} a menti à l'ancien à la saison {season} : il a déclaré {said:g} t, les indices "
+                        f"disent {about} ({HOW[how]}).")
+            self.remember(o, text, "mensonge", 0.9, source_event_id=ev["event_id"])
+        self.shift_trust(a.id, "sortie en cachette prouvée" if trip["secret"] else "mensonge établi",
+                         {o: TRUST["lie"] for o in self.trust}, ev["event_id"])
+        for w in witnesses:
+            self.shift_trust(w, "a témoigné", {o.id: TRUST["denounced"] for o in self.agents.values()
+                                               if not self.cheated(o.id, season)}, ev["event_id"])
+
+    def kept_away(self, season: int):
+        """Un interdit qu'on n'a pas pris dehors cette saison regagne un peu la confiance de tous (qu'il soit resté à quai ou
+        qu'il ait pêché sans être vu : la vallée ne sait que ce qu'elle voit)."""
+        for aid, since in list(self.banned.items()):
+            if since <= season and (aid, season) not in self.established:
+                self.shift_trust(aid, "se tient à l'écart", {o: TRUST["kept_away"] for o in self.trust})
+
+    def update_bans(self, season: int):
+        """Sous `scenario.ban_below` de réputation, un pêcheur est interdit de pêche dès la saison suivante ; il retrouve le droit
+        de pêcher quand elle remonte à `scenario.ban_lift`. Interdit, il ne déclare plus rien : il reste à quai, ou pêche en
+        cachette."""
+        below, lift = float(self.scn.get("ban_below", 0.05)), float(self.scn.get("ban_lift", 0.5))
+        for a in self.fishers:
+            rep = self.reputation(a.id)
+            if a.id not in self.banned and rep <= below:
+                self.banned[a.id] = season + 1
+                ev = self.events.emit("ban", {"agent": a.id, "banned": True, "reputation": rep}, actor=a.id)
+                self.remember(a, f"La vallée m'a interdit de pêche à partir de la saison {season + 1} : plus personne ne me "
+                                 f"fait confiance. Je ne pourrai pêcher à nouveau qu'après avoir regagné sa confiance.",
+                              "interdiction", 1.0, source_event_id=ev["event_id"])
+            elif a.id in self.banned and rep >= lift:
+                del self.banned[a.id]
+                ev = self.events.emit("ban", {"agent": a.id, "banned": False, "reputation": rep}, actor=a.id)
+                self.remember(a, "La vallée m'a rendu le droit de pêcher : j'ai regagné sa confiance.", "interdiction", 0.9,
+                              source_event_id=ev["event_id"])
+
+    def place_radar(self, zone: str, by: str):
+        self.radar_zone, self.radar_by = zone, by
+        self.events.emit("radar_placed", {"zone": zone, "by": by})
+
+    def move_radar(self):
+        """Pour la saison suivante, l'ancien (ou la vallée, sans ancien) place le radar en secret là où il se méfie le plus : la
+        rive du hameau dont il croit le moins les pêcheurs, ou le large s'il y a des interdits (c'est là qu'on pêche en
+        cachette). Une fois sur quatre, ailleurs au hasard, pour que personne ne puisse compter dessus. Le joueur qui l'a placé
+        lui-même garde la main jusqu'à ce qu'il la rende (« auto »)."""
+        if self.radar_by == "joueur":
+            return
+        judge = self.elder.id if self.elder else None
+
+        def distrust(aid: str) -> float:
+            return 1.0 - (self.trust[judge].get(aid, TRUST_START) if judge else self.reputation(aid))
+
+        score = {h: sum(distrust(a.id) for a in self.fishers if a.profile.hamlet == h and a.id not in self.banned)
+                 for h in HAMLETS}
+        score["large"] = 0.3 + sum(distrust(aid) for aid in self.banned)     # un hameau très suspect peut l'emporter
+        rng = self.lie_rng
+        zone = rng.choice(ZONES) if rng.random() < 0.25 else max(ZONES, key=lambda z: (score[z], z))
+        self.place_radar(zone, "ancien" if judge else "vallee")
+
+    def secret_zone(self, agent: Agent) -> str:
+        """Où un interdit va pêcher en cachette : loin de sa rive (ses voisins le connaissent), plutôt au large."""
+        others = [z for z in ZONES if z != agent.profile.hamlet]
+        weights = [2.0 if z == "large" else 1.0 for z in others]
+        return self.lie_rng.choices(others, weights)[0]
+
+    def clue_text(self, c: dict, viewer: str | None = None) -> str:
+        """Un indice en mots, du point de vue de `viewer` (« ta barque » s'il en est le sujet)."""
+        mine = c["subject"] == viewer
+        boat = "ta barque" if mine else f"la barque de {self.first_name(c['subject'])}"
+        said = "" if c["declared"] is None else \
+            (f" (tu as déclaré {c['declared']:g} t)" if mine else f" ({self.first_name(c['subject'])} a déclaré {c['declared']:g} t)")
+        if c["kind"] == "radar":
+            return f"le radar de l'ancien a mesuré environ {c['estimate']:g} t dans {boat}{said}"
+        if c["kind"] == "temoin":
+            return f"{boat} rentrer avec environ {c['estimate']:g} t{said}"
+        if c["kind"] == "depart":
+            return f"{boat}, interdite de pêche, partir à l'aube"
+        return f"que {'tu vis' if mine else self.first_name(c['subject']) + ' vit'} bien pour {c['declared']:g} t déclarées"
+
+    def clue_lines(self, agent: Agent, horizon: float, season: int) -> list[str]:
+        """Les indices que l'agent connaît (dits devant tous, ou vus par lui et gardés), et les comptes du lac, de cette saison et
+        de la précédente : la matière de ses soupçons."""
+        lines = []
+        for c in self.clues:
+            if c["t"] > horizon or c["season"] < season - 1 or not (c["public"] or c["observer"] == agent.id):
                 continue
-            lie["found_t"] = now
-            liar = self.agents[lie["agent"]]
-            honest = [a for a in self.fishers if a.id != liar.id and not self.lied(a.id, lie["season"])]
-            near = [a for a in honest if a.profile.hamlet == liar.profile.hamlet] or honest
-            witness = self.lie_rng.choice(near) if near else None
-            ev = self.events.emit("lie_discovered", {
-                "agent": liar.id, "lie_season": lie["season"], "declared": lie["declared"], "landed": lie["landed"],
-                "how": "temoin" if witness else "marche", "by": witness.id if witness else None,
-                "report_event_id": lie["report_event_id"]}, actor=liar.id)
-            how = f"{witness.profile.name} l'a dénoncé" if witness else "l'ancien a fait ses comptes au marché"
-            for o in self.agents.values():
-                if o.id == liar.id:
-                    text = (f"Mon mensonge de la saison {lie['season']} a éclaté ({how}) : j'avais déclaré "
-                            f"{lie['declared']:g} t à l'ancien, j'en avais pêché {lie['landed']:g}.")
-                else:
-                    text = (f"Mensonge découvert : {liar.profile.name} avait déclaré {lie['declared']:g} t à la saison "
-                            f"{lie['season']}, il en avait pêché {lie['landed']:g} ({how}).")
-                self.remember(o, text, "mensonge", 0.9, source_event_id=ev["event_id"])
-            self.shift_trust(liar.id, "mensonge découvert", {o: TRUST["lie"] for o in self.trust}, ev["event_id"])
-            if witness:
-                self.shift_trust(witness.id, "a dénoncé un mensonge",
-                                 {o.id: TRUST["denounced"] for o in self.agents.values() if not self.lied(o.id, season)},
-                                 ev["event_id"])
+            if c["kind"] == "radar":
+                text = self.clue_text(c, agent.id)
+            elif c["observer"] == agent.id:
+                text = f"tu as vu {self.clue_text(c, agent.id)}" + ("" if c["public"] else " ; tu ne l'as dit à personne")
+            else:
+                verb = "trouve" if c["kind"] == "train_de_vie" else "a vu"
+                text = f"{self.first_name(c['observer'])} {verb} {self.clue_text(c, agent.id)}"
+            lines.append(f"saison {c['season']} : {text}.")
+        for s in (season - 1, season):
+            au = self.audits.get(s)
+            if au and au["t"] <= horizon:
+                lines.append(f"saison {s} : comptes de l'ancien, la pêche a fait perdre environ {au['drop']:g} t au lac, les "
+                             f"déclarations en expliquent {au['declared']:g} t.")
+        return lines[-7:]
 
     def judge_declarations(self, season: int):
         """À l'ouverture de la veillée, l'ancien lit les déclarations de la saison : qui a déclaré plus que la règle perd la
@@ -388,11 +609,15 @@ class World:
             p, val = rep["payload"], self.known_catch(aid, s, horizon)
             txt = f"{self.first_name(aid)} {val:g} t"
             if val != p["declared"]:
-                txt += f" (en avait déclaré {p['declared']:g} : mensonge découvert)"
+                txt += f" (en avait déclaré {p['declared']:g} : mensonge établi)"
             by_season.setdefault(s, []).append(txt)
             ids.append(rep["event_id"])
             if s == season - 1:
                 last[aid] = val
+        for (aid, s), found in self.established.items():      # les interdits pris à pêcher en cachette
+            if found["secret"] and found["t"] <= horizon and s >= season - 2 and aid != agent.id:
+                about = f"environ {found['value']:g} t" if found["value"] is not None else "on ne sait combien"
+                by_season.setdefault(s, []).append(f"{self.first_name(aid)}, interdit, pris à pêcher en cachette ({about})")
         lines = [f"saison {s} : " + ", ".join(v) for s, v in sorted(by_season.items())]
         return lines, ids, last
 
@@ -400,15 +625,25 @@ class World:
         """Ce que l'agent est seul à savoir de ses trois dernières prises : la vraie, ce qu'il en a déclaré, et si son mensonge a
         éclaté. Sans cela, un pêcheur qui a menti l'oublie et se défend mal (ou se dénonce lui-même)."""
         honest, out = [], []
+        if agent.id in self.banned:
+            out.append(f"la vallée t'a interdit de pêche (depuis la saison {self.banned[agent.id]}) tant que tu n'as pas "
+                       "regagné sa confiance : ta seule prise possible est en cachette.")
         for s in sorted(agent.catches)[-3:]:
             landed, said = agent.catches[s], agent.declared.get(s, agent.catches[s])
-            if landed - said <= 0.05:
+            found = self.established.get((agent.id, s))
+            known = found is not None and found["t"] <= horizon
+            secret = any(t["agent"] == agent.id and t["secret"] for t in self.trips.get(s, []))
+            if secret:
+                out.append(f"saison {s} : tu as pêché {landed:g} t en cachette ; "
+                           + ("on t'a pris, tout le monde le sait." if known else "personne ne t'a pris, pour l'instant."))
+            elif landed - said > 0.05:
+                out.append(f"saison {s} : tu as pêché {landed:g} t et déclaré {said:g} t à l'ancien ; "
+                           + ("la vallée a établi ce mensonge." if known else "personne ne le sait, pour l'instant."))
+            elif known:
+                out.append(f"saison {s} : tu as pêché {landed:g} t, déclarées telles quelles, mais la vallée croit que tu as "
+                           f"menti (environ {found['value']:g} t) : c'est faux.")
+            else:
                 honest.append(f"saison {s} : {landed:g} t")
-                continue
-            lie = next((x for x in self.lies.values() if x["agent"] == agent.id and x["season"] == s), None)
-            found = lie is not None and lie["found_t"] is not None and lie["found_t"] <= horizon
-            out.append(f"saison {s} : tu as pêché {landed:g} t et déclaré {said:g} t à l'ancien ; "
-                       + ("ce mensonge a éclaté, tout le monde le sait." if found else "personne ne le sait, pour l'instant."))
         if honest:
             out.insert(0, "tes prises, déclarées telles quelles à l'ancien : " + ", ".join(honest) + ".")
         return out
@@ -468,8 +703,9 @@ class World:
         rumors = self.active_rumors(horizon)
         carnet = self.carnet(agent, horizon)
         trust = sorted(self.trust[agent.id].items(), key=lambda kv: kv[1])
-        exposed = any(x["agent"] == agent.id and x["found_t"] is not None and x["found_t"] >= horizon - 2 * self.clock.season_days
-                      for x in self.lies.values())
+        exposed = any(aid == agent.id and f["t"] <= horizon and s >= season - 2 for (aid, s), f in self.established.items())
+        banned = agent.id in self.banned
+        clues = self.clue_lines(agent, horizon, season)
         wealth, stock_true = agent.wealth, round(self.lake.stock, 3)
         if self.vectors is None:
             # en mémoire : aucune attente, le monde ne bouge pas pendant l'observation
@@ -497,7 +733,10 @@ class World:
             "n_fishers": len(self.fishers), "_entry": entry,
             "wealth": wealth, "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
             "price": self.econ["price_per_tonne"], "boat_capacity": self.max_catch,
-            "min_catch": self.min_catch, "carnet": carnet, "norms": norm_lines, "known_catches": catches_txt,
+            # un interdit ne sort qu'en cachette, ou reste à quai (0 t)
+            "min_catch": 0.0 if banned else self.min_catch, "carnet": carnet, "norms": norm_lines,
+            "known_catches": catches_txt, "clues": clues, "banned": banned,
+            "banned_others": [self.first_name(b) for b in self.banned if b != agent.id],
             "trust": [(self.first_name(s), v) for s, v in trust],
             "last_season_catches": sorted(last_catches.values()),
             # la règle votée qui s'applique à ce pêcheur, et s'il l'a soutenue (rappelée juste avant la question de prise)
@@ -513,7 +752,7 @@ class World:
         state = {
             "stock_estimate": est, "stock_true": stock_true, "capacity": self.capacity, "n_fishers": len(self.fishers),
             "quota": norm.quota if norm else None, "boat_capacity": self.max_catch,      # limite d'une sortie
-            "min_catch": self.min_catch,
+            "min_catch": 0.0 if banned else self.min_catch, "banned": banned,
             "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
             "price": self.econ["price_per_tonne"], "wealth": wealth,
             "growth_rate": self.lake.r, "round": rnd,
@@ -543,8 +782,24 @@ class World:
                                    for a in assembly.participants]
             obs["scope_label"] = assembly.label
             obs["round"] = rnd
-            state["overfisher"] = self._overfisher(agent, last_catches, season - 1)
+            # celui qu'un agent à règles accuserait : d'abord celui que les indices de la saison désignent, sinon le plus gros
+            # pêcheur connu de la saison passée
+            state["overfisher"] = self._clue_suspect(agent, season, horizon) or \
+                self._overfisher(agent, last_catches, season - 1)
         return obs, state, retrieved, list(dict.fromkeys(used))
+
+    def _clue_suspect(self, agent: Agent, season: int, horizon: float) -> str | None:
+        """Le pêcheur que les indices connus de l'agent désignent le plus nettement cette saison (charge estimée bien au-delà
+        de sa déclaration, ou interdit vu dehors)."""
+        best, worst = None, 0.0
+        for c in self.clues:
+            if c["season"] != season or c["t"] > horizon or c["subject"] == agent.id or \
+                    not (c["public"] or c["observer"] == agent.id):
+                continue
+            excess = 5.0 if c["declared"] is None else ((c["estimate"] or 0.0) - c["declared"])
+            if excess > max(self.detection["margin_t"], worst):
+                best, worst = c["subject"], excess
+        return best
 
     def _overfisher(self, agent: Agent, last: dict, season: int) -> str | None:
         if not last:
@@ -563,8 +818,14 @@ class World:
                     ration: float = 1.0, stock_at_action: float | None = None, declared: float | None = None) -> dict:
         """Applique une prise, puis la déclaration du pêcheur à l'ancien. `stock_at_action` : stock au moment où l'action prend
         effet (en synchrone, le même pour toutes les barques parties ensemble ; en asynchrone, le stock courant). `declared` :
-        ce qu'il comptait déclarer (None : la vérité)."""
+        ce qu'il comptait déclarer (None : la vérité). Un interdit de pêche reste à quai (0 t) ou sort en cachette : il ne
+        déclare rien, et va plutôt pêcher loin de sa rive. Renvoie l'événement `catch` (None : resté à quai)."""
         season = self.clock.season_of()
+        secret = agent.id in self.banned
+        if secret and requested <= 0:
+            self.remember(agent, "Interdit de pêche, je suis resté à quai cette saison.", "peche", 0.5)
+            return None
+        zone = self.secret_zone(agent) if secret else agent.profile.hamlet
         before = self.lake.stock
         obs = decision["payload"]["observed"]
         stock_observed = obs["stock_estimate"]
@@ -575,7 +836,11 @@ class World:
             "decision_event_id": decision["event_id"], "info_horizon": round(horizon, 6), "rationed": ration < 1.0,
             "stock_at_horizon": obs["stock_true"],
             "stock_at_action": round(before if stock_at_action is None else stock_at_action, 3),
+            "zone": zone, "secret": secret,
         }, actor=agent.id)
+        # la sortie : où, combien, et si le radar surveillait cette zone à ce moment-là (lu le soir de la veillée)
+        self.trips.setdefault(season, []).append({"agent": agent.id, "zone": zone, "landed": landed, "secret": secret,
+                                                  "radar": zone == self.radar_zone, "event_id": ev["event_id"]})
         agent.catches[season] = agent.catches.get(season, 0.0) + landed
         self.lake_update("catch", -landed)
         income = landed * self.econ["price_per_tonne"]
@@ -583,6 +848,11 @@ class World:
         self.events.emit("sale", {"agent": agent.id, "hamlet": agent.profile.hamlet, "tonnes": landed,
                                   "price": self.econ["price_per_tonne"], "income": round(income, 2),
                                   "wealth": round(agent.wealth, 2)}, actor=agent.id)
+        if secret:
+            self.remember(agent, f"Interdit de pêche, je suis sorti en cachette ({'au large' if zone == 'large' else 'du côté de ' + zone}) "
+                                 f"et j'ai pris {landed:g} t. Personne ne doit le savoir.", "peche", 0.8,
+                          source_event_id=ev["event_id"])
+            return ev
         # en rentrant, il déclare sa prise à l'ancien : la part qu'il comptait avouer (une prise rationnée, dans la même proportion)
         said = landed if declared is None or requested <= 0 else round(landed * min(1.0, max(0.0, declared) / requested), 2)
         rep = self.events.emit("report", {"agent": agent.id, "hamlet": agent.profile.hamlet, "declared": said,
@@ -625,6 +895,12 @@ class World:
                 self.comm = cmd["value"]
         elif ctype == "set_visibility":
             self.visible = bool(cmd.get("value"))
+        elif ctype == "place_radar":
+            # le joueur place le radar où il veut (il en garde la main) ; « auto » la rend à l'ancien, qui le déplacera
+            if cmd.get("value") in ZONES:
+                self.place_radar(cmd["value"], "joueur")
+            elif cmd.get("value") == "auto":
+                self.radar_by = "ancien"
         elif ctype == "announcement":
             text = str(cmd.get("text", "")).strip()[:300]
             if text:
@@ -708,8 +984,9 @@ class World:
 
     # ------------------------------------------------------------ veillée
     def open_assemblies(self, season: int, close_t: float) -> list[Assembly]:
-        # le soir de la veillée (qu'elle se tienne ou non) : les mensonges qui éclatent, puis les déclarations lues
-        self.discover_lies(season)
+        # le soir de la veillée (qu'elle se tienne ou non) : les indices de la saison réunis, puis les déclarations lues ;
+        # l'ancien pèsera les indices à la fin de la veillée, avec les accusations qu'il aura entendues
+        self.investigate(season)
         self.judge_declarations(season)
         if self.comm == "none":
             return []
@@ -796,6 +1073,7 @@ class World:
                 ae = self.events.emit("accusation", {"accuser": agent.id, "accused": accused.id,
                                                      "utterance_id": u["event_id"]}, actor=agent.id)
                 asm.accused.append((now, accused.id))
+                self.accusations.setdefault(season, []).append((now, accused.id, agent.id))
                 # devant les autres présents : l'accusé perd un peu s'il y a une raison visible, l'accusateur sinon
                 others = [x for x in asm.participants if x not in (agent.id, accused.id)]
                 if self.suspect(accused.id, season):
@@ -910,6 +1188,9 @@ class World:
 
     # ------------------------------------------------------------ fin de saison
     def end_season(self, season: int):
+        # la veillée finie, l'ancien pèse les indices et les accusations (sans veillée, il le fait seul)
+        self.investigate(season)
+        self.weigh_evidence(season)
         delta = self.lake.regrow()
         self.lake_update("regrowth", delta)
         tol = self.scn["promise_tolerance"]
@@ -938,6 +1219,9 @@ class World:
             a.wealth -= self.econ["upkeep_per_season"] + a.profile.debt_payment
             self.remember(a, f"Bilan de la saison {season} : {landed:g} t pêchées, il me reste {a.wealth:.0f} écus.",
                           "bilan", 0.5)
+        self.kept_away(season)
+        self.update_bans(season)
+        self.move_radar()
         self.events.emit("season_end", {
             "stock": round(self.lake.stock, 3),
             "catches": {a.id: round(a.catches.get(season, 0.0), 3) for a in self.fishers},
@@ -975,10 +1259,20 @@ class World:
         if said:
             each = ", ".join(f"{self.first_name(a)} {v:g} t" for a, v in sorted(said.items(), key=lambda kv: -kv[1]))
             facts.append(f"Prises déclarées à l'ancien : {each} (en tout {sum(said.values()):g} t).")
-        for d in of("lie_discovered"):
-            how = f"dénoncé par {self.first_name(d['by'])}" if d.get("by") else "l'ancien a fait ses comptes au marché"
-            facts.append(f"Mensonge découvert : {self.first_name(d['agent'])} avait déclaré {d['declared']:g} t à la saison "
-                         f"{d['lie_season']}, il en avait pêché {d['landed']:g} ({how}).")
+        for d in of("lie_discovered"):          # ce que l'ancien a établi : l'estimation des indices, pas la vérité
+            about = f"environ {d['estimated']:g} t" if d.get("estimated") is not None else "on ne sait combien"
+            if d["secret"]:
+                facts.append(f"{self.first_name(d['agent'])}, interdit de pêche, a été pris à pêcher en cachette "
+                             f"({about} ; {HOW[d['how']]}).")
+            else:
+                facts.append(f"Mensonge établi : {self.first_name(d['agent'])} a déclaré {d['declared']:g} t, les indices "
+                             f"disent {about} ({HOW[d['how']]}).")
+        audit = of("lake_audit")
+        if audit and audit[0]["significant"]:
+            facts.append(f"Les comptes du lac ne tombent pas juste : il a perdu environ {audit[0]['drop']:g} t, les "
+                         f"déclarations n'en expliquent que {audit[0]['declared']:g}.")
+        if self.banned:
+            facts.append("Interdits de pêche : " + both([self.first_name(b) for b in self.banned]) + ".")
         start = next((p["stock"] for p in of("season_start")), None)
         level = prompts.lake_level(self.lake.stock, self.capacity, self.lake.collapse_ratio)
         facts.append((f"Le lac : {start:.0f} t au début de la saison, " if start is not None else "Le lac : ")
@@ -1067,6 +1361,8 @@ class World:
             "population": {"fishers": len(self.fishers), "rule_fraction": self.cfg["population"]["rule_fraction"]},
         })
         self.lake_update("init", 0.0)
+        # le radar de la vallée commence dans une zone au hasard ; l'ancien le déplacera à la fin de chaque saison
+        self.place_radar(self.lie_rng.choice(ZONES), "ancien" if self.elder else "vallee")
         for a in self.agents.values():
             self.remember(a, "Une nouvelle année commence sur le lac de Vellmor.", "bilan", 0.2)
         self.publish_status()

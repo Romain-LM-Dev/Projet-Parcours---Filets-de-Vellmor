@@ -96,6 +96,7 @@ func _initialize() -> void:
 	# la jauge de confiance de chacun suit la confiance publiée par le moteur
 	var lies := 0
 	var found := 0
+	var clues := 0
 	var reputations := {}
 	for ev in events:
 		var p: Dictionary = ev["payload"]
@@ -103,10 +104,15 @@ func _initialize() -> void:
 			lies += 1
 		elif ev["type"] == "lie_discovered":
 			found += 1
+		elif ev["type"] == "clue":
+			clues += 1
 		elif ev["type"] == "trust":
 			reputations[str(p["subject"])] = float(p["reputation"])
-	check(joined.count("MENSONGE DÉCOUVERT") == found, "une ligne par mensonge découvert (%d)" % found)
-	check(joined.count("MENSONGE") - found == lies, "une ligne « MENSONGE » par déclaration mensongère (%d)" % lies)
+	var established := joined.count("MENSONGE ÉTABLI")
+	check(established + joined.count("PRIS EN CACHETTE") + joined.count("ACCUSÉ À TORT") == found, "une ligne par mensonge établi par l'ancien (%d)" % found)
+	check(joined.count("MENSONGE") - established == lies, "une ligne « MENSONGE » par déclaration mensongère (%d)" % lies)
+	check(joined.count("INDICE") == clues, "une ligne « INDICE » par indice (%d, trouvé %d)" % [clues, joined.count("INDICE")])
+	check(m.radar_opt.item_count == 6 and str(m.radar_opt.get_item_metadata(0)) == "auto", "le radar se place depuis la barre d'intervention")
 	check(not reputations.is_empty(), "le run de test fait bouger la confiance")
 	check(m.tabs.get_tab_title(2) == "Confiance", "l'onglet « Confiance » suit le récit : " + m.tabs.get_tab_title(2))
 	m._render_trust()

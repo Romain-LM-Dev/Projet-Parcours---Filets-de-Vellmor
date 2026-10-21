@@ -39,6 +39,7 @@ var rules_view: RichTextLabel
 var tabs: TabContainer
 var comm_opt: OptionButton
 var vis_check: CheckButton
+var radar_opt: OptionButton     # où placer le radar de la vallée (ou laisser l'ancien décider)
 var rumor_edit: LineEdit
 
 # état reconstruit
@@ -498,6 +499,14 @@ func _build_ui() -> void:
 	vis_check.button_pressed = true
 	vis_check.toggled.connect(func(on: bool) -> void: _send({"type": "set_visibility", "value": on}))
 	bottom.add_child(vis_check)
+	radar_opt = OptionButton.new()
+	radar_opt.tooltip_text = "Le radar de la vallée surveille une zone du lac : il repère les barques qui sortent et mesure leur charge. L'ancien le place en secret là où il se méfie ; choisissez une zone pour le placer vous-même."
+	for item in [["Radar : l'ancien décide", "auto"], ["Radar : rive d'Ostrel", "Ostrel"], ["Radar : rive de Bramois", "Bramois"],
+			["Radar : rive de Tilque", "Tilque"], ["Radar : rive d'Hennad", "Hennad"], ["Radar : au large", "large"]]:
+		radar_opt.add_item(item[0])
+		radar_opt.set_item_metadata(radar_opt.item_count - 1, item[1])
+	radar_opt.item_selected.connect(func(i: int) -> void: _send({"type": "place_radar", "value": radar_opt.get_item_metadata(i)}))
+	bottom.add_child(radar_opt)
 	rumor_edit = LineEdit.new()
 	rumor_edit.placeholder_text = "Faire courir une rumeur dans la vallée…"
 	rumor_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -765,7 +774,12 @@ func _on_event(ev: Dictionary) -> void:
 			if absf(float(p.get("stock_at_action", 0)) - float(p.get("stock_at_horizon", 0))) > 0.5:
 				gap = "  [color=#6f7896](lac vu à %.0f t, %.0f t au départ)[/color]" % [float(p.get("stock_at_horizon", 0)),
 					float(p.get("stock_at_action", 0))]
-			_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s" % [_who(id), float(p.get("landed", 0)), gap], [id])
+			if bool(p.get("secret", false)):
+				var zone := str(p.get("zone", ""))
+				_feed(lab + _tag("EN CACHETTE", "#ff8a5c") + " %s, interdit de pêche, sort %s et ramène [b]%.1f t[/b]  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
+					_who(id), "au large" if zone == "large" else "du côté de " + zone, float(p.get("landed", 0))], [id])
+			else:
+				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s" % [_who(id), float(p.get("landed", 0)), gap], [id])
 		"report":
 			# la déclaration à l'ancien : les autres ne connaissent qu'elle ; un mensonge n'est visible que d'ici
 			var id := str(p.get("agent", ""))
@@ -779,14 +793,61 @@ func _on_event(ev: Dictionary) -> void:
 				_feed(lab + _tag("MENSONGE", "#ff8a5c") + " %s déclare [b]%s t[/b] à l'ancien, en a pêché [b][color=#ff8a7e]%s t[/color][/b]  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
 					_who(id), _num(said), _num(landed)], [id])
 		"lie_discovered":
+			# l'ancien tient un mensonge (ou une sortie en cachette) pour établi sur des indices ; le joueur voit s'il se trompe
 			var id := str(p.get("agent", ""))
 			var a = _agent(id)
 			if a:
 				a["lies_found"] = int(a["lies_found"]) + 1
 				trust_dirty = true
-			var how := "dénoncé par " + _who(str(p.get("by"))) if p.get("by") != null else "l'ancien a fait ses comptes au marché"
-			_feed(lab + _tag("MENSONGE DÉCOUVERT", "#ff6a5c") + " %s avait déclaré %s t à la saison %d, en avait pêché [b]%s t[/b] · %s" % [
-				_who(id), _num(p.get("declared", 0)), int(p.get("lie_season", 0)), _num(p.get("landed", 0)), how], [id])
+			var how: String = {"radar": "le radar l'a mesuré", "temoins": "des voisins l'ont vu", "indices": "les indices concordent"}.get(str(p.get("how", "")), "")
+			var est := ("environ %s t" % _num(p.get("estimated"))) if p.get("estimated") != null else "une quantité inconnue"
+			var wit := PackedStringArray()
+			for w in p.get("witnesses", []):
+				wit.append(_who(str(w)))
+			var what := ("%s, interdit de pêche, pris à pêcher en cachette : %s" % [_who(id), est]) if bool(p.get("secret", false)) \
+				else ("%s a déclaré %s t, la vallée établit %s" % [_who(id), _num(p.get("declared", 0)), est])
+			_feed(lab + _tag("ACCUSÉ À TORT" if bool(p.get("wrongful", false)) else ("PRIS EN CACHETTE" if bool(p.get("secret", false)) else "MENSONGE ÉTABLI"), "#ff6a5c")
+				+ " %s · %s%s  [color=#6f7896](vraie prise : %s t)[/color]" % [what, how, (" (" + ", ".join(wit) + ")") if not wit.is_empty() else "", _num(p.get("landed", 0))], [id])
+		"clue":
+			var sub := str(p.get("subject", ""))
+			var obs := str(p.get("observer")) if p.get("observer") != null else ""
+			var kind := str(p.get("kind", ""))
+			var said := "" if p.get("declared") == null else " (déclaré %s t)" % _num(p.get("declared"))
+			var txt := ""
+			match kind:
+				"radar":
+					txt = "le radar mesure environ [b]%s t[/b] dans la barque de %s%s" % [_num(p.get("estimate", 0)), _who(sub), said]
+				"temoin":
+					txt = "%s a vu la barque de %s rentrer avec environ [b]%s t[/b]%s" % [_who(obs), _who(sub), _num(p.get("estimate", 0)), said]
+				"depart":
+					txt = "%s a vu la barque de %s, interdit de pêche, partir à l'aube" % [_who(obs), _who(sub)]
+				_:
+					txt = "%s trouve que %s vit bien pour ce qu'il déclare%s" % [_who(obs), _who(sub), said]
+			var kept := "" if bool(p.get("public", true)) else "  [color=#6f7896](il le garde pour lui : seuls lui et vous le savez)[/color]"
+			_feed(lab + _tag("INDICE" if bool(p.get("public", true)) else "INDICE GARDÉ", "#7fe0c8") + " " + txt + kept, [sub, obs])
+		"lake_audit":
+			var col := "#ff8a7e" if bool(p.get("significant", false)) else "#8f97b2"
+			_feed(lab + _tag("COMPTES", "#7fe0c8") + " [color=%s]la pêche a fait perdre environ %s t au lac ; les déclarations en expliquent %s t[/color]" % [
+				col, _num(p.get("drop", 0)), _num(p.get("declared", 0))], [])
+		"ban":
+			var id := str(p.get("agent", ""))
+			var a = _agent(id)
+			if a:
+				a["banned"] = bool(p.get("banned", false))
+				trust_dirty = true
+			if bool(p.get("banned", false)):
+				_feed(lab + _tag("INTERDIT DE PÊCHE", "#ff6a5c") + " %s n'a plus la confiance de personne (%d %%) : interdit de pêche jusqu'à la regagner (50 %%)" % [_who(id), roundi(float(p.get("reputation", 0)) * 100.0)], [id])
+			else:
+				_feed(lab + _tag("LEVÉE", "#58d08a") + " %s a regagné la confiance de la vallée (%d %%) : il peut de nouveau pêcher" % [_who(id), roundi(float(p.get("reputation", 0)) * 100.0)], [id])
+		"radar_placed":
+			var zone := str(p.get("zone", ""))
+			var by: String = {"joueur": "vous", "ancien": "l'ancien", "vallee": "la vallée"}.get(str(p.get("by", "")), "")
+			_feed(lab + _tag("RADAR", "#7fe0c8") + " %s place le radar %s  [color=#6f7896](en secret : les pêcheurs ne savent pas où)[/color]" % [
+				by, "au large" if zone == "large" else "devant la rive de " + zone], [])
+			if str(p.get("by", "")) == "joueur":
+				for i in radar_opt.item_count:
+					if radar_opt.get_item_metadata(i) == zone:
+						radar_opt.select(i)
 		"trust":
 			var a = _agent(str(p.get("subject", "")))
 			if a:
@@ -1000,7 +1061,7 @@ func _reset(ev: Dictionary) -> void:
 	for a in p.get("agents", []):
 		agents[str(a["id"])] = {"info": a, "catches": {}, "promises": [], "memories": [], "last_decision": {},
 			"last_decision_label": "", "wealth": float(a.get("wealth", 0)), "incidents": 0,
-			"declared": {}, "reputation": 0.5, "trust_from": {}, "lies_found": 0}
+			"declared": {}, "reputation": 0.5, "trust_from": {}, "lies_found": 0, "banned": false}
 	world.reset_world(p.get("agents", []), float(run["capacity"]), float(p.get("season_days", 30.0)))
 	chart.reset()
 	_reset_kpis()
@@ -1011,6 +1072,7 @@ func _reset(ev: Dictionary) -> void:
 		if comm_opt.get_item_metadata(i) == str(sc.get("communication", "valley")):
 			comm_opt.select(i)
 	vis_check.set_pressed_no_signal(bool(sc.get("catches_visible", true)))
+	radar_opt.select(0)                   # une nouvelle partie : l'ancien décide
 	feed.clear()
 	narration.clear()
 	narration.append_text("[color=#8f97b2]À la fin de chaque saison, l'ancien raconte ici ce que la vallée a vécu.[/color]\n\n")
@@ -1093,7 +1155,8 @@ func _render_trust() -> void:
 				var said := float(a["declared"][k])
 				said_txt = ("[color=#ff8a7e][b]%s t[/b] (ment)[/color]" % _num(said)) if landed - said > 0.05 else ("%s t" % _num(said))
 		var lies := int(a["lies_found"])
-		s += "[cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s[/cell]" % [_who(id), trust_bar(float(a["reputation"])),
+		var who := _who(id) + (" [color=#ff6a5c][font_size=10]INTERDIT[/font_size][/color]" if bool(a["banned"]) else "")
+		s += "[cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s[/cell]" % [who, trust_bar(float(a["reputation"])),
 			landed_txt, said_txt, ("[color=#ff6a5c]%d[/color]" % lies) if lies > 0 else "—"]
 	s += "[/table]"
 	trust_view.text = s
@@ -1129,7 +1192,8 @@ func _render_inspector() -> void:
 		s += "Prises : %s\n" % (", ".join(cs) if not cs.is_empty() else "—")
 		var low := PackedStringArray()
 		var tf: Dictionary = a["trust_from"]
-		s += "Confiance des autres : %s\n" % trust_bar(float(a["reputation"]))
+		s += "Confiance des autres : %s%s\n" % [trust_bar(float(a["reputation"])),
+			"  [color=#ff6a5c][b]interdit de pêche[/b] jusqu'à 50 %[/color]" if bool(a["banned"]) else ""]
 		for o in tf:
 			if float(tf[o]) < 0.4:
 				low.append(_who(str(o)))

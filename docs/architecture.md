@@ -73,7 +73,7 @@ Ce qui réduit l'attente sans fausser le monde :
 
 ### Ce qui circule : des événements JSON
 
-Tout fait du monde est un événement avec la même enveloppe (`event_id`, `run_id`, `seq`, `sim_time`, `processed_at`, `actor`, `payload`) et un `payload` décrit par un schéma JSON (`schemas/*.json`, exportés par `python -m filets schemas`). Les natures : `decision`, `utterance`, `proposal`, `support`, `promise`, `accusation`, `norm_adopted`, `catch`, `sale`, `lake_update`, `llm_call`, `incident`, `injection`, `memory_write`, `narration` (le récit de la saison par l'ancien), `report` (la prise déclarée à l'ancien, et la vraie), `lie_discovered`, `trust` (la confiance des autres envers un pêcheur)…
+Tout fait du monde est un événement avec la même enveloppe (`event_id`, `run_id`, `seq`, `sim_time`, `processed_at`, `actor`, `payload`) et un `payload` décrit par un schéma JSON (`schemas/*.json`, exportés par `python -m filets schemas`). Les natures : `decision`, `utterance`, `proposal`, `support`, `promise`, `accusation`, `norm_adopted`, `catch`, `sale`, `lake_update`, `llm_call`, `incident`, `injection`, `memory_write`, `narration` (le récit de la saison par l'ancien), `report` (la prise déclarée à l'ancien, et la vraie), `clue` (un indice : radar, barque vue, train de vie), `lake_audit` (les comptes du lac), `lie_discovered` (un mensonge établi sur indices), `trust` (la confiance des autres envers un pêcheur), `ban` (interdit de pêche, ou levée), `radar_placed`…
 
 ### La veillée
 
@@ -84,7 +84,7 @@ Chaque tour de parole est un événement `utterance` (qui parle, à qui, ce qu'i
 * le **vote de clôture** : chaque pêcheur à IA qui n'a soutenu aucune proposition remplit un **bulletin** (une question à choix au modèle de décision, ou à défaut au petit modèle ; réponse : l'identifiant d'une proposition ou « aucune ») ; à défaut de réponse, il vote pour la proposition la plus proche de ce qu'il a dit vouloir (à 1,5 t près), ou s'abstient s'il n'a rien dit de chiffré ;
 * une proposition soutenue par **au moins la moitié des pêcheurs présents** devient une **règle** (`norm_adopted`) pour la saison suivante.
 
-À l'ouverture de la veillée, les mensonges encore cachés peuvent éclater (`lie_discovered`), puis l'ancien lit les déclarations de la saison : la confiance de chacun bouge (`trust`). Au premier tour, tout le monde parle ; dès le deuxième (`scenario.quiet_listeners`), seuls ceux qui ont une raison apparue depuis leur dernière parole (on s'adresse à eux, on les nomme ou les accuse, une proposition concurrence la leur) reprennent la parole, les autres votent au bulletin.
+À l'ouverture de la veillée, les indices de la saison sont réunis (`clue`, `lake_audit` : radar, voisins, départs vus, train de vie, comptes du lac ; les tricheurs gardent les leurs pour eux), puis l'ancien lit les déclarations : la confiance de chacun bouge (`trust`). À la fin de la saison, l'ancien pèse les indices dits devant tous et les accusations entendues : mensonges établis (`lie_discovered`) ou soupçons, interdictions de pêche (`ban`), et nouvelle place, secrète, du radar (`radar_placed`). Au premier tour, tout le monde parle ; dès le deuxième (`scenario.quiet_listeners`), seuls ceux qui ont une raison apparue depuis leur dernière parole (on s'adresse à eux, on les nomme ou les accuse, une proposition concurrence la leur) reprennent la parole, les autres votent au bulletin.
 
 ### Mémoire personnelle et collective
 

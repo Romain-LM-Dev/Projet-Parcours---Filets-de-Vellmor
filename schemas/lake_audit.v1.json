@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "drop": {
+      "type": "number"
+    },
+    "declared": {
+      "type": "number"
+    },
+    "gap": {
+      "type": "number"
+    },
+    "significant": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "drop",
+    "declared",
+    "gap",
+    "significant"
+  ],
+  "additionalProperties": false
+}

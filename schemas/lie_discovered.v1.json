@@ -15,14 +15,30 @@
     },
     "how": {
       "enum": [
-        "temoin",
-        "marche"
+        "radar",
+        "temoins",
+        "indices"
       ]
     },
-    "report_event_id": {
-      "type": "string"
+    "secret": {
+      "type": "boolean"
     },
-    "by": {
+    "wrongful": {
+      "type": "boolean"
+    },
+    "estimated": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "witnesses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "report_event_id": {
       "type": [
         "string",
         "null"
@@ -35,7 +51,8 @@
     "declared",
     "landed",
     "how",
-    "report_event_id"
+    "secret",
+    "wrongful"
   ],
   "additionalProperties": false
 }

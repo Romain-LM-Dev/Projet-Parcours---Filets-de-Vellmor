@@ -27,6 +27,8 @@ def reasons_to_think(obs: dict) -> list[str]:
     cap, est = obs.get("capacity"), obs["stock_estimate"]
     if not cap:
         return ["lac inconnu"]
+    if obs.get("banned"):
+        why.append("interdit de pêche")             # rester à quai ou pêcher en cachette : ce n'est jamais de la routine
     hist = obs.get("stock_history") or []
     if not hist:
         why.append("première observation du lac")

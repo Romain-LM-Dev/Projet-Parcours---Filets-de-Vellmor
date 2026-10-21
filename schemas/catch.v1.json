@@ -36,6 +36,12 @@
     },
     "stock_at_action": {
       "type": "number"
+    },
+    "zone": {
+      "type": "string"
+    },
+    "secret": {
+      "type": "boolean"
     }
   },
   "required": [

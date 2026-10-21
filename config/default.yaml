@@ -37,9 +37,20 @@ scenario:
   communication: valley       # valley | hamlet | none
   # Chaque pêcheur déclare sa prise à l'ancien en rentrant, et peut mentir : seuls lui et le joueur connaissent la vraie.
   catches_visible: true       # les déclarations sont-elles connues de toute la vallée (sinon : du seul hameau) ?
-  # Avant chaque veillée, un mensonge encore caché éclate (un voisin honnête l'a vu, ou l'ancien fait ses comptes au marché)
-  # avec la probabilité base + par_saison × son âge en saisons + par_tonne × tonnes cachées, au plus max.
-  lie_discovery: {base: 0.35, per_season: 0.2, per_tonne: 0.03, max: 0.95}
+  # Les mensonges se découvrent sur des indices, pas au hasard. Le lac a cinq zones (la rive de chaque hameau, le large) :
+  # - le radar de la vallée en surveille une par saison (placé en secret par l'ancien, ou par le joueur) : il repère les barques
+  #   qui sortent (radar) et mesure leur charge (à radar_error près) ;
+  # - un voisin qui pêche dans la même zone voit une barque rentrer (witness) et en estime la charge (à witness_error près) ;
+  # - la barque d'un pêcheur interdit est vue partant à l'aube par son hameau (seen_leaving) ;
+  # - un voisin remarque qu'un pêcheur vit bien pour ce qu'il déclare (lifestyle) ;
+  # - l'ancien fait les comptes du lac (à lake_error × capacité près).
+  # Les témoins qui n'ont rien à se reprocher parlent à la veillée ; les tricheurs se taisent. À la fin de la veillée, l'ancien
+  # tient un mensonge pour établi quand les indices pèsent `proof` (radar 3, témoin 1, départ vu 1, accusation 0,5, train de vie
+  # 0,5, comptes 0,5) et que la charge estimée dépasse la déclaration d'au moins margin_t tonnes et margin_ratio.
+  detection: {radar: 0.95, radar_error: 0.1, witness: 0.4, witness_error: 0.3, seen_leaving: 0.3, lifestyle: 0.5,
+              lake_error: 0.03, margin_t: 1.0, margin_ratio: 0.25, proof: 2.0}
+  ban_below: 0.05             # réputation sous laquelle un pêcheur est interdit de pêche (il ne peut plus que pêcher en cachette)…
+  ban_lift: 0.5               # … jusqu'à ce qu'elle remonte à ce niveau
   assembly_rounds: 2          # tours de parole par veillée
   # dès le 2e tour, ne reprend la parole que celui qui a une raison (on lui parle, on le nomme, on conteste sa proposition) ;
   # les autres écoutent, et leur position se recueille au bulletin de vote (bien moins de tokens, moins de redites)

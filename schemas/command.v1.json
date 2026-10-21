@@ -7,6 +7,7 @@
         "set_communication",
         "set_visibility",
         "announcement",
+        "place_radar",
         "pause",
         "resume",
         "set_speed",
