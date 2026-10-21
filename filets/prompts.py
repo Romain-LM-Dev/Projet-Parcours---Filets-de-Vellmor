@@ -29,7 +29,7 @@ STYLE = (
 BRIEF_STYLE = " Sois très bref : une seule phrase courte (20 mots au plus) pour chaque champ de texte."
 
 # longueur de réponse permise (tokens) : assez pour un JSON complet, pas pour un discours
-BRIEF_MAX_TOKENS = {"catch": 110, "speak": 150}
+BRIEF_MAX_TOKENS = {"catch": 125, "speak": 150}
 
 
 def is_brief(cfg_llm: dict) -> bool:
@@ -197,9 +197,36 @@ def rule_reminder(obs: dict) -> str:
     if not rule:
         return ""
     who = "tu l'as soutenue" if rule["supported"] else "tu ne l'as pas soutenue, mais la vallée l'a adoptée"
-    seen = " : les autres le verront au marché et pourront te le reprocher à la veillée" if rule.get("visible") else ""
     return (f"Règle votée à la veillée : pas plus de {rule['quota']:g} t par pêcheur cette saison ({who}). "
-            f"Pêcher plus, c'est trahir la parole de la vallée{seen}.\n")
+            "Pêcher plus, c'est trahir la parole de la vallée, et ceux qui la respectent te retireront leur confiance.\n")
+
+
+def trust_word(v: float) -> str:
+    return ("très faible" if v < 0.25 else "faible" if v < 0.4 else "moyenne" if v < 0.6 else "bonne" if v < 0.8
+            else "forte")
+
+
+def trust_line(obs: dict) -> str:
+    """La confiance de l'agent envers les autres, en mots ; seuls ceux qui s'écartent de la moyenne sont nommés (peu de tokens)."""
+    trust = obs.get("trust") or []
+    if not trust:
+        return ""
+    marked = [f"{name} {trust_word(v)}" for name, v in trust if not 0.4 <= v < 0.6]
+    if not marked:
+        return "Ta confiance envers les autres : moyenne pour tous, personne ne t'a encore déçu ni convaincu."
+    return "Ta confiance envers les autres : " + ", ".join(marked) + ("; les autres, moyenne." if len(marked) < len(trust)
+                                                                       else ".")
+
+
+def carnet_block(obs: dict) -> str:
+    """Le carnet : ce que l'agent est seul à savoir (ses vraies prises et ce qu'il en a déclaré), ses engagements, sa confiance
+    envers les autres. Court et toujours présent : c'est ce qui garde un personnage cohérent d'une décision à l'autre (il sait
+    s'il a menti, à qui il a promis, de qui il se méfie), là où des souvenirs retrouvés au hasard ne le garantissent pas."""
+    lines = list(obs.get("carnet") or []) + list(obs.get("pinned") or [])
+    tl = trust_line(obs)
+    if tl:
+        lines.append(tl)
+    return "Ton carnet (ce que toi seul sais) :\n" + _bullets(lines, "rien à noter")
 
 
 def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dict:
@@ -209,7 +236,7 @@ def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dic
     text = {"type": "string", "maxLength": 160 if brief else 400}
     ident = {"type": "string", "maxLength": 8}
     if purpose == "catch":
-        props = {"justification": text, "prise": {"type": "number"}}
+        props = {"justification": text, "prise": {"type": "number"}, "declaration": {"type": "number"}}
     else:
         props = {"message": text, "destinataire": ident, "proposition_quota": {"type": ["number", "null"]},
                  "soutien": {"type": ["string", "null"], "maxLength": 8}}
@@ -232,15 +259,13 @@ def context_block(obs: dict, brief: bool = False) -> str:
             f"Tes finances : {obs['wealth']:.0f} écus. Chaque saison te coûte {obs['upkeep']:.0f} écus pour vivre"
             + (f", plus {obs['debt_payment']:.0f} écus de remboursement de dette" if obs["debt_payment"] else "")
             + f". Le poisson se vend {obs['price']:.0f} écus la tonne. {boat_line(obs)}")
-        if obs.get("own_history"):
-            parts.append("Tes prises passées : " + ", ".join(obs["own_history"]) + ".")
-    known = _cut(obs["known_catches"], 8, 90) if brief else obs["known_catches"]
+    known = _cut(obs["known_catches"], 3, 260) if brief else obs["known_catches"]
     memories = _cut(obs["memories"][:4], 4, 170) if brief else obs["memories"]
     documents = _cut(obs["documents"][:2], 2, 230) if brief else obs["documents"]
     parts.append("Règles en vigueur entre pêcheurs :\n" + _bullets(obs["norms"], "aucune règle n'a été adoptée"))
-    parts.append("Ce que tu sais des prises des autres :\n" + _bullets(known, "tu ne sais pas ce qu'ils ont pêché")
-                 + social_line(obs))
-    parts.append("Tes engagements et ce qui te tient à cœur :\n" + _bullets(obs["pinned"], "aucun engagement en cours"))
+    parts.append("Prises que les autres ont déclarées à l'ancien (tu ne connais que ces chiffres) :\n"
+                 + _bullets(known, "aucune déclaration connue") + social_line(obs))
+    parts.append(carnet_block(obs))
     parts.append("Tes souvenirs qui reviennent :\n" + _bullets(memories, "aucun souvenir précis"))
     parts.append("Ce qu'on raconte dans la vallée (archives, comptes, récits) :\n" + _bullets(documents, "rien de particulier"))
     return "\n\n".join(parts)
@@ -256,11 +281,41 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         + rule_reminder(obs)
         + ("Une rumeur qui te concerne, ou qui parle du lac, peut peser sur ta décision : tiens-en compte comme le "
            "ferait ton personnage.\n" if obs.get("rumors") else "")
+        + "En rentrant, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ce chiffre. Tu peux mentir, mais un "
+          "mensonge finit souvent par se savoir (un voisin a vu ta barque, l'ancien fait ses comptes au marché), et la vallée "
+          "ne l'oublie pas.\n"
         + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
-          f"\"prise\": <tonnes, {catch_range(obs)}>}}"
+          f"\"prise\": <tonnes, {catch_range(obs)}>, "
+          "\"declaration\": <tonnes que tu déclares à l'ancien : ta prise, ou moins si tu la caches>}"
     )
     return [{"role": "system", "content": persona(p, capacity, brief)},
             {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
+
+
+def veillee_block(obs: dict) -> str:
+    """Le contexte d'une réplique : ce qui sert à parler ce soir (le lac en une ligne, les règles, les déclarations, le carnet),
+    sans les archives, ni le détail du lac saison par saison, ni celui des finances. Environ moitié moins de tokens que le
+    contexte d'une prise : la parole coûtait 80 % des tokens d'une partie."""
+    est, cap = obs["stock_estimate"], obs.get("capacity")
+    parts = [f"Nous sommes le {obs['label']} (saison {obs['season']})."]
+    if cap:
+        trend = lake_trend(est, cap, obs.get("stock_history") or [])
+        parts.append(f"Le lac, tel que tu le vois : environ {est:.0f} t sur {cap:.0f} ({100 * est / cap:.0f} %, "
+                     f"{lake_level(est, cap, obs.get('collapse_ratio', 0.05))})" + (f" ; {trend}." if trend else "."))
+    else:
+        parts.append(f"Le lac, tel que tu le vois : environ {est:.0f} t.")
+    if obs.get("rumors"):
+        parts.append("Rumeurs qui courent (vraies ou non, tout le monde les a entendues) : "
+                     + " ; ".join(f"« {r} »" for r in obs["rumors"]))
+    if obs.get("role") != "ancien":
+        parts.append(f"Tes finances : {obs['wealth']:.0f} écus ; il t'en faut {obs['upkeep'] + obs['debt_payment']:.0f} "
+                     "par saison.")
+    parts.append("Règles en vigueur : " + ("; ".join(obs["norms"]) + "." if obs["norms"] else "aucune règle adoptée."))
+    parts.append("Prises déclarées à l'ancien :\n" + _bullets(obs["known_catches"][-3:], "aucune déclaration connue"))
+    parts.append(carnet_block(obs))
+    if obs.get("memories"):
+        parts.append("Souvenirs :\n" + _bullets(_cut(obs["memories"][:2], 2, 140)))
+    return "\n\n".join(parts)
 
 
 def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[dict]:
@@ -289,8 +344,10 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         + lake_reminder(obs)
         + "Réponds en JSON : {" + ", ".join(fields) + "}"
     )
+    # la veillée a son propre contexte, plus court ; en réflexion complète (profil de référence), le contexte reste entier
+    ctx = veillee_block(obs) if brief else context_block(obs, brief)
     return [{"role": "system", "content": persona(p, capacity, brief)},
-            {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
+            {"role": "user", "content": ctx + "\n\n" + ask}]
 
 
 # Le bulletin de vote : un identifiant de proposition (ou « aucune »), rien d'autre.

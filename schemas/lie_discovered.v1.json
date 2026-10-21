@@ -1,0 +1,41 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "lie_season": {
+      "type": "integer"
+    },
+    "declared": {
+      "type": "number"
+    },
+    "landed": {
+      "type": "number"
+    },
+    "how": {
+      "enum": [
+        "temoin",
+        "marche"
+      ]
+    },
+    "report_event_id": {
+      "type": "string"
+    },
+    "by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "agent",
+    "lie_season",
+    "declared",
+    "landed",
+    "how",
+    "report_event_id"
+  ],
+  "additionalProperties": false
+}

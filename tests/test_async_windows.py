@@ -63,7 +63,7 @@ def test_searching_memory_is_thinking_so_the_evening_does_not_rush_past(tmp_path
 
     monkeypatch.setattr(World, "observe", recall)
     world, bus, _ = make_world(tmp_path, "recall", seasons=1, time__mode="async", time__fast=False,
-                               time__sim_hours_per_second=100)
+                               time__sim_hours_per_second=100, scenario__quiet_listeners=False)
     play(world)
     events = read_events(tmp_path, "recall")
     assert not [e for e in kinds(events, "incident") if e["payload"]["incident_type"] == "missed_window"]

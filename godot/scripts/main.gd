@@ -31,6 +31,8 @@ var lbl_status: Label
 var ind_labels := {}
 var feed: RichTextLabel
 var narration: RichTextLabel    # le récit de chaque saison par l'ancien (onglet « Récit de l'ancien »)
+var trust_view: RichTextLabel   # jauges de confiance, vraies prises et déclarations (onglet « Confiance »)
+var trust_dirty := false
 var feed_only_selected: CheckBox
 var inspector: RichTextLabel
 var rules_view: RichTextLabel
@@ -450,6 +452,9 @@ func _build_ui() -> void:
 	narration.name = "Récit de l'ancien"
 	narration.scroll_following = true
 	tabs.add_child(narration)
+	trust_view = _rich()
+	trust_view.name = "Confiance"
+	tabs.add_child(trust_view)
 	inspector = _rich()
 	inspector.name = "Agent"
 	tabs.add_child(inspector)
@@ -488,7 +493,8 @@ func _build_ui() -> void:
 		_send({"type": "set_communication", "value": comm_opt.get_item_metadata(i)}))
 	bottom.add_child(comm_opt)
 	vis_check = CheckButton.new()
-	vis_check.text = "Prises visibles"
+	vis_check.text = "Déclarations publiques"
+	vis_check.tooltip_text = "Les déclarations faites à l'ancien sont lues à toute la vallée (sinon : au seul hameau). Les vraies prises, seuls vous et chaque pêcheur les connaissez."
 	vis_check.button_pressed = true
 	vis_check.toggled.connect(func(on: bool) -> void: _send({"type": "set_visibility", "value": on}))
 	bottom.add_child(vis_check)
@@ -760,6 +766,35 @@ func _on_event(ev: Dictionary) -> void:
 				gap = "  [color=#6f7896](lac vu à %.0f t, %.0f t au départ)[/color]" % [float(p.get("stock_at_horizon", 0)),
 					float(p.get("stock_at_action", 0))]
 			_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s" % [_who(id), float(p.get("landed", 0)), gap], [id])
+		"report":
+			# la déclaration à l'ancien : les autres ne connaissent qu'elle ; un mensonge n'est visible que d'ici
+			var id := str(p.get("agent", ""))
+			var a = _agent(id)
+			var landed := float(p.get("landed", 0))
+			var said := float(p.get("declared", 0))
+			if a:
+				a["declared"][str(int(ev.get("season", 0)))] = said
+				trust_dirty = true
+			if landed - said > 0.05:
+				_feed(lab + _tag("MENSONGE", "#ff8a5c") + " %s déclare [b]%s t[/b] à l'ancien, en a pêché [b][color=#ff8a7e]%s t[/color][/b]  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
+					_who(id), _num(said), _num(landed)], [id])
+		"lie_discovered":
+			var id := str(p.get("agent", ""))
+			var a = _agent(id)
+			if a:
+				a["lies_found"] = int(a["lies_found"]) + 1
+				trust_dirty = true
+			var how := "dénoncé par " + _who(str(p.get("by"))) if p.get("by") != null else "l'ancien a fait ses comptes au marché"
+			_feed(lab + _tag("MENSONGE DÉCOUVERT", "#ff6a5c") + " %s avait déclaré %s t à la saison %d, en avait pêché [b]%s t[/b] · %s" % [
+				_who(id), _num(p.get("declared", 0)), int(p.get("lie_season", 0)), _num(p.get("landed", 0)), how], [id])
+		"trust":
+			var a = _agent(str(p.get("subject", "")))
+			if a:
+				a["reputation"] = float(p.get("reputation", 0.5))
+				var vals: Dictionary = p.get("values", {})
+				for o in vals:
+					a["trust_from"][str(o)] = float(vals[o])
+				trust_dirty = true
 		"sale":
 			var a = _agent(str(p.get("agent", "")))
 			if a:
@@ -811,8 +846,10 @@ func _on_event(ev: Dictionary) -> void:
 						pr["landed"] = float(p.get("landed", 0))
 						pr["kept"] = bool(p.get("kept", true))
 			if not bool(p.get("kept", true)):
-				_feed(lab + _tag("TRAHISON", "#ff6a5c") + " %s avait promis %s t, a pêché [b][color=#ff8a7e]%.1f t[/color][/b]" % [_who(id),
-					_num(p.get("promised", 0)), float(p.get("landed", 0))], [id])
+				# la vraie prise trahit la promesse ; la vallée, elle, ne le sait que si la déclaration le dit (ou si le mensonge a éclaté)
+				var hidden := "  [color=#6f7896](la vallée l'ignore : il a déclaré %s t)[/color]" % _num(p.get("declared", 0)) if bool(p.get("known_kept", false)) else ""
+				_feed(lab + _tag("TRAHISON", "#ff6a5c") + " %s avait promis %s t, a pêché [b][color=#ff8a7e]%.1f t[/color][/b]%s" % [_who(id),
+					_num(p.get("promised", 0)), float(p.get("landed", 0)), hidden], [id])
 		"accusation":
 			_feed(lab + _tag("ACCUSATION", "#ff6a5c") + " %s accuse %s d'avoir trop pêché" % [_who(str(p.get("accuser", ""))),
 				_who(str(p.get("accused", "")))], [str(p.get("accuser", "")), str(p.get("accused", ""))])
@@ -866,7 +903,7 @@ func _on_event(ev: Dictionary) -> void:
 					var comms := {"valley": "toute la vallée", "hamlet": "par hameau", "none": "interdite"}
 					_feed(lab + _tag("COMMUNICATION", "#ffd166") + " les veillées se tiennent désormais : [b]%s[/b]" % comms.get(str(prm.get("value", "")), str(prm.get("value", ""))), [])
 				"set_visibility":
-					_feed(lab + _tag("PRISES", "#ffd166") + " les prises sont désormais [b]%s[/b]" % ("connues de tous" if bool(prm.get("value", true)) else "cachées"), [])
+					_feed(lab + _tag("DÉCLARATIONS", "#ffd166") + " les déclarations à l'ancien sont désormais [b]%s[/b]" % ("lues à toute la vallée" if bool(prm.get("value", true)) else "connues du seul hameau"), [])
 				"pause":
 					_feed(lab + _tag("PAUSE", "#ffd166") + " la partie est en pause", [])
 				"resume":
@@ -890,6 +927,12 @@ func _on_event(ev: Dictionary) -> void:
 				var a = _agent(str(id))
 				if a:
 					a["wealth"] = float(w[id])
+			var rep: Dictionary = p.get("reputation", {})
+			for id in rep:
+				var a = _agent(str(id))
+				if a:
+					a["reputation"] = float(rep[id])
+			trust_dirty = true
 		"run_end":
 			var why := str(p.get("reason", ""))
 			if why == "extinction":
@@ -956,7 +999,8 @@ func _reset(ev: Dictionary) -> void:
 	selected = ""
 	for a in p.get("agents", []):
 		agents[str(a["id"])] = {"info": a, "catches": {}, "promises": [], "memories": [], "last_decision": {},
-			"last_decision_label": "", "wealth": float(a.get("wealth", 0)), "incidents": 0}
+			"last_decision_label": "", "wealth": float(a.get("wealth", 0)), "incidents": 0,
+			"declared": {}, "reputation": 0.5, "trust_from": {}, "lies_found": 0}
 	world.reset_world(p.get("agents", []), float(run["capacity"]), float(p.get("season_days", 30.0)))
 	chart.reset()
 	_reset_kpis()
@@ -972,6 +1016,7 @@ func _reset(ev: Dictionary) -> void:
 	narration.append_text("[color=#8f97b2]À la fin de chaque saison, l'ancien raconte ici ce que la vallée a vécu.[/color]\n\n")
 	inspector.text = "Cliquez sur un pêcheur pour l'inspecter."
 	_render_rules()
+	_render_trust()
 
 
 # ------------------------------------------------------------------ fil des interactions
@@ -1016,13 +1061,51 @@ func _render_rules() -> void:
 	rules_view.text = s
 
 
+## Une jauge en texte : vingt espaces sur fond coloré (la police du projet n'a pas de caractère « bloc »), la part pleine
+## colorée selon le niveau de confiance.
+static func trust_bar(v: float) -> String:
+	var n := clampi(roundi(v * 20.0), 0, 20)
+	var col := "#58d08a" if v >= 0.6 else ("#e7c27a" if v >= 0.4 else ("#f39c4a" if v >= 0.25 else "#ff6a5c"))
+	var full := ("[bgcolor=%s]%s[/bgcolor]" % [col, " ".repeat(n)]) if n > 0 else ""
+	var empty := ("[bgcolor=#3a4058]%s[/bgcolor]" % " ".repeat(20 - n)) if n < 20 else ""
+	return "%s%s  [b]%d %%[/b]" % [full, empty, roundi(v * 100.0)]
+
+
+func _render_trust() -> void:
+	var s := "[color=#f3dca8][b]CONFIANCE[/b][/color] [color=#6f7896]· la confiance moyenne que les autres accordent à chacun[/color]\n"
+	s += "[color=#8f97b2][font_size=12]La vallée ne connaît que les déclarations faites à l'ancien ; les vraies prises, seuls vous et chaque pêcheur les connaissez.[/font_size][/color]\n\n"
+	var ids: Array = agents.keys().filter(func(k): return str(agents[k]["info"].get("role", "")) == "pecheur")
+	ids.sort_custom(func(x, y): return float(agents[x]["reputation"]) > float(agents[y]["reputation"]))
+	var head := "[color=#6f7896][font_size=11]%s[/font_size][/color]"
+	s += "[table=5][cell]%s[/cell][cell]%s[/cell][cell]%s[/cell][cell]%s[/cell][cell]%s[/cell]" % [head % "PÊCHEUR", head % "CONFIANCE",
+		head % "PÊCHÉ", head % "DÉCLARÉ", head % "MENSONGES"]
+	for id in ids:
+		var a: Dictionary = agents[id]
+		var landed_txt := "—"
+		var said_txt := "—"
+		var seasons: Array = a["catches"].keys()
+		if not seasons.is_empty():
+			seasons.sort_custom(func(x, y): return int(x) < int(y))
+			var k: String = seasons[-1]                  # la dernière saison où il a pêché
+			var landed := float(a["catches"][k])
+			landed_txt = "S%s  [b]%s t[/b]" % [k, _num(landed)]
+			if a["declared"].has(k):
+				var said := float(a["declared"][k])
+				said_txt = ("[color=#ff8a7e][b]%s t[/b] (ment)[/color]" % _num(said)) if landed - said > 0.05 else ("%s t" % _num(said))
+		var lies := int(a["lies_found"])
+		s += "[cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s[/cell]" % [_who(id), trust_bar(float(a["reputation"])),
+			landed_txt, said_txt, ("[color=#ff6a5c]%d[/color]" % lies) if lies > 0 else "—"]
+	s += "[/table]"
+	trust_view.text = s
+
+
 # ------------------------------------------------------------------ inspecteur (D2)
 func _select(id: String) -> void:
 	selected = id
 	world.selected = id
 	inspector_dirty = true
 	feed_dirty = feed_only_selected.button_pressed
-	tabs.current_tab = 1
+	tabs.current_tab = inspector.get_index()
 
 
 func _render_inspector() -> void:
@@ -1040,8 +1123,18 @@ func _render_inspector() -> void:
 			float(info.get("debt_payment", 0)), int(a["incidents"])]
 		var cs := PackedStringArray()
 		for k in a["catches"]:
-			cs.append("S%s %.1f t" % [k, float(a["catches"][k])])
+			var landed := float(a["catches"][k])
+			var said := float(a["declared"].get(k, landed))
+			cs.append("S%s %.1f t" % [k, landed] + (" [color=#ff8a7e](déclaré %.1f)[/color]" % said if landed - said > 0.05 else ""))
 		s += "Prises : %s\n" % (", ".join(cs) if not cs.is_empty() else "—")
+		var low := PackedStringArray()
+		var tf: Dictionary = a["trust_from"]
+		s += "Confiance des autres : %s\n" % trust_bar(float(a["reputation"]))
+		for o in tf:
+			if float(tf[o]) < 0.4:
+				low.append(_who(str(o)))
+		if not low.is_empty():
+			s += "Se méfient de lui : %s\n" % ", ".join(low)
 		var ps := PackedStringArray()
 		for pr in a["promises"]:
 			var res := "en attente"
@@ -1126,6 +1219,10 @@ func _process(delta: float) -> void:
 		if inspector_dirty and catching_up == 0:
 			inspector_dirty = false
 			_render_inspector()
+		if trust_dirty and catching_up == 0:
+			trust_dirty = false
+			_render_trust()
+			inspector_dirty = selected != ""
 		# Le moteur répète son état toutes les 2 s (y compris pendant qu'il charge un modèle) : muet depuis 8 s, il ne répond
 		# plus. On ne conclut jamais tant que des messages attendent d'être lus (à-coup d'affichage de Godot lui-même).
 		# En préparation, le moteur charge peut-être un modèle (de 20 s à plus d'une minute) : on lui laisse 150 s.

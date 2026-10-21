@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from . import prompts, routing
 from .llm import detect_drift, extract_json, to_number
 from .memory import MemoryStore
-from .policies import catch_rule, speak_rule
+from .policies import catch_rule, declare_rule, speak_rule
 from .profiles import Profile
 
 log = logging.getLogger("filets.agents")
@@ -32,6 +32,7 @@ class Agent:
     # ce que l'agent a constaté du lac, dans l'ordre : {season, phase, label, t, est, event_id}. C'est SON estimation (à l'œil,
     # donc bruitée) à chaque ouverture de pêche et à chaque veillée ; `event_id` est la décision qui l'a portée (traçabilité F6).
     stock_seen: list[dict] = field(default_factory=list)
+    declared: dict[int, float] = field(default_factory=dict)       # ce qu'il a déclaré à l'ancien, par saison
 
     @property
     def id(self) -> str:
@@ -133,12 +134,13 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
                            "quota": state["quota"]}}
     if p.kind == "rule":
         v, rule = catch_rule(agent.archetype, state)
-        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {rule}.", "rule": rule,
-                                             "value": v, "fallback": False, "model": None, "tier": None,
+        said, drule = declare_rule(agent.archetype, state, v)
+        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {rule} ; {drule}.", "rule": rule,
+                                             "value": v, "declared": said, "fallback": False, "model": None, "tier": None,
                                              "llm_call_id": None}, actor=agent.id)
         _note_observation(obs, dec)
         agent.last_decision = dec
-        return Outcome(v, {"prise": v}, dec)
+        return Outcome(v, {"prise": v, "declaration": said}, dec)
 
     brief = prompts.is_brief(world.cfg["llm"])
     system, why = routing.choose_system(obs, "catch") if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
@@ -165,13 +167,16 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
         fallback = True
         just = f"(repli) Règle appliquée : {rule}."
     v = round(v, 1)
+    # la déclaration à l'ancien : la vérité par défaut (réflexe, repli, champ absent) ; jamais plus que la prise
+    said = to_number(data.get("declaration")) if data and system == "S2" and not fallback else None
+    said = v if said is None else round(min(max(said, 0.0), v), 1)
     dec = world.events.emit("decision", {**common, "justification": just or "(sans justification)", "rule": rule,
-                                         "value": v, "fallback": fallback, "model": res.model, "tier": res.tier,
-                                         "llm_call_id": res.call_id, "out_of_role": flags.get("out_of_role", False)},
-                            actor=agent.id)
+                                         "value": v, "declared": said, "fallback": fallback, "model": res.model,
+                                         "tier": res.tier, "llm_call_id": res.call_id,
+                                         "out_of_role": flags.get("out_of_role", False)}, actor=agent.id)
     _note_observation(obs, dec)
     agent.last_decision = dec
-    return Outcome(v, {"prise": v}, dec)
+    return Outcome(v, {"prise": v, "declaration": said}, dec)
 
 
 async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outcome:

@@ -320,7 +320,59 @@ on pêche 4 à 10 t, l'écart entre ce qu'on dit et ce qu'on fait que le jeu ét
 arrêtée (« le lac est à sec »).
 
 Pour resserrer les comportements (l'un pêchait 0 t, l'autre 10 t au même moment), chaque pêcheur reçoit aussi un résumé de ce que les
-autres ont pris la saison dernière (« entre 2 et 6 t, 4,0 t pour le pêcheur du milieu »), et les règles adoptées servent de repère commun.
+autres ont déclaré la saison dernière (« entre 2 et 6 t, 4,0 t pour le pêcheur du milieu »), et les règles adoptées servent de repère commun.
+
+## Prises secrètes, déclarations et confiance
+
+**Seuls le pêcheur et le joueur connaissent la vraie prise.** En rentrant, chaque pêcheur **déclare** sa prise à l'ancien
+(événement `report` : `declared`, et `landed`, la vraie). Les autres ne connaissent que la déclaration : c'est elle qui figure dans
+leurs décisions, dans le récit de l'ancien et dans le jugement de la vallée. Une IA décide de sa déclaration dans le même appel que sa
+prise (champ `declaration`, aucun token de plus) ; un réflexe déclare la vérité ; parmi les agents à règles, le taiseux déclare la
+règle quand il pêche au-delà (sauf si l'un de ses mensonges vient d'éclater). `scenario.catches_visible` dit si les déclarations sont
+lues à toute la vallée ou au seul hameau (menu : « Les déclarations à l'ancien sont lues à toute la vallée »).
+
+**Un mensonge finit souvent par se savoir.** Avant chaque veillée, chaque mensonge encore caché éclate avec la probabilité
+`base + par_saison × son âge + par_tonne × tonnes cachées` (`scenario.lie_discovery` : 35 %, +20 % par saison, +3 % par tonne,
+au plus 95 % ; environ 90 % au bout de trois veillées). Un voisin qui n'a pas menti le dénonce (de préférence du même hameau), sinon
+l'ancien le découvre en faisant ses comptes au marché (`lie_discovered`). Chacun s'en souvient, et la vraie prise du menteur remplace
+alors sa déclaration dans ce que tous savent.
+
+**La confiance.** Chaque agent (pêcheurs et ancien) a une confiance envers chaque pêcheur, de 0 à 1, à 0,5 au départ. Elle ne
+bouge que sur ce qui est public, et ceux qui respectent la règle sont les plus durs avec ceux qui la dépassent :
+
+| ce qui arrive | qui change d'avis | effet |
+|---|---|---|
+| déclaration au-delà de la règle | ceux qui respectent la règle (et l'ancien) / ceux qui la dépassent aussi | −0,10 / −0,03 |
+| déclaration dans la règle | ceux qui respectent la règle | +0,03 |
+| mensonge découvert | tout le monde | −0,30 |
+| a dénoncé un menteur | ceux qui n'ont pas menti | +0,05 |
+| promesse tenue / trahie (d'après ce qu'on sait) | tout le monde | +0,05 / −0,15 |
+| accusé avec une raison visible / accusation sans raison visible | les autres présents | −0,05 pour l'accusé / pour l'accusateur |
+| a soutenu la règle adoptée | les autres soutiens | +0,02 |
+
+Chaque changement est un événement `trust` (la confiance de chaque observateur, et la **réputation** : la moyenne de la confiance
+des autres). Les IA la lisent dans leur **carnet** (« Ta confiance envers les autres : Loïc faible, Théo forte ; les autres,
+moyenne »), avec leurs vraies prises et ce qu'elles en ont déclaré : un pêcheur sait s'il a menti, et si son mensonge a éclaté.
+
+Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), sa dernière prise et sa déclaration (en rouge si
+elle ment) et ses mensonges découverts ; le fil écrit `MENSONGE` (vu de vous seul) et `MENSONGE DÉCOUVERT` ; l'onglet *Agent*
+liste ses prises (« S2 5.5 t (déclaré 4.0) ») et qui se méfie de lui.
+
+## Moins de tokens, des agents plus cohérents
+
+La parole coûtait 80 % des tokens d'une partie (répliques d'environ 2 000 tokens, chaque pêcheur reparlant à chaque tour). En
+réflexion `rapide` ou `adaptive` :
+
+* **un contexte de veillée** (`prompts.veillee_block`) : le lac en une ligne, les règles, les déclarations, le carnet, deux souvenirs ;
+  sans les archives du corpus ni le détail des finances et du lac saison par saison ;
+* **dès le 2e tour, ne reprend la parole que celui qui a une raison** (`scenario.quiet_listeners`) : on s'adresse à lui, on le nomme
+  ou l'accuse, ou une autre proposition concurrence la sienne. Les autres écoutent, et leur position se recueille au bulletin de vote
+  (quelques tokens) ;
+* **un carnet** dans chaque décision, court et toujours là : vraies prises et déclarations, engagements, confiance envers les autres.
+  C'est ce qui garde un personnage cohérent d'une décision à l'autre, là où des souvenirs retrouvés au hasard ne le garantissent pas.
+
+Mesuré avec le faux LLM (8 pêcheurs à IA, réflexion adaptative, 5 saisons, tokens estimés) : 165 000 → 86 000 tokens (−48 %) ; une
+réplique 1 456 → 1 016 tokens, 90 → 47 répliques ; une décision de pêche réfléchie coûte 13 % de plus (carnet, déclaration).
 
 ## Les annonces du joueur ont un effet
 
@@ -350,7 +402,8 @@ et ses effets sont des événements séparés : `proposal`, `support`, `promise`
 * onglet **Agent** : profil, modèle, avoir, prises, promesses (annoncé vs réel), dernière décision
   avec son horizon d'information, sa justification ou la règle appliquée, et **tout ce qui a été
   retrouvé** pour décider (engagements épinglés, souvenirs, archives, rumeurs), puis la mémoire complète ;
-* onglet **Règles** : propositions sur la table et historique des règles adoptées.
+* onglet **Règles** : propositions sur la table et historique des règles adoptées ;
+* onglet **Confiance** : la jauge de confiance de chaque pêcheur, sa vraie prise et sa déclaration, ses mensonges découverts.
 
 ## La scène Godot
 

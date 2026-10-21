@@ -92,10 +92,34 @@ func _initialize() -> void:
 			"le récit de la saison %d est dans l'onglet" % int(n["season"]))
 	check(joined.count("RÉCIT") == narrations.size(), "une ligne « RÉCIT » par récit dans le fil (%d)" % narrations.size())
 
+	# prises secrètes : un mensonge se lit dans le fil (seuls le menteur et le joueur le savent), sa découverte aussi ;
+	# la jauge de confiance de chacun suit la confiance publiée par le moteur
+	var lies := 0
+	var found := 0
+	var reputations := {}
+	for ev in events:
+		var p: Dictionary = ev["payload"]
+		if ev["type"] == "report" and float(p["landed"]) - float(p["declared"]) > 0.05:
+			lies += 1
+		elif ev["type"] == "lie_discovered":
+			found += 1
+		elif ev["type"] == "trust":
+			reputations[str(p["subject"])] = float(p["reputation"])
+	check(joined.count("MENSONGE DÉCOUVERT") == found, "une ligne par mensonge découvert (%d)" % found)
+	check(joined.count("MENSONGE") - found == lies, "une ligne « MENSONGE » par déclaration mensongère (%d)" % lies)
+	check(not reputations.is_empty(), "le run de test fait bouger la confiance")
+	check(m.tabs.get_tab_title(2) == "Confiance", "l'onglet « Confiance » suit le récit : " + m.tabs.get_tab_title(2))
+	m._render_trust()
+	var gauges: String = m.trust_view.get_parsed_text()
+	for id in reputations:
+		check(is_equal_approx(float(m.agents[id]["reputation"]), reputations[id]), "la jauge de %s suit la confiance publiée" % id)
+		check(("%d %%" % roundi(reputations[id] * 100.0)) in gauges, "la jauge de %s est affichée" % id)
+
 	# l'inspecteur montre la rumeur parmi ce qui a été retrouvé pour décider
 	check(rumor_decisions > 0, "des décisions ont retrouvé la rumeur (%d)" % rumor_decisions)
 	if with_rumor != "":
 		m._select(with_rumor)
+		check(m.tabs.current_tab == m.inspector.get_index(), "choisir un pêcheur ouvre l'onglet « Agent »")
 		m._render_inspector()
 		var seen: String = m.inspector.get_parsed_text()
 		check("[rumeur]" in seen and announced.substr(0, 20) in seen, "l'inspecteur affiche « [rumeur] » et son texte")

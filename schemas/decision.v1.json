@@ -107,6 +107,12 @@
         "S1",
         "S2"
       ]
+    },
+    "declared": {
+      "type": [
+        "number",
+        "null"
+      ]
     }
   },
   "required": [

@@ -58,8 +58,8 @@ def test_the_brief_context_is_trimmed_but_keeps_what_decides():
     obs = long_obs()
     brief, full = context_block(obs, brief=True), context_block(obs, brief=False)
     assert len(brief) < len(full)
-    # tronqué : les 8 dernières prises connues, 4 souvenirs, 2 documents
-    assert brief.count("a pêché") == 8 and full.count("a pêché") == 24
+    # tronqué : les déclarations des 3 dernières saisons (une ligne chacune), 4 souvenirs, 2 documents
+    assert brief.count("a pêché") == 3 and full.count("a pêché") == 24
     assert brief.count("Souvenir numéro") == 4 and full.count("Souvenir numéro") == 6
     assert brief.count("Archive") == 2 and full.count("Archive") == 3
     # intact : le stock, les finances, les règles, les engagements

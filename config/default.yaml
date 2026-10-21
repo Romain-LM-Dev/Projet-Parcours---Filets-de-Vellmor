@@ -35,8 +35,15 @@ economy:
 
 scenario:
   communication: valley       # valley | hamlet | none
-  catches_visible: true       # les prises de chacun sont-elles connues de toute la vallée ?
+  # Chaque pêcheur déclare sa prise à l'ancien en rentrant, et peut mentir : seuls lui et le joueur connaissent la vraie.
+  catches_visible: true       # les déclarations sont-elles connues de toute la vallée (sinon : du seul hameau) ?
+  # Avant chaque veillée, un mensonge encore caché éclate (un voisin honnête l'a vu, ou l'ancien fait ses comptes au marché)
+  # avec la probabilité base + par_saison × son âge en saisons + par_tonne × tonnes cachées, au plus max.
+  lie_discovery: {base: 0.35, per_season: 0.2, per_tonne: 0.03, max: 0.95}
   assembly_rounds: 2          # tours de parole par veillée
+  # dès le 2e tour, ne reprend la parole que celui qui a une raison (on lui parle, on le nomme, on conteste sa proposition) ;
+  # les autres écoutent, et leur position se recueille au bulletin de vote (bien moins de tokens, moins de redites)
+  quiet_listeners: true
   proposal_merge_tolerance: 0.75   # deux quotas proposés à moins de 0,75 t l'un de l'autre sont la même proposition
   vote_tolerance: 1.5         # au vote de clôture, on vote pour la proposition la plus proche de ce qu'on a dit, à 1,5 t près
   promise_tolerance: 0.5      # tonnes tolérées au-dessus d'une promesse

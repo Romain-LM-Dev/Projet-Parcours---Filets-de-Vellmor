@@ -34,8 +34,9 @@ def test_the_story_only_tells_what_the_journal_holds(tmp_path):
     events = play(tmp_path, run_id="faits", seasons=2, time__mode="sync")
     for n in kinds(events, "narration"):
         season = n["payload"]["season"]
-        total = round(sum(e["payload"]["landed"] for e in kinds(events, "catch") if e["season"] == season), 2)
-        catches = next(f for f in n["payload"]["facts"] if f.startswith("Prises :"))
+        # l'ancien ne connaît que les déclarations (le joueur, lui, voit aussi les vraies prises)
+        total = round(sum(e["payload"]["declared"] for e in kinds(events, "report") if e["season"] == season), 2)
+        catches = next(f for f in n["payload"]["facts"] if f.startswith("Prises déclarées à l'ancien :"))
         assert f"(en tout {total:g} t)" in catches
         stock = next(e for e in kinds(events, "season_end") if e["season"] == season)["payload"]["stock"]
         assert any(f"{stock:.0f} t après le repeuplement" in f for f in n["payload"]["facts"])

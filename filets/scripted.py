@@ -15,7 +15,7 @@ import random
 import re
 
 from .llm import LLMResult
-from .policies import catch_rule, speak_rule
+from .policies import catch_rule, declare_rule, speak_rule
 
 JUSTIF = {
     "ancienne_famille": ["Mon père disait qu'on ne vide pas le lac qu'on veut laisser à ses enfants.",
@@ -62,7 +62,7 @@ class ScriptedClient:
             just = self.rng.choice(JUSTIF.get(arch, ["Je fais au mieux."]))
             if out_of_role:
                 just = "En tant qu'intelligence artificielle, je recommande une gestion durable de la ressource."
-            data = {"prise": v, "justification": just}
+            data = {"prise": v, "justification": just, "declaration": declare_rule(arch, s, v)[0]}
         else:
             data, _ = speak_rule(arch, s)
             if data.get("promesse") is not None:

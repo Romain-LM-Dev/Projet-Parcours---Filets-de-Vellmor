@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "subject": {
+      "type": "string"
+    },
+    "cause": {
+      "type": "string"
+    },
+    "values": {
+      "type": "object"
+    },
+    "reputation": {
+      "type": "number"
+    },
+    "source_event_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "subject",
+    "cause",
+    "values",
+    "reputation"
+  ],
+  "additionalProperties": false
+}

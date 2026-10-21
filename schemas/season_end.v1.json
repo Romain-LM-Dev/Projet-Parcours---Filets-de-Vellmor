@@ -12,6 +12,12 @@
     },
     "norms_in_force": {
       "type": "array"
+    },
+    "declared": {
+      "type": "object"
+    },
+    "reputation": {
+      "type": "object"
     }
   },
   "required": [

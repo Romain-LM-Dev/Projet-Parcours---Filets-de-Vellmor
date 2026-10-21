@@ -23,8 +23,9 @@ MSGS = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
 # ---------------------------------------------------------------- le schéma
 def test_catch_schema_puts_the_reasoning_before_the_number():
     schema = answer_schema("catch", brief=True)
-    assert list(schema["properties"]) == ["justification", "prise"]
-    assert schema["required"] == ["justification", "prise"] and schema["additionalProperties"] is False
+    # puis ce qu'il déclarera à l'ancien, une fois sa prise décidée
+    assert list(schema["properties"]) == ["justification", "prise", "declaration"]
+    assert schema["required"] == ["justification", "prise", "declaration"] and schema["additionalProperties"] is False
     assert schema["properties"]["justification"]["maxLength"] == 160
     assert answer_schema("catch", brief=False)["properties"]["justification"]["maxLength"] == 400
 
@@ -65,7 +66,7 @@ def test_a_schema_capable_provider_gets_the_schema():
     assert res.status == "ok"
     fmt = request_formats(rec)[0]
     assert fmt["type"] == "json_schema" and fmt["json_schema"]["name"] == "catch" and fmt["json_schema"]["strict"] is True
-    assert list(fmt["json_schema"]["schema"]["properties"]) == ["justification", "prise"]
+    assert list(fmt["json_schema"]["schema"]["properties"]) == ["justification", "prise", "declaration"]
 
 
 def test_other_providers_keep_the_free_json_mode():
@@ -107,7 +108,7 @@ def test_every_ai_decision_of_a_game_asks_for_its_schema(tmp_path):
         fmt = r["response_format"]
         assert fmt["type"] == "json_schema"
         props = list(fmt["json_schema"]["schema"]["properties"])
-        assert props == (["justification", "prise"] if '"prise"' in r["user"] else
+        assert props == (["justification", "prise", "declaration"] if '"prise"' in r["user"] else
                          ["message", "destinataire", "proposition_quota", "soutien", "promesse", "accuse"]), props
     decisions = [e for e in events if e["type"] == "decision" and e["payload"]["agent_kind"] == "llm"]
     assert decisions and not any(e["payload"]["fallback"] for e in decisions)

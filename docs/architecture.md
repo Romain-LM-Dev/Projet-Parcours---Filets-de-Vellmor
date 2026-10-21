@@ -73,7 +73,7 @@ Ce qui réduit l'attente sans fausser le monde :
 
 ### Ce qui circule : des événements JSON
 
-Tout fait du monde est un événement avec la même enveloppe (`event_id`, `run_id`, `seq`, `sim_time`, `processed_at`, `actor`, `payload`) et un `payload` décrit par un schéma JSON (`schemas/*.json`, exportés par `python -m filets schemas`). Les natures : `decision`, `utterance`, `proposal`, `support`, `promise`, `accusation`, `norm_adopted`, `catch`, `sale`, `lake_update`, `llm_call`, `incident`, `injection`, `memory_write`, `narration` (le récit de la saison par l'ancien)…
+Tout fait du monde est un événement avec la même enveloppe (`event_id`, `run_id`, `seq`, `sim_time`, `processed_at`, `actor`, `payload`) et un `payload` décrit par un schéma JSON (`schemas/*.json`, exportés par `python -m filets schemas`). Les natures : `decision`, `utterance`, `proposal`, `support`, `promise`, `accusation`, `norm_adopted`, `catch`, `sale`, `lake_update`, `llm_call`, `incident`, `injection`, `memory_write`, `narration` (le récit de la saison par l'ancien), `report` (la prise déclarée à l'ancien, et la vraie), `lie_discovered`, `trust` (la confiance des autres envers un pêcheur)…
 
 ### La veillée
 
@@ -84,10 +84,13 @@ Chaque tour de parole est un événement `utterance` (qui parle, à qui, ce qu'i
 * le **vote de clôture** : chaque pêcheur à IA qui n'a soutenu aucune proposition remplit un **bulletin** (une question à choix au modèle de décision, ou à défaut au petit modèle ; réponse : l'identifiant d'une proposition ou « aucune ») ; à défaut de réponse, il vote pour la proposition la plus proche de ce qu'il a dit vouloir (à 1,5 t près), ou s'abstient s'il n'a rien dit de chiffré ;
 * une proposition soutenue par **au moins la moitié des pêcheurs présents** devient une **règle** (`norm_adopted`) pour la saison suivante.
 
+À l'ouverture de la veillée, les mensonges encore cachés peuvent éclater (`lie_discovered`), puis l'ancien lit les déclarations de la saison : la confiance de chacun bouge (`trust`). Au premier tour, tout le monde parle ; dès le deuxième (`scenario.quiet_listeners`), seuls ceux qui ont une raison apparue depuis leur dernière parole (on s'adresse à eux, on les nomme ou les accuse, une proposition concurrence la leur) reprennent la parole, les autres votent au bulletin.
+
 ### Mémoire personnelle et collective
 
 * **Personnelle** : chaque agent a son flux de souvenirs datés. À chaque décision, il retrouve les plus utiles par **récence, importance et pertinence**. La pertinence est mesurée par BM25 sur les mots (par défaut), ou par la **similarité de sens** des vecteurs dans pgvector (`rag.backend: pgvector`, § 6). Ses **engagements** (une promesse faite, une accusation reçue) sont épinglés : ils reviennent à chaque décision tant qu'ils sont d'actualité, même s'il compte les trahir. Il garde aussi la suite de ses propres constats du lac (`stock_seen`) pour en voir la tendance.
-* **Collective** : ce que tout le monde peut savoir. Les règles adoptées, les prises que le marché rend visibles, ce qui s'est dit à la veillée, les rumeurs du joueur (présentes dans chaque décision, deux saisons), et un **corpus** de récits et de comptes (`corpus/`, retrouvé par pertinence). Avec pgvector, les souvenirs de tous les agents d'une partie forment une mémoire collective interrogeable par le sens : `GET /api/runs/{id}/memories?q=…&agent=F01&until=12.5`.
+* **Le carnet** : ce que l'agent est seul à savoir (ses vraies prises et ce qu'il en a déclaré, si son mensonge a éclaté), ses engagements et sa confiance envers les autres, en quelques lignes, dans chaque décision.
+* **Collective** : ce que tout le monde peut savoir. Les règles adoptées, les prises **déclarées** à l'ancien (et la vérité des mensonges découverts), ce qui s'est dit à la veillée, les rumeurs du joueur (présentes dans chaque décision, deux saisons), et un **corpus** de récits et de comptes (`corpus/`, retrouvé par pertinence). Avec pgvector, les souvenirs de tous les agents d'une partie forment une mémoire collective interrogeable par le sens : `GET /api/runs/{id}/memories?q=…&agent=F01&until=12.5`.
 * Rien n'est retrouvé avant son instant : un agent n'agit jamais sur une information qu'il n'avait pas encore (C6, vérifié). Avec pgvector, ce filtre (et celui du hameau pour le corpus) est dans la requête SQL elle-même.
 
 ### Pas de perte d'information
@@ -107,7 +110,7 @@ Chaque appel à un modèle coûte du temps, de l'énergie, et des tokens factur�
 | | Système 1 — réflexe | Système 2 — réflexion |
 |---|---|---|
 | Quand | prise de **routine** : lac à plus de 70 % et qui ne baisse pas, un engagement ou une règle à suivre, aucune rumeur, finances correctes ; **bulletins de vote** | tout le reste : première saison, lac qui baisse ou sous 70 %, rumeur, finances tendues, rien pour guider ; **toutes les paroles de la veillée** |
-| Contexte | une dizaine de lignes (≈ 150 tokens) | contexte complet allégé (≈ 1 500 à 2 000 tokens) |
+| Contexte | une dizaine de lignes (≈ 150 tokens) | contexte allégé (≈ 1 500 tokens pour une prise ; pour une réplique, un contexte de veillée environ un tiers plus court, sans archives) |
 | Réponse | un niveau ou une option : `{"prise": 3.3}`, `{"vote": "P1"}` | la justification (ce que l'agent constate du lac), puis le nombre |
 | Modèle | le **modèle de décision open** (tev1 0,8B) s'il y en a un, sinon le petit modèle de langage | celui de l'agent (Qwen 3B ou 1,5B) |
 

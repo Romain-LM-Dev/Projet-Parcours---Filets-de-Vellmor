@@ -316,7 +316,8 @@ func _build_left(body: Control) -> void:
 	spin_rounds.tooltip_text = "Combien de fois chacun peut prendre la parole pendant une veillée"
 	_row(col, "Tours de parole", spin_rounds)
 	chk_visible = CheckButton.new()
-	chk_visible.text = "Les prises sont connues de tous"
+	chk_visible.text = "Les déclarations à l'ancien sont lues à toute la vallée"
+	chk_visible.tooltip_text = "Chaque pêcheur déclare sa prise à l'ancien, et peut mentir. Coché : toute la vallée connaît les déclarations ; sinon, le seul hameau. Les vraies prises, seuls vous et chaque pêcheur les connaissez."
 	chk_visible.button_pressed = true
 	chk_visible.focus_mode = Control.FOCUS_NONE
 	col.add_child(chk_visible)

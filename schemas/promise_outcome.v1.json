@@ -18,6 +18,12 @@
     },
     "season": {
       "type": "integer"
+    },
+    "declared": {
+      "type": "number"
+    },
+    "known_kept": {
+      "type": "boolean"
     }
   },
   "required": [

@@ -157,7 +157,7 @@ def test_openai_compatible_client_with_retry(tmp_path):
                 self.end_headers()
                 return
             user = body["messages"][-1]["content"]
-            content = (json.dumps({"prise": 3.5, "justification": "Je reste raisonnable."}) if "prise" in user
+            content = (json.dumps({"prise": 3.5, "justification": "Je reste raisonnable."}) if '"prise"' in user
                        else json.dumps({"message": "Je propose trois tonnes.", "destinataire": "tous",
                                         "proposition_quota": 3, "soutien": None, "promesse": 3, "accuse": None}))
             out = json.dumps({"choices": [{"message": {"content": content}}],

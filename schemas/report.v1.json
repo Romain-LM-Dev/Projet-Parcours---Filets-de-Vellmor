@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "hamlet": {
+      "type": "string"
+    },
+    "declared": {
+      "type": "number"
+    },
+    "landed": {
+      "type": "number"
+    },
+    "catch_event_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent",
+    "hamlet",
+    "declared",
+    "landed",
+    "catch_event_id"
+  ],
+  "additionalProperties": false
+}

@@ -67,11 +67,22 @@ PAYLOADS: dict[str, dict] = {
          "fallback": BOOL},
         {"model": STR_OR_NULL, "tier": STR_OR_NULL, "rule": STR_OR_NULL, "llm_call_id": STR_OR_NULL,
          "value": {"type": ["number", "null"]}, "observed": {"type": "object"}, "out_of_role": BOOL,
-         "system": {"enum": ["S1", "S2"]}},
+         "system": {"enum": ["S1", "S2"]},
+         "declared": NUM_OR_NULL},      # prise : ce que le pêcheur compte déclarer à l'ancien
     ),
     "catch": obj({"agent": STR, "hamlet": STR, "requested": NUM, "landed": NUM, "stock_observed": NUM,
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
                   "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM}),
+    # ce que le pêcheur déclare à l'ancien en rentrant : les autres ne connaissent que `declared` ; la vraie prise (`landed`)
+    # n'est connue que de lui et du joueur
+    "report": obj({"agent": STR, "hamlet": STR, "declared": NUM, "landed": NUM, "catch_event_id": STR}),
+    # un mensonge éclate : dénoncé par un voisin honnête (`temoin`, `by`) ou découvert par l'ancien au marché (`marche`)
+    "lie_discovered": obj({"agent": STR, "lie_season": INT, "declared": NUM, "landed": NUM,
+                           "how": {"enum": ["temoin", "marche"]}, "report_event_id": STR}, {"by": STR_OR_NULL}),
+    # la confiance que les autres (`values` : observateur → 0..1) accordent à `subject` vient de changer ; `reputation` :
+    # la moyenne de la confiance de tous les autres envers lui
+    "trust": obj({"subject": STR, "cause": STR, "values": {"type": "object"}, "reputation": NUM},
+                 {"source_event_id": STR_OR_NULL}),
     "sale": obj({"agent": STR, "hamlet": STR, "tonnes": NUM, "price": NUM, "income": NUM, "wealth": NUM}),
     "lake_update": obj({"stock": NUM, "capacity": NUM, "cause": {"enum": ["init", "catch", "regrowth", "injection"]}},
                        {"delta": NUM}),
@@ -83,15 +94,17 @@ PAYLOADS: dict[str, dict] = {
     "proposal": obj({"proposal_id": STR, "author": STR, "quota": NUM, "scope": STR, "utterance_id": STR}),
     "support": obj({"agent": STR, "proposal_id": STR, "utterance_id": STR}),
     "promise": obj({"agent": STR, "amount": NUM, "for_season": INT, "utterance_id": STR}),
+    # `kept` : d'après la vraie prise ; `known_kept` : d'après ce que la vallée en sait (déclaration, ou mensonge découvert)
     "promise_outcome": obj({"agent": STR, "promise_event_id": STR, "promised": NUM, "landed": NUM, "kept": BOOL,
-                            "season": INT}),
+                            "season": INT}, {"declared": NUM, "known_kept": BOOL}),
     "accusation": obj({"accuser": STR, "accused": STR, "utterance_id": STR}),
     "norm_adopted": obj({"proposal_id": STR, "quota": NUM, "scope": STR, "effective_season": INT,
                          "supporters": IDS, "participants": IDS, "author": STR}),
     "memory_write": obj({"agent": STR, "memory_id": STR, "text": STR, "kind": STR, "importance": NUM,
                          "pinned": BOOL}, {"source_event_id": STR_OR_NULL}),
     "season_end": obj({"stock": NUM, "catches": {"type": "object"}, "wealth": {"type": "object"},
-                       "norms_in_force": {"type": "array"}}),
+                       "norms_in_force": {"type": "array"}},
+                      {"declared": {"type": "object"}, "reputation": {"type": "object"}}),
     "incident": obj({"agent": STR, "incident_type": {"enum": [
         "out_of_role", "unparseable", "no_response", "quota", "invalid_value", "assistant_posture",
         "missed_window", "schema_violation", "temporal_violation"]}, "detail": STR, "handled_by": STR},
