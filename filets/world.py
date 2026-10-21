@@ -61,10 +61,11 @@ log = logging.getLogger("filets.world")
 # qui respectent la règle sont les plus durs avec ceux qui la dépassent.
 TRUST_START = 0.5
 TRUST = {
-    "over_rule": -0.10,         # a déclaré plus que la règle : aux yeux de ceux qui la respectent (et de l'ancien)
-    "over_rule_soft": -0.03,    # … aux yeux de ceux qui la dépassent aussi
+    # a déclaré plus que la règle (il l'avoue) : aux yeux de ceux qui la respectent (et de l'ancien), de −0,05 à peine
+    # au-dessus jusqu'à −0,20 au double de la règle ou plus ; aux yeux de ceux qui la dépassent aussi, moitié moins
+    "over_rule": -0.05,
     "kept_rule": 0.03,          # a déclaré une prise dans la règle : aux yeux de ceux qui la respectent
-    "lie": -0.30,               # mensonge découvert : aux yeux de tous
+    "lie": -0.35,               # mensonge établi : aux yeux de tous ; toujours plus cher qu'un dépassement avoué
     "denounced": 0.05,          # a dénoncé un menteur : aux yeux de ceux qui n'ont pas menti
     "promise_kept": 0.05,       # promesse tenue, d'après ce que la vallée en sait
     "promise_broken": -0.15,
@@ -219,6 +220,7 @@ class World:
         self.obs_rng = random.Random(seed + 99)
         self.assemblies: list[Assembly] = []
         self.rumors: list[dict] = []         # annonces diffusées par le joueur : {text, season, t, event_id}
+        self.waiting_note: str | None = None  # « le monde attend N IA » (asynchrone), repris dans l'état du moteur
         # fournisseurs d'IA réellement utilisés par la partie (pour que l'interface adapte ses conseils)
         self.ai_providers = sorted({cfg["llm"]["tiers"][a.profile.tier]["provider"] for a in self.agents.values()
                                     if a.profile.kind == "llm" and a.profile.tier})
@@ -594,16 +596,24 @@ class World:
             norm, rep = self.applicable_norm(a, season, now), self.reports.get((a.id, season))
             if norm is None or rep is None:
                 continue
-            over = self.known_catch(a.id, season, now) > norm.quota + tol
+            known = self.known_catch(a.id, season, now)
+            over = known > norm.quota + tol
             deltas = {}
             for o in self.agents.values():
                 if o.id == a.id or stance[o.id] is None or not self.can_see(o, a):
                     continue
                 if over:
-                    deltas[o.id] = TRUST["over_rule"] if stance[o.id] else TRUST["over_rule_soft"]
+                    deltas[o.id] = self.over_rule_penalty(known, norm.quota, stance[o.id])
                 elif stance[o.id]:
                     deltas[o.id] = TRUST["kept_rule"]
             self.shift_trust(a.id, "dépasse la règle" if over else "respecte la règle", deltas, rep["event_id"])
+
+    @staticmethod
+    def over_rule_penalty(declared: float, quota: float, follows: bool) -> float:
+        """Ce qu'un dépassement avoué coûte aux yeux d'un observateur : de −0,05 à peine au-dessus de la règle jusqu'à −0,20
+        au double ou plus pour qui la respecte ; moitié moins pour qui la dépasse aussi. Toujours moins qu'un mensonge établi."""
+        hit = TRUST["over_rule"] * (1 + 3 * min(1.0, (declared - quota) / max(quota, 0.1)))
+        return round(hit if follows else hit / 2, 3)          # au millième, comme la confiance elle-même
 
     def known_catches(self, agent: Agent, horizon: float, season: int) -> tuple[list[str], list[str], dict]:
         """Les déclarations des autres que l'agent connaît (une ligne par saison, les trois dernières), et la vérité de ceux dont
@@ -632,6 +642,10 @@ class World:
         """Ce que l'agent est seul à savoir de ses trois dernières prises : la vraie, ce qu'il en a déclaré, et si son mensonge a
         éclaté. Sans cela, un pêcheur qui a menti l'oublie et se défend mal (ou se dénonce lui-même)."""
         honest, out = [], []
+        if agent.is_fisher:      # ce que la vallée pense de lui : de quoi peser un dépassement, un mensonge
+            rep = self.reputation(agent.id)
+            out.append(f"ta réputation dans la vallée : {prompts.trust_word(rep)} ({100 * rep:.0f} %) ; sous "
+                       f"{100 * float(self.scn.get('ban_below', 0.05)):.0f} %, elle t'interdirait de pêcher.")
         if agent.id in self.banned:
             out.append(f"la vallée t'a interdit de pêche (depuis la saison {self.banned[agent.id]}) tant que tu n'as pas "
                        "regagné sa confiance : ta seule prise possible est en cachette.")
@@ -980,6 +994,7 @@ class World:
             "fast": self.clock.fast, "paused": ctl.paused, "season": self.season, "seasons": int(self.cfg["run"]["seasons"]),
             "sim_label": self.clock.label(), "end_reason": None, "error": None, "controls": True, "lobby": self.lobby,
             "ai": self.ai_providers, "advised_speed": self.advised_speed,
+            **({"detail": self.waiting_note} if self.waiting_note else {}),
             **extra,
         }
 
@@ -1585,9 +1600,14 @@ class AsyncRunner:
             while True:
                 if await w.ctl.checkpoint():   # reprise après une pause : on ne rattrape pas le temps de la pause
                     last = time.monotonic()
+                waiting = 0
                 while self.heap and self.heap[0][0] <= self.c.now() + 1e-9:
+                    waiting = self.waiting_for(self.heap[0][2])
+                    if waiting:                    # une fenêtre se ferme : on attend ceux qui réfléchissent encore
+                        break
                     _, _, fn, args = heapq.heappop(self.heap)
                     fn(*args)
+                self.show_waiting(waiting)
                 for _ in range(3):                # laisse les tâches réveillées avancer jusqu'à leur appel LLM
                     await asyncio.sleep(0)
                 if self.done and not self.tasks:
@@ -1596,7 +1616,7 @@ class AsyncRunner:
                     break
                 now_wall = time.monotonic()
                 dt, last = now_wall - last, now_wall
-                if self.done:                      # calendrier terminé : on laisse finir les tâches sans avancer le monde
+                if self.done or waiting:           # calendrier terminé, ou fenêtre retenue : le monde n'avance pas
                     await asyncio.sleep(self.TICK)
                     continue
                 # tant qu'un agent réfléchit (recherche dans sa mémoire comprise, avant même son appel LLM), le temps simulé
@@ -1609,6 +1629,26 @@ class AsyncRunner:
                 t.cancel()
             if self.tasks:
                 await asyncio.gather(*self.tasks, return_exceptions=True)
+
+    def waiting_for(self, fn) -> int:
+        """Combien d'IA réfléchissent encore à la fermeture que `fn` déclencherait (0 : rien à attendre). Avec
+        `time.wait_for_ai`, le monde les attend, temps suspendu, plutôt que de leur faire rater leur tour : la partie
+        ralentit avec une IA lente, mais aucune sortie, réplique ni bulletin n'est perdu."""
+        if not self.w.T.get("wait_for_ai", True):
+            return 0
+        if fn == self.fishing_close:
+            return sum(1 for kind, _ in self.thinking if kind == "fish")
+        if fn == self.assembly_close:
+            return sum(1 for kind, _ in self.thinking if kind == "talk") + \
+                sum(1 for t in self.by_kind["vote"].values() if not t.done())
+        return 0
+
+    def show_waiting(self, n: int):
+        """Dit au joueur (état du moteur) que le monde attend des IA, et combien ; à chaque changement seulement."""
+        note = f"le monde attend {n} IA qui réfléchi{'ssent' if n > 1 else 't'} encore" if n else None
+        if note != self.w.waiting_note:
+            self.w.waiting_note = note
+            self.w.publish_status()
 
     # --- calendrier
     def season_start(self, season: int):

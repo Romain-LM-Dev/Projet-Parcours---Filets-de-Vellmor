@@ -644,6 +644,8 @@ func _update_transport() -> void:
 	_update_slow_hint(live, fast, speed, pend if pend != "" else cur)
 	if live:
 		lbl_progress.text = "Saison %d / %d  ·  %s" % [int(engine.get("season", 0)), int(engine.get("seasons", 0)), str(engine.get("sim_label", ""))]
+		if engine.get("detail") != null:        # asynchrone : le temps est suspendu, le monde attend des IA
+			lbl_progress.text += "  ·  " + str(engine.get("detail"))
 	elif st == "starting":
 		lbl_progress.text = "Préparation…" if engine.get("detail") == null else str(engine.get("detail"))
 	else:

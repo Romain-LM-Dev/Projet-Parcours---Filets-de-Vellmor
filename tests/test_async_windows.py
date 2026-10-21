@@ -1,4 +1,5 @@
-"""Mode asynchrone : quand une fenêtre se ferme (pêche, veillée), ceux qui réfléchissent encore ont raté leur tour.
+"""Mode asynchrone. Par défaut (`time.wait_for_ai`), une fenêtre (pêche, veillée) ne se ferme pas tant qu'une IA réfléchit :
+le temps du monde est suspendu jusqu'à sa réponse. Sans cela, ceux qui réfléchissent encore à la fermeture ont raté leur tour.
 
 On le constate à l'instant de la fermeture et on abandonne leur appel. Avant, on attendait que chaque réponse arrive,
 trop tard pour servir : avec un modèle lent, la fin de chaque saison durait des minutes, pour rien.
@@ -14,6 +15,8 @@ from helpers import make_world, read_events
 
 # 300 jours simulés par seconde réelle quand une IA réfléchit : une réponse d'une seconde arrive des mois trop tard
 FAST_WORLD = dict(time__fast=False, time__sim_hours_per_second=7200)
+# sans attendre les IA lentes (`time.wait_for_ai: false`) : une fenêtre se ferme à son heure, quoi qu'il arrive
+NO_WAIT = dict(FAST_WORLD, time__wait_for_ai=False)
 
 
 def play(world):
@@ -28,7 +31,7 @@ def kinds(events, kind):
 
 def test_slow_models_lose_their_turn_and_the_season_does_not_wait_for_them(tmp_path):
     # latences de 5 à 20 s (faux LLM étiré) : bien au-delà des fenêtres de pêche et de veillée
-    world, bus, _ = make_world(tmp_path, "late", latency_scale=5.0, seasons=1, time__mode="async", **FAST_WORLD)
+    world, bus, _ = make_world(tmp_path, "late", latency_scale=5.0, seasons=1, time__mode="async", **NO_WAIT)
     elapsed = play(world)
     events = read_events(tmp_path, "late")
     assert elapsed < 8, f"la saison a attendu les réponses trop tardives ({elapsed:.1f} s)"
@@ -72,7 +75,7 @@ def test_searching_memory_is_thinking_so_the_evening_does_not_rush_past(tmp_path
 
 
 def test_the_loss_is_dated_at_the_closing_of_the_window(tmp_path):
-    world, bus, _ = make_world(tmp_path, "dated", latency_scale=5.0, seasons=1, time__mode="async", **FAST_WORLD)
+    world, bus, _ = make_world(tmp_path, "dated", latency_scale=5.0, seasons=1, time__mode="async", **NO_WAIT)
     play(world)
     events = read_events(tmp_path, "dated")
     T = world.cfg["time"]
@@ -85,7 +88,7 @@ def test_the_loss_is_dated_at_the_closing_of_the_window(tmp_path):
 
 
 def test_cancelled_calls_are_work_lost_not_model_errors(tmp_path):
-    world, bus, pub = make_world(tmp_path, "cost", latency_scale=5.0, seasons=1, time__mode="async", **FAST_WORLD)
+    world, bus, pub = make_world(tmp_path, "cost", latency_scale=5.0, seasons=1, time__mode="async", **NO_WAIT)
     play(world)
     events = read_events(tmp_path, "cost")
     eng = IndicatorEngine(0.5)
@@ -114,3 +117,22 @@ def test_agents_who_finished_their_rounds_are_not_blamed(tmp_path):
     events = read_events(tmp_path, "mixed")
     assert not [e for e in kinds(events, "incident") if e["payload"]["incident_type"] == "missed_window"]
     assert kinds(events, "utterance")
+
+
+def test_by_default_the_world_waits_for_slow_models_and_loses_nothing(tmp_path):
+    """Une IA lente (0,5 à 2 s, soit des mois simulés à ce rythme) ne rate plus rien : la fermeture de la pêche et de la veillée
+    attend sa réponse, et chacun parle à chaque tour où il a une raison de le faire."""
+    world, bus, _ = make_world(tmp_path, "attend", latency_scale=0.5, seasons=1, time__mode="async", **FAST_WORLD)
+    statuses = []
+    bus.subscribe("status", statuses.append)
+    play(world)
+    events = read_events(tmp_path, "attend")
+    assert not [e for e in kinds(events, "incident") if e["payload"]["incident_type"] == "missed_window"]
+    assert not [e for e in kinds(events, "llm_call") if e["payload"]["status"] == "cancelled"]
+    assert len(kinds(events, "catch")) == len(world.fishers)                     # personne n'a raté sa sortie
+    first_round = {e["payload"]["speaker"] for e in kinds(events, "utterance") if e["payload"]["round"] == 1}
+    assert first_round == set(world.agents)                                      # ni sa première réplique
+    T = world.cfg["time"]
+    assert all(e["sim_time"] <= T["assembly_close_day"] + 1e-6 for e in kinds(events, "utterance"))
+    assert any("le monde attend" in str(s.get("detail")) for s in statuses)      # le joueur sait pourquoi le temps s'arrête
+    assert verify("attend", world.cfg)

@@ -197,12 +197,14 @@ fois** et ne garde pas deux gros modèles en mémoire :
   tour. Leur appel est **abandonné à cet instant** (événement `llm_call` de statut `cancelled`, compté à part des erreurs) au lieu
   d'attendre une réponse qui ne servirait plus : c'est ce qui faisait traîner la fin de chaque saison.
 
-**« Réplique perdue » n'est pas une panne.** En asynchrone, le temps du monde suit le temps réel : pendant qu'une IA locale réfléchit
-30 s, la veillée (78 heures simulées, soit 26 s réelles à 3 h/s et à × 1) avance et se ferme. L'IA qui n'a pas fini a raté sa fenêtre :
-le fil affiche `RÉPLIQUE PERDUE` (ou `SORTIE PERDUE` pour la pêche) avec le tour concerné, et l'incident `missed_window` est
-enregistré. Plus on va vite, plus l'IA paraît lente ; c'est pourquoi le menu propose une vitesse de départ par moteur d'IA
-(× ¼ pour Ollama rapide, × 1/8 pour le 7B) et le jeu un bouton **Ralentir**. En **synchrone**, la lenteur d'une IA n'a aucun effet
-sur le temps du monde : rien n'est jamais perdu.
+**En asynchrone, le monde attend les IA lentes.** Le temps du monde suit le temps réel : pendant qu'une IA locale réfléchit 30 s, la
+veillée (78 heures simulées, soit 26 s réelles à 3 h/s et à × 1) avance. Par défaut (`time.wait_for_ai`), une fenêtre (fin de la pêche,
+fin de la veillée et ses bulletins) **ne se ferme pas tant qu'une IA réfléchit encore** : le temps du monde est suspendu jusqu'à sa
+réponse, et la barre du haut dit « le monde attend N IA qui réfléchissent encore ». La partie ralentit avec une IA lente, mais aucune
+sortie, réplique ni bulletin n'est perdu, et le fil des échanges reste cohérent. Avec `time.wait_for_ai: false`, l'IA qui n'a pas fini
+rate sa fenêtre : le fil affiche `RÉPLIQUE PERDUE` (ou `SORTIE PERDUE`) et l'incident `missed_window` est enregistré. Dans les deux
+cas, plus on va vite, plus l'IA paraît lente : le menu propose une vitesse de départ par moteur d'IA (× ¼ pour Ollama rapide, × 1/8
+pour le 7B) et le jeu un bouton **Ralentir**. En **synchrone**, la lenteur d'une IA n'a aucun effet sur le temps du monde.
 
 **Sur un portable, la carte graphique chauffe.** Une partie longue avec Ollama la maintient à 100 % : vers 88 °C la fréquence tombe
 (mesuré : de 2100 MHz à 210–580 MHz) et chaque réponse met 5 à 10 fois plus de temps qu'à froid. Les IA paraissent alors « lentes »
@@ -356,7 +358,7 @@ indices comptent, l'ancien peut se tromper : le fil l'écrit `ACCUSÉ À TORT` (
 **Interdit de pêche.** Quand sa réputation tombe à presque rien (`scenario.ban_below`, 5 %), un pêcheur est **interdit de pêche** à
 partir de la saison suivante (événement `ban`), jusqu'à ce qu'elle remonte à 50 % (`scenario.ban_lift`). Il ne déclare plus rien :
 il reste à quai, ou **pêche en cachette**, loin de sa rive, plutôt au large (sa prise est marquée `secret` dans le journal). Chaque
-saison où on ne le prend pas dehors, il regagne un peu la confiance de tous (+0,15) ; pris, il la reperd (−0,30). Son IA décide
+saison où on ne le prend pas dehors, il regagne un peu la confiance de tous (+0,15) ; pris, il la reperd (−0,35). Son IA décide
 toujours en réflexion (système 2) : rester à quai ou risquer la cachette.
 
 **La confiance.** Chaque agent (pêcheurs et ancien) a une confiance envers chaque pêcheur, de 0 à 1, à 0,5 au départ. Elle ne
@@ -364,9 +366,9 @@ bouge que sur ce qui est public, et ceux qui respectent la règle sont les plus 
 
 | ce qui arrive | qui change d'avis | effet |
 |---|---|---|
-| déclaration au-delà de la règle | ceux qui respectent la règle (et l'ancien) / ceux qui la dépassent aussi | −0,10 / −0,03 |
+| dépassement avoué : déclaration au-delà de la règle (dès 0,05 t, sans autre marge) | ceux qui respectent la règle (et l'ancien) / ceux qui la dépassent aussi | de −0,05 (à peine au-dessus) à −0,20 (le double ou plus) / moitié moins |
 | déclaration dans la règle | ceux qui respectent la règle | +0,03 |
-| mensonge établi, ou sortie en cachette prouvée | tout le monde | −0,30 |
+| mensonge établi, ou sortie en cachette prouvée | tout le monde | −0,35 (toujours plus qu'avouer) |
 | un indice contre lui, sans preuve (soupçon) | tout le monde | −0,05 |
 | a témoigné contre un menteur | ceux qui n'ont pas triché | +0,05 |
 | interdit, on ne l'a pas pris dehors de la saison | tout le monde | +0,15 |
@@ -376,7 +378,11 @@ bouge que sur ce qui est public, et ceux qui respectent la règle sont les plus 
 
 Chaque changement est un événement `trust` (la confiance de chaque observateur, et la **réputation** : la moyenne de la confiance
 des autres). Les IA la lisent dans leur **carnet** (« Ta confiance envers les autres : Loïc faible, Théo forte ; les autres,
-moyenne »), avec leurs vraies prises et ce qu'elles en ont déclaré : un pêcheur sait s'il a menti, et si son mensonge a éclaté.
+moyenne »), avec leur propre réputation (« ta réputation dans la vallée : faible (32 %) ; sous 5 %, elle t'interdirait de
+pêcher »), leurs vraies prises et ce qu'elles en ont déclaré : un pêcheur sait s'il a menti, et si son mensonge a éclaté. La question
+de prise leur dit ce que coûte chaque choix : dépasser la règle coûte un peu de confiance, d'autant plus qu'on la dépasse ; l'avouer en
+coûte moins que d'être pris à mentir. Sur un lac bien rempli, le repère des anciens rappelle qu'au-dessus de la moitié le lac ne se
+repeuple presque plus et qu'on peut pêcher ce surplus sans l'abîmer (la vallée votait 2 t chacun pour 6 t de surplus par pêcheur).
 
 Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), s'il est interdit, sa dernière prise et sa
 déclaration (en rouge si elle ment) et ses mensonges établis ; sur la carte, le radar balaie sa zone et un anneau rouge barré
@@ -481,7 +487,7 @@ godot --headless --path godot -s res://tests/menu_test.gd -- --catalog=/chemin/c
 Pour FILETS, le *contexte commun* est une **norme de prélèvement partagée** :
 
 * `norm_agreement` : part de **tous** les pêcheurs qui ont soutenu la règle qui les concerne (hameau d'abord, vallée sinon) ;
-* `norm_compliance` : part des pêcheurs soumis à une règle dont la prise la respecte (tolérance 0,5 t) ;
+* `norm_compliance` : part des pêcheurs soumis à une règle dont la vraie prise la respecte (à 0,05 t près, `scenario.quota_tolerance`) ;
 * `norm_index = accord × conformité` ∈ [0, 1].
 
 Sans accord déclaré, l'indice vaut 0 même si tout le monde pêche par hasard la même chose : cette

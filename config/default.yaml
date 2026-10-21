@@ -58,7 +58,7 @@ scenario:
   proposal_merge_tolerance: 0.75   # deux quotas proposés à moins de 0,75 t l'un de l'autre sont la même proposition
   vote_tolerance: 1.5         # au vote de clôture, on vote pour la proposition la plus proche de ce qu'on a dit, à 1,5 t près
   promise_tolerance: 0.5      # tonnes tolérées au-dessus d'une promesse
-  quota_tolerance: 0.5        # tonnes tolérées au-dessus d'un quota adopté
+  quota_tolerance: 0.05       # au-dessus d'un quota adopté, un arrondi, pas une marge : 2,5 t sous une règle de 2 t la dépasse
   # événements programmés (mêmes perturbations pour toutes les configurations comparées)
   scheduled_injections: []
   #  - {season: 4, type: drought}
@@ -73,6 +73,9 @@ time:
   regrowth_day: 29.9
   ballot_lead_days: 0.25        # en async : les bulletins de vote sont remplis 6 h avant la fin de la veillée (une IA trop lente perd sa voix)
   assembly_turn_gap_days: 0.05  # en async : temps d'écoute (≈ 1 h 12) avant de reprendre la parole
+  # en async : une fenêtre (pêche, veillée) ne se ferme pas tant qu'une IA réfléchit encore ; le temps du monde est suspendu
+  # jusqu'à sa réponse. La partie ralentit avec une IA lente, mais aucune sortie ni réplique n'est perdue (false : elle rate son tour)
+  wait_for_ai: true
   # rythme propre de chaque pêcheur en mode asynchrone : décalage (jours) avant sa première réflexion
   async_offset_days: [0.0, 4.0]
   # conversion temps réel → temps simulé : heures simulées par seconde réelle.

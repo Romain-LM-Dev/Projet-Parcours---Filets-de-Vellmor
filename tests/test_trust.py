@@ -169,10 +169,20 @@ def test_those_who_keep_the_rule_judge_the_breakers_harder(tmp_path):
         for o, v in p["values"].items():
             if p["cause"] == "dépasse la règle":
                 follows = truth[o] <= quota + tol
-                assert abs(v - trust[o][p["subject"]] - TRUST["over_rule" if follows else "over_rule_soft"]) < 1e-6
+                said = next(e2["payload"]["declared"] for e2 in kinds(events, "report")
+                            if e2["season"] == 2 and e2["payload"]["agent"] == p["subject"])
+                assert abs(v - trust[o][p["subject"]] - World.over_rule_penalty(said, quota, follows)) < 1e-6
                 judged += follows
             trust[o][p["subject"]] = v
     assert judged, "Mathis, qui respecte la règle, a jugé ceux qui la dépassent"
+
+
+def test_owning_up_to_a_breach_costs_less_than_being_caught_lying():
+    """Dépasser la règle et le déclarer coûte un peu de confiance, d'autant plus qu'on la dépasse ; le cacher et se faire
+    prendre coûte toujours davantage. Celui qui la dépasse aussi juge moitié moins sévèrement."""
+    slight, double = World.over_rule_penalty(2.5, 2.0, True), World.over_rule_penalty(6.0, 2.0, True)
+    assert -0.20 <= double < slight < 0 and World.over_rule_penalty(6.0, 2.0, False) == double / 2
+    assert TRUST["lie"] < double
 
 
 def test_after_the_first_round_only_those_with_a_reason_speak(tmp_path):
