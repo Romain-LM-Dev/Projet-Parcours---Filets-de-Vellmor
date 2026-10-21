@@ -190,7 +190,7 @@ class OpenAICompatClient:
     async def _complete(self, model: str, messages: list[dict], hint: dict | None = None) -> LLMResult:
         # la longueur de réponse permise peut être bornée appel par appel (réflexion rapide : une phrase suffit)
         max_tokens = int((hint or {}).get("max_tokens") or self.cfg["max_tokens"])
-        body = {"model": model, "messages": messages, "temperature": self.cfg["temperature"],
+        body = {"model": model, "messages": messages, "temperature": (hint or {}).get("temperature", self.cfg["temperature"]),
                 "max_tokens": max_tokens}
         if self.seed and (hint or {}).get("seed") is not None:
             body["seed"] = int(hint["seed"])

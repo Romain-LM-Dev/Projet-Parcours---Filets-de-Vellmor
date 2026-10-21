@@ -41,6 +41,16 @@ def test_the_story_only_tells_what_the_journal_holds(tmp_path):
         assert any(f"{stock:.0f} t après le repeuplement" in f for f in n["payload"]["facts"])
 
 
+def test_an_adopted_rule_says_which_rule_it_replaces(tmp_path):
+    events = play(tmp_path, run_id="regles", seasons=4, time__mode="sync")
+    adopted = [f for n in kinds(events, "narration") for f in n["payload"]["facts"] if f.startswith("À la veillée, ")]
+    assert adopted[0].startswith("À la veillée, première règle adoptée : pas plus de ")
+    for before, after in zip(adopted, adopted[1:]):
+        old, new = (float(f.split("pas plus de ")[1].split(" t")[0]) for f in (before, after))
+        kind = "règle reconduite" if new == old else "règle plus stricte adoptée" if new < old else "règle assouplie"
+        assert after.startswith(f"À la veillée, {kind} : ") and (new == old or f"(au lieu de {old:g} t)" in after)
+
+
 def elder_game(tmp_path, run_id, recit):
     rec = Recorder(recit=recit)
     cfg = cfg_for(tmp_path, seasons=1, time__mode="sync", population__custom=FOUR, population__elder=True,
@@ -59,6 +69,7 @@ def test_an_ai_elder_tells_the_season_in_its_own_voice_from_the_facts(tmp_path):
     assert n["payload"]["source"] == "ancien" and n["payload"]["text"] == "Le lac a donné, mais la parole n'a pas tenu."
     asked = next(r for r in requests if '"recit"' in r["user"])
     assert all(f in asked["user"] for f in n["payload"]["facts"]) and "N'invente rien" in asked["user"]
+    assert asked["temperature"] == 0.3 != next(r for r in requests if '"prise"' in r["user"])["temperature"]
     call = next(e["payload"] for e in kinds(events, "llm_call") if e["payload"]["purpose"] == "narration")
     assert call["call_id"] == n["payload"]["llm_call_id"] and n["actor"] == call["agent"]
 

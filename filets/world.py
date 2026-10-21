@@ -779,7 +779,16 @@ class World:
         for n in adopted:
             present = sum(1 for p in n["participants"] if p in self.agents and self.agents[p].is_fisher)
             whose = "" if n["scope"] == "valley" else f" pour le hameau de {n['scope'].split(':', 1)[1]}"
-            facts.append(f"À la veillée, règle adoptée{whose} : pas plus de {n['quota']:g} t par pêcheur à partir de la "
+            # la règle qu'elle remplace, pour que l'ancien ne dise pas « on augmente la limite » à la toute première
+            before = self.norm_for_scope(n["scope"], season, self.clock.now())
+            if before is None:
+                what, instead = "première règle adoptée", ""
+            elif n["quota"] == before.quota:
+                what, instead = "règle reconduite", ""
+            else:
+                what = "règle plus stricte adoptée" if n["quota"] < before.quota else "règle assouplie"
+                instead = f" (au lieu de {before.quota:g} t)"
+            facts.append(f"À la veillée, {what}{whose} : pas plus de {n['quota']:g} t par pêcheur{instead} à partir de la "
                          f"saison {n['effective_season']}, soutenue par {len(n['supporters'])} pêcheurs sur {present}.")
         if of("assembly_start") and not adopted:
             facts.append(f"À la veillée, {len(of('proposal'))} proposition(s), mais aucune règle n'a réuni la moitié des pêcheurs.")
@@ -805,7 +814,8 @@ class World:
                 self.cfg["llm"]["tiers"][elder.profile.tier]["provider"] != "scripted":
             data, res, _ = await _ask_llm(self, elder, "narration",
                                           prompts.narration_messages(elder.profile, facts, self.capacity), {"round": 0},
-                                          schema=prompts.NARRATION_SCHEMA, max_tokens=prompts.NARRATION_MAX_TOKENS)
+                                          schema=prompts.NARRATION_SCHEMA, max_tokens=prompts.NARRATION_MAX_TOKENS,
+                                          temperature=prompts.NARRATION_TEMPERATURE)
             text = str((data or {}).get("recit", "")).strip()[:600]
             if text:
                 source, call_id = "ancien", res.call_id

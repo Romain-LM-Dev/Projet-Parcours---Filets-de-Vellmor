@@ -69,7 +69,8 @@ def _seed(world, agent: Agent, purpose: str, state: dict) -> int:
 
 
 async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], state: dict, system: str = "S2",
-                   schema: dict | None = None, max_tokens: int | None = None, system_one: dict | None = None):
+                   schema: dict | None = None, max_tokens: int | None = None, system_one: dict | None = None,
+                   temperature: float | None = None):
     """Appelle le LLM et classe les dérives. Renvoie (données JSON ou None, llm_result, flags).
     `system` : « S1 » (réflexe : un nombre, le petit modèle) ou « S2 » (réflexion : le modèle de l'agent), voir `routing.py`."""
     brief = prompts.is_brief(world.cfg["llm"])
@@ -83,6 +84,8 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
         hint["max_tokens"] = prompts.REFLEX_MAX_TOKENS
     elif brief:
         hint["max_tokens"] = prompts.BRIEF_MAX_TOKENS[purpose]       # réflexion rapide : réponse courte, appel plus court
+    if temperature is not None:
+        hint["temperature"] = temperature
     tier = agent.profile.tier
     if reflex:
         # le réflexe va au modèle de décision s'il y en a un (niveau `reflexe`, ex. tev1), sinon au petit modèle de langage

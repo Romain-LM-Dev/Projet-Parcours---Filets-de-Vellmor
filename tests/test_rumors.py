@@ -55,7 +55,7 @@ class Recorder:
                 fmt = body.get("response_format")
                 outer.requests.append({"user": user, "system": body["messages"][0]["content"],
                                        "max_tokens": body.get("max_tokens"), "response_format": fmt, "seed": body.get("seed"),
-                                       "model": body.get("model")})
+                                       "model": body.get("model"), "temperature": body.get("temperature")})
                 if fmt and fmt.get("type") in outer.reject:
                     err = json.dumps({"error": {"message": "response_format non pris en charge"}}).encode()
                     self.send_response(400)

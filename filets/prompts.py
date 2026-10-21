@@ -316,6 +316,7 @@ def ballot_messages(p, table: list[str], est: float, capacity: float, collapse_r
 NARRATION_SCHEMA = {"type": "object", "properties": {"recit": {"type": "string", "maxLength": 600}},
                     "required": ["recit"], "additionalProperties": False}
 NARRATION_MAX_TOKENS = 260
+NARRATION_TEMPERATURE = 0.3      # un récit fidèle plutôt qu'inventif : à 0,7, un petit modèle enjolive (« le lac à son apogée »)
 
 
 def narration_messages(p, facts: list[str], capacity: float) -> list[dict]:
@@ -325,7 +326,9 @@ def narration_messages(p, facts: list[str], capacity: float) -> list[dict]:
            + "\n".join(f"- {f}" for f in facts)
            + "\n\nRaconte cette saison en 2 à 4 phrases, avec ta voix d'ancien, comme au coin du feu, et ce que tu en penses. "
              "N'invente rien : ne parle que de ce qui est dans cette liste. S'il n'y est question ni de promesses, ni de "
-             "règle, ni d'accusation, n'en parle pas. Pour le lac, reprends le mot de la liste. "
+             "règle, ni d'accusation, n'en parle pas. Pour le lac, reprends le mot de la liste, sans l'exagérer ; pour une "
+             "règle, dis si c'est la première, une règle reconduite, plus stricte ou assouplie, comme la liste le dit. "
+             "Des phrases simples et complètes, en bon français. "
              "Réponds en JSON : {\"recit\": \"<ton récit>\"}")
     return [{"role": "system", "content": persona(p, capacity, True)}, {"role": "user", "content": ask}]
 
