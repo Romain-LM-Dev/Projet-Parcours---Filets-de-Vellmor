@@ -37,7 +37,9 @@ FOUR = [fisher("Mathis", "Ostrel", "ancienne_famille"), fisher("Inès", "Bramois
 class Recorder:
     """Faux fournisseur compatible OpenAI : enregistre ce qu'on lui demande, répond avec un JSON valide."""
 
-    def __init__(self, prise: float = 3.0, reject: tuple = (), propose_first: float | None = None):
+    def __init__(self, prise: float = 3.0, reject: tuple = (), propose_first: float | None = None,
+                 recit: str | None = "Le lac a donné, mais la parole n'a pas tenu."):
+        self.recit = recit                        # récit de l'ancien ; None : une réponse sans récit
         self.requests: list[dict] = []
         self.propose_first, self.proposed = propose_first, False
         self.reject = reject                      # formats de réponse refusés par ce fournisseur (HTTP 400), ex. ("json_schema",)
@@ -67,6 +69,8 @@ class Recorder:
                 elif '"vote"' in user:                                  # bulletin de vote : la première proposition de la liste
                     ids = re.findall(r"^- (P\d+) :", user, re.M)
                     content = json.dumps({"vote": ids[0] if ids else "aucune"})
+                elif '"recit"' in user:                                 # récit de la saison par l'ancien
+                    content = json.dumps({"recit": outer.recit} if outer.recit else {"autre": "rien"})
                 else:
                     quota = None
                     if outer.propose_first is not None and not outer.proposed:

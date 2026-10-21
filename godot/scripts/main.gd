@@ -30,6 +30,7 @@ var lbl_clock: Label
 var lbl_status: Label
 var ind_labels := {}
 var feed: RichTextLabel
+var narration: RichTextLabel    # le récit de chaque saison par l'ancien (onglet « Récit de l'ancien »)
 var feed_only_selected: CheckBox
 var inspector: RichTextLabel
 var rules_view: RichTextLabel
@@ -445,6 +446,10 @@ func _build_ui() -> void:
 	feed = _rich()
 	feed.scroll_following = true
 	feed_box.add_child(feed)
+	narration = _rich()
+	narration.name = "Récit de l'ancien"
+	narration.scroll_following = true
+	tabs.add_child(narration)
 	inspector = _rich()
 	inspector.name = "Agent"
 	tabs.add_child(inspector)
@@ -761,6 +766,11 @@ func _on_event(ev: Dictionary) -> void:
 				a["wealth"] = float(p.get("wealth", 0))
 		"assembly_start":
 			_feed("\n" + lab + _tag("VEILLÉE", "#7f95ff") + " [b]%s[/b] se réunit" % _scope(str(p.get("scope", ""))).capitalize(), [])
+		"narration":
+			var season := int(p.get("season", 0))
+			var how := "" if str(p.get("source", "")) == "ancien" else "  [color=#6f7896][font_size=11](d'après les faits)[/font_size][/color]"
+			narration.append_text("[font=res://fonts/alegreya-latin-700-normal.woff2][font_size=17][color=#e2bd6a]Saison %d[/color][/font_size][/font]%s\n[i]%s[/i]\n\n" % [season, how, _esc(str(p.get("text", "")))])
+			_feed(lab + _tag("RÉCIT", "#e2bd6a") + " l'ancien raconte la saison %d  [color=#6f7896](onglet « Récit de l'ancien »)[/color]" % season, [])
 		"utterance":
 			var sp := str(p.get("speaker", ""))
 			var to := str(p.get("to", "tous"))
@@ -958,6 +968,8 @@ func _reset(ev: Dictionary) -> void:
 			comm_opt.select(i)
 	vis_check.set_pressed_no_signal(bool(sc.get("catches_visible", true)))
 	feed.clear()
+	narration.clear()
+	narration.append_text("[color=#8f97b2]À la fin de chaque saison, l'ancien raconte ici ce que la vallée a vécu.[/color]\n\n")
 	inspector.text = "Cliquez sur un pêcheur pour l'inspecter."
 	_render_rules()
 

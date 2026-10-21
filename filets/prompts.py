@@ -313,6 +313,22 @@ def ballot_messages(p, table: list[str], est: float, capacity: float, collapse_r
 # Un modèle comme `tev1` ne génère pas de texte : il choisit une option, ou un niveau dans une échelle, et donne les probabilités.
 # Ces fonctions décrivent la même décision que `reflex_messages` / `ballot_messages`, sous cette forme.
 
+NARRATION_SCHEMA = {"type": "object", "properties": {"recit": {"type": "string", "maxLength": 600}},
+                    "required": ["recit"], "additionalProperties": False}
+NARRATION_MAX_TOKENS = 260
+
+
+def narration_messages(p, facts: list[str], capacity: float) -> list[dict]:
+    """Le récit de la saison par l'ancien, pour le joueur : quelques phrases avec sa voix, à partir des seuls faits relevés
+    dans le journal de la partie (il n'invente rien, il raconte)."""
+    ask = ("La saison vient de finir. Voici ce qui s'est passé, tel qu'on l'a vu au marché et à la veillée :\n"
+           + "\n".join(f"- {f}" for f in facts)
+           + "\n\nRaconte cette saison en 2 à 4 phrases, avec ta voix d'ancien, comme au coin du feu : qui a pêché beaucoup "
+             "ou peu, qui a tenu ou trahi sa parole, ce que la vallée a décidé, ce que tu penses de l'état du lac. "
+             "N'invente rien : seulement ces faits. Réponds en JSON : {\"recit\": \"<ton récit>\"}")
+    return [{"role": "system", "content": persona(p, capacity, True)}, {"role": "user", "content": ask}]
+
+
 def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:
     """Les niveaux de prise proposés au modèle de décision : de la prise minimale à la capacité de la barque, en `n` paliers."""
     return [round(lo + i * (boat_capacity - lo) / (n - 1), 1) for i in range(n)]

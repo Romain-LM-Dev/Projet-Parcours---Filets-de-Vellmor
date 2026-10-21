@@ -101,6 +101,9 @@ PAYLOADS: dict[str, dict] = {
                      "status": {"enum": ["ok", "error", "timeout", "quota", "cancelled"]}},
         {"retries": INT, "system": {"enum": ["S1", "S2"]}}),
     "injection": obj({"injection_type": STR, "params": {"type": "object"}, "source": STR}),
+    # le récit de la saison par l'ancien, pour le joueur : rédigé par son IA (« ancien ») ou tiré des faits (« faits »)
+    "narration": obj({"season": INT, "text": STR, "source": {"enum": ["ancien", "faits"]}, "facts": IDS},
+                     {"llm_call_id": STR_OR_NULL}),
     "indicator": obj({"trigger": STR, "values": {"type": "object"}, "source_event_ids": IDS,
                       "lag_s": NUM, "computed_at": NUM}),
 }

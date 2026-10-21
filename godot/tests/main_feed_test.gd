@@ -41,6 +41,7 @@ func _initialize() -> void:
 	var announced := ""
 	var rumor_decisions := 0
 	var with_rumor := ""
+	var narrations: Array = []
 	for ev in events:
 		var p: Dictionary = ev["payload"]
 		match ev["type"]:
@@ -64,6 +65,8 @@ func _initialize() -> void:
 						rumor_decisions += 1
 						if with_rumor == "":
 							with_rumor = str(p["agent"])
+			"narration":
+				narrations.append(p)
 		m._on_message("events", ev)
 
 	var texts: Array = []
@@ -79,6 +82,15 @@ func _initialize() -> void:
 	check(announced != "" and "RUMEUR" in joined and ("« " + announced + " »") in joined, "l'annonce est écrite dans le fil : " + announced)
 	check("INJECTION announcement" not in joined, "l'annonce n'apparaît plus comme du JSON brut")
 	check(other_incidents == 0 or joined.count("INCIDENT") == other_incidents, "les autres incidents gardent la ligne « INCIDENT »")
+
+	# le récit de l'ancien : un onglet à côté du fil, un récit par saison terminée, signalé dans le fil
+	check(m.tabs.get_tab_title(1) == "Récit de l'ancien", "l'onglet « Récit de l'ancien » suit le fil : " + m.tabs.get_tab_title(1))
+	check(narrations.size() > 0, "le run de test contient des récits de l'ancien")
+	var told: String = m.narration.get_parsed_text()
+	for n in narrations:
+		check(("Saison %d" % int(n["season"])) in told and str(n["text"]).substr(0, 40) in told,
+			"le récit de la saison %d est dans l'onglet" % int(n["season"]))
+	check(joined.count("RÉCIT") == narrations.size(), "une ligne « RÉCIT » par récit dans le fil (%d)" % narrations.size())
 
 	# l'inspecteur montre la rumeur parmi ce qui a été retrouvé pour décider
 	check(rumor_decisions > 0, "des décisions ont retrouvé la rumeur (%d)" % rumor_decisions)

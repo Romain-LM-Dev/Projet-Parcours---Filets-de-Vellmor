@@ -344,7 +344,12 @@ Vue de dessus de la vallée, dessinée entièrement en code (aucune image extern
 * **les bandeaux** annoncent les moments clés : saison, ouverture de la pêche, veillée, règle adoptée,
   pas d'accord, sécheresse, effondrement ;
 * l'horloge (soleil ou lune, phase en cours) est en haut à gauche, la jauge du lac (avec le repère de
-  la moitié) en bas ; survoler un pion affiche son nom complet et son archétype.
+  la moitié) en bas ; survoler un pion affiche son nom complet et son archétype ;
+* **chaque pêcheur a la couleur de son hameau** (pion, barque, nom) ; l'ancien a la sienne ;
+* à droite, l'onglet **Récit de l'ancien**, à côté du fil des interactions : à la fin de chaque saison, l'ancien raconte en
+  quelques phrases ce que la vallée a vécu (prises, état du lac, règle tenue ou dépassée, vote, promesses, accusations).
+  Son IA le rédige à partir des seuls faits relevés dans le journal ; sans IA, le récit reprend ces faits (événement
+  `narration`, rejoué comme les autres).
 
 Les pions et les liens gardent partout le même code : couleur = archétype, rond = agent LLM (anneau
 épais doré = grand modèle), carré = agent à règles ; bleu = parole, vert = soutien, rouge =

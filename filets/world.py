@@ -39,7 +39,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .agents import Agent, ballot, decide_catch, speak
+from . import prompts
+from .agents import Agent, _ask_llm, ballot, decide_catch, speak
 from .clock import SimClock
 from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
@@ -730,6 +731,87 @@ class World:
                                          for sc in dict.fromkeys(x.scope for x in self.norms)) if n],
         })
 
+    # ------------------------------------------------------------ le récit de l'ancien
+    def first_name(self, aid: str) -> str:
+        a = self.agents.get(aid)
+        return (a.profile.first_name or a.profile.name) if a else aid
+
+    def season_facts(self, season: int) -> list[str]:
+        """Ce qui s'est passé pendant la saison, relevé dans le journal de la partie : la matière du récit de l'ancien."""
+        evs = [e for e in self.events.index.values() if e["season"] == season]
+
+        def of(etype: str) -> list[dict]:
+            return [e["payload"] for e in evs if e["type"] == etype]
+
+        def both(names: list[str]) -> str:
+            return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " et " + names[-1]
+
+        facts: list[str] = []
+        landed: dict[str, float] = {}
+        for c in of("catch"):
+            landed[c["agent"]] = round(landed.get(c["agent"], 0.0) + c["landed"], 2)
+        if landed:
+            each = ", ".join(f"{self.first_name(a)} {v:g} t" for a, v in sorted(landed.items(), key=lambda kv: -kv[1]))
+            facts.append(f"Prises : {each} (en tout {sum(landed.values()):g} t).")
+        start = next((p["stock"] for p in of("season_start")), None)
+        facts.append((f"Le lac : {start:.0f} t au début de la saison, " if start is not None else "Le lac : ")
+                     + f"{self.lake.stock:.0f} t après le repeuplement, sur {self.capacity:.0f} t possibles.")
+        for inj in of("injection"):
+            if inj["injection_type"] == "drought":
+                facts.append("Une sécheresse a frappé le lac : son stock a baissé d'un coup.")
+            elif inj["injection_type"] == "announcement":
+                facts.append(f"Une rumeur a couru dans la vallée : « {inj['params'].get('text', '')} ».")
+        tol = self.scn["quota_tolerance"]
+        rules: dict[tuple[str, float], list[str]] = {}
+        for a in self.fishers:
+            norm = self.applicable_norm(a, season, self.clock.now())
+            if norm is not None:
+                over = rules.setdefault((norm.scope, norm.quota), [])
+                if landed.get(a.id, 0.0) > norm.quota + tol:
+                    over.append(f"{self.first_name(a.id)} ({landed[a.id]:g} t)")
+        for (scope, quota), over in rules.items():
+            whose = "de la vallée" if scope == "valley" else f"du hameau de {scope.split(':', 1)[1]}"
+            facts.append(f"Règle {whose} : pas plus de {quota:g} t par pêcheur ; "
+                         + ("tous l'ont tenue." if not over else f"dépassée par {both(over)}."))
+        adopted = of("norm_adopted")
+        for n in adopted:
+            present = sum(1 for p in n["participants"] if p in self.agents and self.agents[p].is_fisher)
+            whose = "" if n["scope"] == "valley" else f" pour le hameau de {n['scope'].split(':', 1)[1]}"
+            facts.append(f"À la veillée, règle adoptée{whose} : pas plus de {n['quota']:g} t par pêcheur à partir de la "
+                         f"saison {n['effective_season']}, soutenue par {len(n['supporters'])} pêcheurs sur {present}.")
+        if of("assembly_start") and not adopted:
+            facts.append(f"À la veillée, {len(of('proposal'))} proposition(s), mais aucune règle n'a réuni la moitié des pêcheurs.")
+        outcomes = of("promise_outcome")
+        kept = [self.first_name(o["agent"]) for o in outcomes if o["kept"]]
+        broken = [f"{self.first_name(o['agent'])} ({o['promised']:g} t promises, {o['landed']:g} t pêchées)"
+                  for o in outcomes if not o["kept"]]
+        if kept:
+            facts.append(f"Promesses tenues : {both(kept)}.")
+        if broken:
+            facts.append(f"Promesses trahies : {both(broken)}.")
+        for acc in of("accusation"):
+            facts.append(f"{self.first_name(acc['accuser'])} a accusé {self.first_name(acc['accused'])} de trop pêcher.")
+        return facts
+
+    async def narrate(self, season: int) -> None:
+        """À la fin de la saison, l'ancien raconte au joueur ce que la vallée a vécu (onglet « Récit de l'ancien » de Godot).
+        Son IA le rédige à partir des seuls faits relevés ; sans IA, ou si elle ne répond pas, le récit reprend les faits."""
+        facts = self.season_facts(season)
+        elder = self.elder
+        text, source, call_id = "", "faits", None
+        if elder is not None and elder.profile.kind == "llm" and elder.profile.tier and \
+                self.cfg["llm"]["tiers"][elder.profile.tier]["provider"] != "scripted":
+            data, res, _ = await _ask_llm(self, elder, "narration",
+                                          prompts.narration_messages(elder.profile, facts, self.capacity), {"round": 0},
+                                          schema=prompts.NARRATION_SCHEMA, max_tokens=prompts.NARRATION_MAX_TOKENS)
+            text = str((data or {}).get("recit", "")).strip()[:600]
+            if text:
+                source, call_id = "ancien", res.call_id
+        if not text:
+            text = f"Ce que j'ai vu à la saison {season}. " + " ".join(facts)
+        self.events.emit("narration", {"season": season, "text": text, "source": source, "facts": facts,
+                                       "llm_call_id": call_id}, actor=elder.id if elder else None)
+
     # ------------------------------------------------------------ démarrage / fin
     def start(self):
         cfg_hash = hashlib.sha1(json.dumps(self.cfg, sort_keys=True, default=str).encode()).hexdigest()[:12]
@@ -896,6 +978,7 @@ class SyncRunner:
         await self.goto(t0 + T["regrowth_day"])
         w.events.emit("phase", {"name": "regrowth", "state": "open"})
         w.end_season(season)
+        await w.ctl.guard(w.narrate(season))
 
 
 # ======================================================================== mode asynchrone
@@ -1070,4 +1153,5 @@ class AsyncRunner:
         w = self.w
         w.events.emit("phase", {"name": "regrowth", "state": "open"})
         w.end_season(season)
+        self.spawn(w.narrate(season))      # la saison attend le récit avant de finir (voir `season`)
         self.done = True        # la saison est jouée ; `World.run` choisit l'orchestration de la suivante

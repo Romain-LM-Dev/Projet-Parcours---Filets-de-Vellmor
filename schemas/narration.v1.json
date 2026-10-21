@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "season": {
+      "type": "integer"
+    },
+    "text": {
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "ancien",
+        "faits"
+      ]
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "llm_call_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "season",
+    "text",
+    "source",
+    "facts"
+  ],
+  "additionalProperties": false
+}

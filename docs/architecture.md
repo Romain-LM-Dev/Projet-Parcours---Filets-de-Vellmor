@@ -72,7 +72,7 @@ Ce qui réduit l'attente sans fausser le monde :
 
 ### Ce qui circule : des événements JSON
 
-Tout fait du monde est un événement avec la même enveloppe (`event_id`, `run_id`, `seq`, `sim_time`, `processed_at`, `actor`, `payload`) et un `payload` décrit par un schéma JSON (`schemas/*.json`, exportés par `python -m filets schemas`). Les natures : `decision`, `utterance`, `proposal`, `support`, `promise`, `accusation`, `norm_adopted`, `catch`, `sale`, `lake_update`, `llm_call`, `incident`, `injection`, `memory_write`…
+Tout fait du monde est un événement avec la même enveloppe (`event_id`, `run_id`, `seq`, `sim_time`, `processed_at`, `actor`, `payload`) et un `payload` décrit par un schéma JSON (`schemas/*.json`, exportés par `python -m filets schemas`). Les natures : `decision`, `utterance`, `proposal`, `support`, `promise`, `accusation`, `norm_adopted`, `catch`, `sale`, `lake_update`, `llm_call`, `incident`, `injection`, `memory_write`, `narration` (le récit de la saison par l'ancien)…
 
 ### La veillée
 
