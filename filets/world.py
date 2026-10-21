@@ -79,7 +79,7 @@ TRUST = {
 ZONES = [*HAMLETS, "large"]
 # Les indices et ce qu'ils pèsent dans le jugement de l'ancien (voir `World.weigh_evidence` et `scenario.detection`).
 DETECTION = {"radar": 0.95, "radar_error": 0.1, "witness": 0.4, "witness_error": 0.3, "seen_leaving": 0.3, "lifestyle": 0.5,
-             "lake_error": 0.03, "margin_t": 1.0, "margin_ratio": 0.25, "proof": 2.0}
+             "lake_error": 0.03, "margin_t": 0.3, "margin_ratio": 0.25, "proof": 2.0}
 EVIDENCE = {"radar": 3.0, "temoin": 1.0, "depart": 1.0, "train_de_vie": 0.5, "accusation": 0.5, "comptes": 0.5}
 HOW = {"radar": "le radar de l'ancien a mesuré sa barque", "temoins": "des voisins l'ont vu",
        "indices": "les indices concordaient"}
@@ -337,7 +337,7 @@ class World:
             return True
         for c in self.clues:                      # un indice dit devant tous, qui dépasse nettement sa déclaration
             if c["subject"] == aid and c["public"] and c["season"] >= season - 1 and c["estimate"] is not None and \
-                    c["estimate"] - (c["declared"] or 0.0) > det["margin_t"]:
+                    self.beyond_declared(c["estimate"], c["declared"] or 0.0):
                 return True
         for s in (season, season - 1):
             known, norm = self.known_catch(aid, s, now), self.applicable_norm(self.agents[aid], s, now)
@@ -346,6 +346,13 @@ class World:
         return False
 
     # ------------------------------------------------------------ indices, jugement, interdiction, radar
+    def beyond_declared(self, estimate: float, said: float) -> bool:
+        """L'estimation dépasse-t-elle nettement la déclaration : de plus de 25 % de celle-ci (au-delà de l'erreur du radar,
+        ±10 %) et d'au moins 0,3 t ? Un plancher de 1 t laissait passer un mensonge flagrant sur une petite prise (le radar
+        mesurait 1,9 t pour 1 t déclarée)."""
+        det = self.detection
+        return estimate - said > max(det["margin_t"], det["margin_ratio"] * said)
+
     def investigate(self, season: int):
         """Le soir de la veillée, les indices de la saison sont réunis. Le radar a relevé les barques de sa zone (l'ancien le dit
         à tous) ; un voisin qui pêchait dans la même zone a pu voir une barque rentrer et en estimer la charge ; la barque d'un
@@ -436,7 +443,7 @@ class World:
                 caught = weight >= det["proof"]
                 suspected = not caught
             else:
-                big = est is not None and est - said > max(det["margin_t"], det["margin_ratio"] * said)
+                big = est is not None and self.beyond_declared(est, said)
                 caught = big and weight + books >= det["proof"]
                 suspected = big and not caught
             if caught:
@@ -796,8 +803,10 @@ class World:
             if c["season"] != season or c["t"] > horizon or c["subject"] == agent.id or \
                     not (c["public"] or c["observer"] == agent.id):
                 continue
-            excess = 5.0 if c["declared"] is None else ((c["estimate"] or 0.0) - c["declared"])
-            if excess > max(self.detection["margin_t"], worst):
+            if c["declared"] is not None and not self.beyond_declared(c["estimate"] or 0.0, c["declared"]):
+                continue
+            excess = 5.0 if c["declared"] is None else c["estimate"] - c["declared"]
+            if excess > worst:
                 best, worst = c["subject"], excess
         return best
 

@@ -48,7 +48,7 @@ scenario:
   # tient un mensonge pour établi quand les indices pèsent `proof` (radar 3, témoin 1, départ vu 1, accusation 0,5, train de vie
   # 0,5, comptes 0,5) et que la charge estimée dépasse la déclaration d'au moins margin_t tonnes et margin_ratio.
   detection: {radar: 0.95, radar_error: 0.1, witness: 0.4, witness_error: 0.3, seen_leaving: 0.3, lifestyle: 0.5,
-              lake_error: 0.03, margin_t: 1.0, margin_ratio: 0.25, proof: 2.0}
+              lake_error: 0.03, margin_t: 0.3, margin_ratio: 0.25, proof: 2.0}
   ban_below: 0.05             # réputation sous laquelle un pêcheur est interdit de pêche (il ne peut plus que pêcher en cachette)…
   ban_lift: 0.5               # … jusqu'à ce qu'elle remonte à ce niveau
   assembly_rounds: 2          # tours de parole par veillée
