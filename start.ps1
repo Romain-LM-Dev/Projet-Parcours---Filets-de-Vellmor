@@ -9,8 +9,8 @@
   de Godot.
 
   Sans option :
-  - Docker Desktop est lancé s'il ne tourne pas ; FILETS a ses propres ports (19092, 19432, 19000, 19001) : un conteneur
-    d'un autre projet qui en tiendrait un serait signalé, et arrêté si on accepte (ses données sont gardées) ;
+  - Docker Desktop est lancé s'il ne tourne pas ; FILETS a ses propres ports (19092, 19432, 19000, 19001), distincts de
+    ceux des autres projets : s'il en trouve un pris, il dit par qui et s'arrête, sans toucher à rien d'autre ;
   - Kafka (docker compose) et les services indicators / store / bridge, chacun dans sa fenêtre, puis le moteur `--bus kafka`
     ici (le service bridge ouvre le port 8765, pas le moteur) ;
   - Ollama : Qwen 2.5 3B + 1,5B et le modèle de décision open tev1 pour les réflexes et les votes (-OllamaProfile fast : sans
@@ -118,18 +118,21 @@ if ($Kafka -or $Data) {
         if ($LASTEXITCODE -ne 0) { Fail "Docker Desktop n'est pas prêt : lance-le, attends qu'il le soit, puis relance (ou .\start.cmd -Light, sans Docker)." }
     }
     Ok 'Docker prêt'
+    # FILETS a ses propres ports : s'il en trouve un pris par autre chose que lui, il dit par qui et s'arrête, sans jamais
+    # toucher aux conteneurs ni aux programmes d'un autre projet
     $ports = @(19092) + $(if ($Data) { @(19432, 19000, 19001) } else { @() })
-    $others = @(docker ps --format '{{.Names}}|{{.Ports}}' | Where-Object { $_ -notmatch '^filets-' } | ForEach-Object {
-        $name, $map = $_ -split '\|', 2
-        if ($ports | Where-Object { $map -match ":$_->" }) { $name }
-    })
-    if ($others) {
-        Warn "Des conteneurs d'un autre projet tiennent les ports de FILETS : $($others -join ', ')"
-        $answer = Read-Host '    Les arrêter (leurs données sont gardées) ? [O/n]'
-        if ($answer -match '^[nN]') { Fail "Arrête-les toi-même (docker stop $($others -join ' ')), puis relance." }
-        docker stop @others *> $null
-        Ok "arrêtés : $($others -join ', ') (docker start $($others -join ' ') pour les relancer)"
+    $ours = @(docker ps --filter 'name=^filets-' --format '{{.Ports}}') -join ' '
+    foreach ($port in $ports) {
+        if ($ours -match ":$port->") { continue }                     # déjà tenu par un conteneur de FILETS
+        $owner = docker ps --format '{{.Names}}|{{.Ports}}' | Where-Object { $_ -match ":$port->" } |
+            ForEach-Object { 'le conteneur ' + ($_ -split '\|')[0] } | Select-Object -First 1
+        if (-not $owner) {
+            $c = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($c) { $owner = 'le processus ' + (Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue).ProcessName + " (PID $($c.OwningProcess))" }
+        }
+        if ($owner) { Fail "Le port $port de FILETS est pris par $owner. FILETS ne touche pas aux autres projets : libère ce port, puis relance." }
     }
+    Ok "ports de FILETS disponibles ($($ports -join ', '))"
 }
 
 # --- Ollama (modèles de langage, et modèle de plongement avec -Data) -----------------------------------------
@@ -265,7 +268,10 @@ if ($PSBoundParameters.ContainsKey('Seasons')) { $engineArgs += @('--seasons', $
 if ($Extra) { $engineArgs += $Extra }
 
 Write-Host ("    python " + ($engineArgs -join ' ')) -ForegroundColor DarkGray
-if ($Kafka) { Write-Host '    (le service bridge ouvre ws://localhost:8765 ; le moteur n''ouvre pas de port)' -ForegroundColor DarkGray }
+Write-Host "    API : http://127.0.0.1:$WsPort/docs (Godot s'y connecte en WebSocket)" -ForegroundColor DarkGray
+if ($Data) {
+    Write-Host '    Console MinIO : http://127.0.0.1:19001 (filets / filets-secret) · PostgreSQL : 127.0.0.1:19432 (filets / filets)' -ForegroundColor DarkGray
+}
 if (-not $Auto) { Write-Host '    Règle ta partie dans Godot, puis clique sur « Démarrer la partie ». Ctrl+C ici pour quitter.' -ForegroundColor DarkGray }
 
 # Le moteur tourne dans cette console ; son PID est noté pour que stop.ps1 puisse l'arrêter depuis une autre.
