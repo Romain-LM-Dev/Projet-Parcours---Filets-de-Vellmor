@@ -1,4 +1,4 @@
-"""Intégration avec un vrai broker Kafka (ignorée s'il n'y en a pas sur localhost:9092).
+"""Intégration avec un vrai broker Kafka (ignorée s'il n'y en a pas sur 127.0.0.1:19092).
 
     docker compose up -d && python -m pytest tests/test_kafka_integration.py
 
@@ -21,7 +21,7 @@ from filets.pipeline import IndicatorPublisher
 from filets.schemas import validate_status
 from helpers import cfg_for, play
 
-BOOTSTRAP = "localhost:9092"
+BOOTSTRAP = "127.0.0.1:19092"
 
 
 def broker_up() -> bool:
@@ -33,7 +33,7 @@ def broker_up() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(not broker_up(), reason="aucun broker Kafka sur localhost:9092")
+pytestmark = pytest.mark.skipif(not broker_up(), reason="aucun broker Kafka sur 127.0.0.1:19092")
 
 
 @pytest.fixture

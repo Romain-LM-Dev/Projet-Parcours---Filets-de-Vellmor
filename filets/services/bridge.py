@@ -1,6 +1,6 @@
 """Pont Kafka ↔ Godot : l'API FastAPI (REST + WebSocket), alimentée par Kafka en asynchrone.
 
-    python -m filets.services.bridge [--port 8765] [--host 127.0.0.1] [--bootstrap localhost:9092]
+    python -m filets.services.bridge [--port 8765] [--host 127.0.0.1] [--bootstrap 127.0.0.1:19092]
 
 Relaie événements, indicateurs et état du moteur vers la scène Godot (WebSocket `/ws`) et vers l'API REST (`/api`, `/docs`),
 et renvoie les ordres dans `filets.commands`. Au démarrage, le pont relit les événements depuis le dernier `run_start` (le run

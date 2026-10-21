@@ -1,5 +1,5 @@
 """Les services Kafka en asynchrone (aiokafka) : reprise au dernier `run_start`, pont FastAPI, indicateurs.
-Un vrai broker sur localhost:9092 (ignoré s'il n'y en a pas) ; chaque test travaille sur des topics à son nom."""
+Un vrai broker sur 127.0.0.1:19092 (ignoré s'il n'y en a pas) ; chaque test travaille sur des topics à son nom."""
 from __future__ import annotations
 
 import asyncio
@@ -18,7 +18,7 @@ from filets.services import indicators as indicators_service
 from helpers import play
 from test_kafka_integration import BOOTSTRAP, broker_up, kcfg, publish_all  # noqa: F401  (kcfg est une fixture)
 
-pytestmark = pytest.mark.skipif(not broker_up(), reason="aucun broker Kafka sur localhost:9092")
+pytestmark = pytest.mark.skipif(not broker_up(), reason="aucun broker Kafka sur 127.0.0.1:19092")
 
 
 def free_port() -> int:

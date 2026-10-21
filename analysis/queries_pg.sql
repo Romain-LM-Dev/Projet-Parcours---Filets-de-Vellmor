@@ -1,6 +1,6 @@
 -- Les requêtes de queries.sql, pour l'historique dans PostgreSQL (JSONB au lieu de JSON1), plus deux requêtes propres
 -- à PostgreSQL : coût par système (1 réflexe / 2 réflexion) et recherche directe dans les charges utiles.
--- Exécution : python -m filets query analysis/queries_pg.sql --pg   (ou psql, DBeaver… sur 127.0.0.1:5433)
+-- Exécution : python -m filets query analysis/queries_pg.sql --pg   (ou psql, DBeaver… sur 127.0.0.1:19432)
 ;
 
 -- 1. Comparaison des configurations à la dernière saison : stock, indice de norme, coût

@@ -9,8 +9,8 @@
   de Godot.
 
   Sans option :
-  - Docker Desktop est lancé s'il ne tourne pas ; un conteneur d'un autre projet qui tient un port de FILETS (9092, 5433,
-    8333) est signalé, et arrêté si on accepte (ses données sont gardées) ;
+  - Docker Desktop est lancé s'il ne tourne pas ; FILETS a ses propres ports (19092, 19432, 19000, 19001) : un conteneur
+    d'un autre projet qui en tiendrait un serait signalé, et arrêté si on accepte (ses données sont gardées) ;
   - Kafka (docker compose) et les services indicators / store / bridge, chacun dans sa fenêtre, puis le moteur `--bus kafka`
     ici (le service bridge ouvre le port 8765, pas le moteur) ;
   - Ollama : Qwen 2.5 3B + 1,5B et le modèle de décision open tev1 pour les réflexes et les votes (-OllamaProfile fast : sans
@@ -118,7 +118,7 @@ if ($Kafka -or $Data) {
         if ($LASTEXITCODE -ne 0) { Fail "Docker Desktop n'est pas prêt : lance-le, attends qu'il le soit, puis relance (ou .\start.cmd -Light, sans Docker)." }
     }
     Ok 'Docker prêt'
-    $ports = @(9092) + $(if ($Data) { @(5433, 8333) } else { @() })
+    $ports = @(19092) + $(if ($Data) { @(19432, 19000, 19001) } else { @() })
     $others = @(docker ps --format '{{.Names}}|{{.Ports}}' | Where-Object { $_ -notmatch '^filets-' } | ForEach-Object {
         $name, $map = $_ -split '\|', 2
         if ($ports | Where-Object { $map -match ":$_->" }) { $name }
@@ -182,8 +182,8 @@ if ($Data) {
         if ($LASTEXITCODE -eq 0) { $ready = $true } else { Start-Sleep -Seconds 1 }
     }
     if (-not $ready) { Fail 'PostgreSQL ne répond pas. Vérifie avec : docker compose logs postgres' }
-    Ok 'PostgreSQL + pgvector prêt (127.0.0.1:5433)'
-    Ok 'stockage objet S3 (127.0.0.1:8333, bucket « filets »)'
+    Ok 'PostgreSQL + pgvector prêt (127.0.0.1:19432)'
+    Ok 'stockage objet MinIO (S3 sur 127.0.0.1:19000, bucket « filets » ; console http://127.0.0.1:19001)'
     if (-not $Config -and -not $Auto) { $Config = 'config/data.yaml' }   # -Auto garde la configuration de son moteur d'IA
 }
 
@@ -194,15 +194,15 @@ if ($Kafka) {
     if ($Ui) { docker compose --profile ui up -d } else { docker compose up -d }
     if ($LASTEXITCODE -ne 0) { Fail 'docker compose up a échoué.' }
 
-    Write-Host '    Attente du broker sur localhost:9092 (jusqu''à 90 s)...'
-    $probe = "from confluent_kafka.admin import AdminClient; AdminClient({'bootstrap.servers':'localhost:9092'}).list_topics(timeout=3)"
+    Write-Host '    Attente du broker sur 127.0.0.1:19092 (jusqu''à 90 s)...'
+    $probe = "from confluent_kafka.admin import AdminClient; AdminClient({'bootstrap.servers':'127.0.0.1:19092'}).list_topics(timeout=3)"
     $ready = $false
     for ($i = 0; $i -lt 30 -and -not $ready; $i++) {
         & $venvPython -c $probe *> $null
         if ($LASTEXITCODE -eq 0) { $ready = $true } else { Start-Sleep -Seconds 3 }
     }
     if (-not $ready) { Fail 'Le broker Kafka ne répond pas. Vérifie avec : docker compose ps  /  docker compose logs kafka' }
-    Ok 'broker Kafka prêt (localhost:9092)'
+    Ok 'broker Kafka prêt (127.0.0.1:19092)'
     if ($Ui) { Ok 'Kafka UI : http://localhost:8080' }
 
     Step 'Services (indicators, store, bridge)'

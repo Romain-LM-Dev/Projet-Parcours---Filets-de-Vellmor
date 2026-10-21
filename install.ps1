@@ -23,7 +23,7 @@
   et bulletins de vote). Il demande Ollama 0.40.4 ou plus ; sans lui, ces décisions passent par qwen2.5:1.5b.
 
 .PARAMETER Data
-  Prépare le stockage de config/data.yaml : images Docker de PostgreSQL + pgvector et du stockage objet S3 (SeaweedFS), et
+  Prépare le stockage de config/data.yaml : images Docker de PostgreSQL + pgvector et du stockage objet S3 (MinIO), et
   le modèle de plongement embeddinggemma (0,6 Go) pour le RAG vectoriel.
 
 .PARAMETER SkipTests
@@ -148,7 +148,7 @@ if (-not $SkipKafka) {
             else { Warn "Le téléchargement de l'image Kafka a échoué." }
             if ($Data) {
                 docker compose --profile data pull postgres objects
-                if ($LASTEXITCODE -eq 0) { Ok 'images PostgreSQL + pgvector et SeaweedFS (S3) téléchargées' }
+                if ($LASTEXITCODE -eq 0) { Ok 'images PostgreSQL + pgvector et MinIO (S3) téléchargées' }
                 else { Warn "Le téléchargement des images de stockage a échoué." }
             }
         }

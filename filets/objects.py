@@ -4,7 +4,7 @@ l'archive de chaque partie (`events.jsonl`, `indicators.jsonl`, `config.json`, `
 `storage.objects.kind` :
 - `none`  : rien de plus que le dossier `runs/` (par défaut) ;
 - `local` : un dossier qui imite un magasin d'objets (clé = chemin relatif) ;
-- `s3`    : un service compatible S3, en asynchrone (miniopy-async) : SeaweedFS dans `docker-compose.yml`, ou MinIO,
+- `s3`    : un service compatible S3, en asynchrone (miniopy-async) : MinIO dans `docker-compose.yml`, ou
             AWS S3… Les clés d'accès viennent de `FILETS_S3_ACCESS_KEY` / `FILETS_S3_SECRET_KEY`, sinon de la configuration.
 
 Clés : `corpus/<empreinte du corpus>/<fichier>.md`, `runs/<run_id>/<fichier>`.

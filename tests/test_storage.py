@@ -28,8 +28,8 @@ from filets.vectors import EmbeddingError, HashEmbedder, OllamaEmbedder, PgVecto
 from helpers import cfg_for, play, read_events
 
 ROOT_CORPUS = ROOT / "corpus"
-PG_ADMIN = os.environ.get("FILETS_TEST_PG_DSN", "postgresql://filets:filets@127.0.0.1:5433/filets")
-S3_ENDPOINT = os.environ.get("FILETS_TEST_S3", "127.0.0.1:8333")
+PG_ADMIN = os.environ.get("FILETS_TEST_PG_DSN", "postgresql://filets:filets@127.0.0.1:19432/filets")
+S3_ENDPOINT = os.environ.get("FILETS_TEST_S3", "127.0.0.1:19000")
 VALUES = {"capacity": "100", "price": "100", "upkeep": "150", "half_capacity": "50", "n_fishers": 8}
 
 
@@ -443,7 +443,7 @@ def test_the_store_service_writes_to_postgres_then_commits_its_kafka_position(pg
     from test_kafka_integration import BOOTSTRAP, broker_up
 
     if not broker_up():
-        pytest.skip("aucun broker Kafka sur localhost:9092")
+        pytest.skip("aucun broker Kafka sur 127.0.0.1:19092")
     from aiokafka import AIOKafkaConsumer, TopicPartition
 
     from filets.bus import KafkaBus, ensure_topics

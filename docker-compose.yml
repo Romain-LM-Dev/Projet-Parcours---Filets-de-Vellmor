@@ -1,20 +1,22 @@
 # Kafka en mode KRaft (sans ZooKeeper), un seul nœud : suffisant pour le projet.
-#   docker compose up -d                → broker sur localhost:9092
+#   docker compose up -d                → broker sur 127.0.0.1:19092
 #   docker compose --profile ui up -d   → + interface web Kafka UI sur http://localhost:8080
-#   docker compose --profile data up -d → + PostgreSQL 17 + pgvector (127.0.0.1:5433) et stockage objet S3 (127.0.0.1:8333),
-#                                         pour config/data.yaml (RAG vectoriel, historique, archives des parties)
-# Les services de données n'écoutent que sur la machine locale (127.0.0.1) : identifiants de développement.
+#   docker compose --profile data up -d → + PostgreSQL 17 + pgvector (127.0.0.1:19432) et stockage objet MinIO (S3 sur
+#                                         127.0.0.1:19000, console sur http://127.0.0.1:19001), pour config/data.yaml
+# Ports 19xxx et non les ports standard (9092, 5432, 9000) : un autre projet ou un PostgreSQL installé sur la machine peut
+# les tenir. FILETS a ses propres conteneurs, volumes et identifiants, et tourne en même temps qu'un autre projet.
+# Tout n'écoute que sur la machine locale (127.0.0.1) : identifiants de développement.
 services:
   kafka:
     image: apache/kafka:3.8.0
     container_name: filets-kafka
     ports:
-      - "9092:9092"
+      - "127.0.0.1:19092:19092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://127.0.0.1:19092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
@@ -42,7 +44,7 @@ services:
     container_name: filets-postgres
     profiles: ["data"]
     ports:
-      - "127.0.0.1:5433:5432"        # 5433 : le 5432 est souvent pris par un PostgreSQL installé sur la machine
+      - "127.0.0.1:19432:5432"
     environment:
       POSTGRES_USER: filets
       POSTGRES_PASSWORD: filets
@@ -55,22 +57,25 @@ services:
       timeout: 3s
       retries: 30
 
-  # Stockage objet compatible S3. SeaweedFS (Apache-2.0) : l'image Docker de MinIO n'est plus publiée sur Docker Hub.
-  # N'importe quel service S3 convient (MinIO, AWS S3…) : voir storage.objects dans config/data.yaml.
+  # Stockage objet compatible S3 : MinIO (AGPLv3). L'image minio/minio n'est plus publiée sur Docker Hub ; celle de
+  # Chainguard l'est, et maintenue. Elle tourne en root dans le conteneur : son utilisateur par défaut ne peut pas écrire
+  # dans le volume. N'importe quel service S3 convient : voir storage.objects dans config/data.yaml.
   objects:
-    image: chrislusf/seaweedfs:4.48
+    image: cgr.dev/chainguard/minio:latest
     container_name: filets-objects
     profiles: ["data"]
-    command: ["mini", "-dir=/data"]
+    user: "0"
+    command: ["server", "/data", "--console-address", ":9001"]
     ports:
-      - "127.0.0.1:8333:8333"
+      - "127.0.0.1:19000:9000"     # API S3
+      - "127.0.0.1:19001:9001"     # console web
     environment:
-      AWS_ACCESS_KEY_ID: filets
-      AWS_SECRET_ACCESS_KEY: filets-secret
+      MINIO_ROOT_USER: filets
+      MINIO_ROOT_PASSWORD: filets-secret
     volumes:
-      - objects-data:/data
+      - minio-data:/data
 
 volumes:
   kafka-data:
   postgres-data:
-  objects-data:
+  minio-data:

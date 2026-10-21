@@ -30,7 +30,7 @@ Ce document explique comment les morceaux du jeu se parlent et où vont les donn
 | **store** | Range événements et indicateurs dans **PostgreSQL** (`storage.history: postgres`) ou SQLite (`data/history.db`), pour les requêtes d'analyse. Il ne valide sa position dans Kafka qu'après l'écriture en base. |
 | **bridge** | L'**API FastAPI** sur `:8765` : WebSocket pour Godot (`/` et `/ws`, protocole inchangé) et REST pour tout le reste (`/api/status`, `/api/catalog`, `POST /api/commands`, `/api/runs`, `/api/runs/{id}/events`, `/api/runs/{id}/memories`). Documentation essayable sur `/docs`. Elle n'écoute que sur 127.0.0.1 (aucune authentification). |
 | **PostgreSQL + pgvector** | Avec `config/data.yaml` : le RAG (passages du corpus et souvenirs des agents, avec leur vecteur) et l'historique des parties. |
-| **Stockage objet S3** | Avec `config/data.yaml` : les fichiers bruts, à savoir les documents du corpus et l'archive de chaque partie (`events.jsonl`, `indicators.jsonl`, `config.json`, `summary.json`). SeaweedFS dans `docker-compose.yml`, ou tout service S3 (MinIO, AWS…). |
+| **Stockage objet S3** | Avec `config/data.yaml` : les fichiers bruts, à savoir les documents du corpus et l'archive de chaque partie (`events.jsonl`, `indicators.jsonl`, `config.json`, `summary.json`). MinIO dans `docker-compose.yml`, ou tout service S3 (AWS…). |
 | **Godot** | Affiche, ne décide rien : menu, carte de la vallée, fil des interactions, inspecteur d'agent, barre de pilotage. |
 | **Ollama** | Serveur de modèles locaux. Seul le moteur lui parle. |
 
@@ -139,7 +139,7 @@ Le moteur garde `confluent-kafka` pour publier : publier y est déjà un simple 
 ## 6. Stockage : PostgreSQL + pgvector et stockage objet
 
 ```
-docker compose --profile data up -d     # PostgreSQL 17 + pgvector (127.0.0.1:5433), SeaweedFS S3 (127.0.0.1:8333)
+docker compose --profile data up -d     # PostgreSQL 17 + pgvector (127.0.0.1:19432), MinIO S3 (127.0.0.1:19000)
 ollama pull embeddinggemma              # plongements multilingues, 768 dimensions
 python -m filets serve --config config/data.yaml --llm ollama_open     # ou simplement : .\start.cmd
 ```

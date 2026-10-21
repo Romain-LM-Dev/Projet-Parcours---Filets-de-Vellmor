@@ -129,7 +129,7 @@ Une barre au-dessus de la carte commande la partie en cours (touche **Espace** p
 ou à la main :
 
 ```bash
-docker compose up -d                                 # broker KRaft sur localhost:9092
+docker compose up -d                                 # broker KRaft sur 127.0.0.1:19092
 python -m filets.services.indicators                 # terminal 1 : indicateurs en flux
 python -m filets.services.store                      # terminal 2 : historique (SQLite ; PostgreSQL avec --config config/data.yaml)
 python -m filets.services.bridge                     # terminal 3 : API FastAPI (ws://localhost:8765/ws pour Godot, REST sur /api)
@@ -440,8 +440,9 @@ La pause et la vitesse sont tracées de la même façon (`injection pause|resume
 Les schémas versionnés de chaque type d'événement sont dans `schemas/` (source : `filets/schemas.py`).
 
 **PostgreSQL + pgvector et stockage objet (`config/data.yaml`).** `docker compose --profile data up -d` démarre PostgreSQL 17 avec
-pgvector (sur 127.0.0.1:5433, car le 5432 est souvent pris par un PostgreSQL installé) et un stockage objet compatible S3
-(SeaweedFS sur 127.0.0.1:8333 ; l'image Docker de MinIO n'est plus publiée sur Docker Hub, mais tout service S3 convient).
+pgvector (sur 127.0.0.1:19432) et le stockage objet MinIO (S3 sur 127.0.0.1:19000, console sur http://127.0.0.1:19001 ; tout
+service S3 convient). FILETS utilise des ports 19xxx (Kafka sur 19092) et non les ports standard, qu'un autre projet ou un
+PostgreSQL installé peuvent tenir : les deux tournent en même temps, chacun avec ses conteneurs, ses volumes et ses identifiants.
 `ollama pull embeddinggemma` installe le modèle de plongement (multilingue, 768 dimensions, calculé sur le processeur pour laisser
 la carte graphique aux LLM). Puis `python -m filets serve --config config/data.yaml` (c'est ce que fait `.\start.cmd`). Si la base tombe en
 cours de partie, la recherche se rabat sur BM25 en mémoire et la partie continue. Tout se fait en asynchrone (asyncpg,

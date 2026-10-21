@@ -1,6 +1,6 @@
 """Service d'indicateurs : consomme `filets.events`, publie `filets.indicators` (B2, C7, F6), en asynchrone (aiokafka).
 
-    python -m filets.services.indicators [--bootstrap localhost:9092]
+    python -m filets.services.indicators [--bootstrap 127.0.0.1:19092]
 
 Au démarrage, le service se place sur le dernier `run_start` du topic : tous ses calculs
 (capacité du lac, liste des pêcheurs, normes adoptées…) se rapportent à ce début de run. Démarré
