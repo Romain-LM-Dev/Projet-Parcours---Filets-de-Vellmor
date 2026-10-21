@@ -291,6 +291,15 @@ class World:
                 out.append(a.id)
         return out
 
+    def fisher_ref(self, raw) -> str | None:
+        """Le pêcheur que désigne `raw` : son identifiant, ou son nom (un petit modèle écrit souvent « Odile de Bramois » là où
+        l'on attend F02, et son jugement ou sa proposition se perdait) ; None s'il n'en désigne aucun, ou plusieurs."""
+        sid = str(raw).strip().upper()
+        if sid in self.agents:
+            return sid if self.agents[sid].is_fisher else None
+        found = self.named_fishers([str(raw)])
+        return found[0] if len(found) == 1 else None
+
     # ------------------------------------------------------------ déclarations, mensonges, confiance
     def can_see(self, observer: Agent, subject: Agent) -> bool:
         """L'observateur connaît-il la déclaration de `subject` ? Toute la vallée si les déclarations sont lues à tous, sinon le
@@ -321,14 +330,14 @@ class World:
         return round(sum(vals) / len(vals), 3) if vals else TRUST_START
 
     def judge(self, observer: Agent, changes, source_event_id: str | None = None):
-        """`observer` revoit sa confiance envers les pêcheurs de `changes` (identifiant -> de −3 à +3, en dixièmes) : c'est son
-        jugement, selon sa morale et ses intérêts, et le moteur n'y ajoute rien. Une valeur illisible, hors des pêcheurs ou sur
-        soi-même est ignorée. Un événement `trust` par personne dont la confiance change."""
+        """`observer` revoit sa confiance envers les pêcheurs de `changes` (identifiant ou nom -> de −3 à +3, en dixièmes) : c'est
+        son jugement, selon sa morale et ses intérêts, et le moteur n'y ajoute rien. Une valeur illisible, hors des pêcheurs ou
+        sur soi-même est ignorée. Un événement `trust` par personne dont la confiance change."""
         if not isinstance(changes, dict):
             return
         row = self.trust[observer.id]
-        for sid, raw in changes.items():
-            sid, steps = str(sid).strip().upper(), to_number(raw)
+        for key, raw in changes.items():
+            sid, steps = self.fisher_ref(key), to_number(raw)
             if sid not in row or steps is None:
                 continue
             old = row[sid]
@@ -1073,18 +1082,17 @@ class World:
                                      f"{season + 1}.", "promesse", 1.0, pinned=True, expires_season=season + 1,
                               source_event_id=pe["event_id"])
         # accusation
-        acc = d.get("accuse")
-        if isinstance(acc, str) and acc.strip().upper() in self.agents and acc.strip().upper() != agent.id:
-            accused = self.agents[acc.strip().upper()]
-            if accused.is_fisher:
-                ae = self.events.emit("accusation", {"accuser": agent.id, "accused": accused.id,
-                                                     "utterance_id": u["event_id"]}, actor=agent.id)
-                asm.accused.append((now, accused.id))
-                self.accusations.setdefault(season, []).append((now, accused.id, agent.id))
-                if accused.id in asm.participants:
-                    self.remember(accused, f"{agent.profile.name} m'a accusé devant tous d'avoir trop pêché.",
-                                  "accusation", 0.95, pinned=True, expires_season=season + 1,
-                                  source_event_id=u["event_id"])
+        acc = self.fisher_ref(d["accuse"]) if d.get("accuse") else None
+        if acc is not None and acc != agent.id:
+            accused = self.agents[acc]
+            ae = self.events.emit("accusation", {"accuser": agent.id, "accused": accused.id,
+                                                 "utterance_id": u["event_id"]}, actor=agent.id)
+            asm.accused.append((now, accused.id))
+            self.accusations.setdefault(season, []).append((now, accused.id, agent.id))
+            if accused.id in asm.participants:
+                self.remember(accused, f"{agent.profile.name} m'a accusé devant tous d'avoir trop pêché.",
+                              "accusation", 0.95, pinned=True, expires_season=season + 1,
+                              source_event_id=u["event_id"])
         # ce qu'il pense désormais de chacun (son jugement), et ce qu'il propose à la vallée : exclure ou réautoriser
         self.judge(agent, d.get("confiance"), u["event_id"])
         if agent.is_fisher:
@@ -1124,10 +1132,10 @@ class World:
         """`agent` propose d'interdire de pêche (`exclure`) un pêcheur, ou de le laisser pêcher à nouveau (`reautoriser`) ; si la
         même proposition est déjà sur la table, il la soutient. On n'exclut pas un exclu, on ne réautorise pas un libre, et l'on
         ne se vise pas soi-même. L'auteur vote pour."""
-        tid = str(raw).strip().upper()
-        target = self.agents.get(tid)
-        if target is None or not target.is_fisher or tid == agent.id or (action == "exclure") == (tid in self.banned):
+        tid = self.fisher_ref(raw)
+        if tid is None or tid == agent.id or (action == "exclure") == (tid in self.banned):
             return
+        target = self.agents[tid]
         same = next((s for s in asm.sanctions.values() if s.target == tid and s.action == action), None)
         if same is None:
             sid = f"X{next(self._xid)}"

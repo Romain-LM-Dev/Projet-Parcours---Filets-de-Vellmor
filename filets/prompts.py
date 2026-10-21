@@ -373,9 +373,11 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         fields.append("\"promesse\": <tonnes que tu annonces pêcher la saison prochaine, ou null>")
     fields.append("\"accuse\": \"<identifiant d'un pêcheur que tu accuses d'avoir trop pêché>\" ou null")
     # la confiance : c'est l'agent qui dit ce que chaque acte, chaque parole change pour lui (le moteur n'y ajoute rien)
-    fields.append("\"confiance\": {\"<identifiant>\": <de -3 à +3>} pour ceux envers qui ce que tu sais et entends ce soir "
-                  "change ta confiance, selon ta morale et tes intérêts (-3 : tu ne le crois plus du tout, +3 : il a gagné ta "
-                  "confiance) ; {} si rien ne change")
+    # « ce soir » : sans cela, un petit modèle sanctionnait encore à chaque veillée un dépassement vieux de deux saisons
+    fields.append("\"confiance\": {\"<identifiant>\": <de -3 à +3>} pour ceux envers qui ce que tu apprends ce soir (saison "
+                  f"{obs['season']} : prises, indices, paroles) change ta confiance, selon ta morale et tes intérêts (-3 : tu "
+                  "ne le crois plus du tout, +3 : il a gagné ta confiance) ; les saisons d'avant comptent déjà dans ta "
+                  "confiance ; {} si rien ne change")
     if fisher:
         fields.append("\"exclure\": \"<identifiant d'un pêcheur que tu proposes d'interdire de pêche>\" ou null")
         fields.append("\"reautoriser\": \"<identifiant d'un pêcheur interdit que tu proposes de laisser pêcher à nouveau>\" "

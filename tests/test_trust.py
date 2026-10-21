@@ -151,11 +151,11 @@ def test_the_engine_never_sets_trust_by_itself(tmp_path):
 
 
 def test_an_ai_says_itself_what_each_act_changes_for_it(tmp_path):
-    """Le champ `confiance` d'une réplique d'IA est appliqué tel quel, en dixièmes, borné de −3 à +3 ; un identifiant inconnu, ou
-    soi-même, est ignoré."""
+    """Le champ `confiance` d'une réplique d'IA est appliqué tel quel, en dixièmes, borné de −3 à +3 ; un pêcheur s'y désigne par
+    son identifiant ou par son nom ; un inconnu, ou soi-même, est ignoré."""
     ids = {f["first_name"]: f"F{i + 1:02d}" for i, f in enumerate(VALLEY)}
     world, events, _ = game(tmp_path, "ia-juge", QUIET, seasons=1,
-                            confiance={ids["Elwen"]: -2, ids["Inès"]: 9, "ZZ": 3})
+                            confiance={"Elwen d'Ostrel": -2, ids["Inès"]: 9, "ZZ": 3})
     ines, theo, elwen = named(world, "Inès").id, named(world, "Théo").id, elwen_of(world).id
     assert [ines, theo, elwen] == [ids["Inès"], ids["Théo"], ids["Elwen"]]
     by_ai = [e["payload"] for e in kinds(events, "trust") if e["payload"]["by"] in (ines, theo)]
@@ -208,6 +208,19 @@ def test_the_valley_votes_to_exclude_a_proven_liar(tmp_path):
     after = [e["payload"] for e in events if e["season"] > ban["season"] and e["type"] in ("catch", "report")
              and e["payload"]["agent"] == elwen.id]
     assert after and all(p.get("secret") and p["zone"] != "Ostrel" for p in after)
+
+
+def test_a_fisher_named_instead_of_numbered_is_understood(tmp_path):
+    """Un petit modèle propose souvent d'exclure « Bérénice » plutôt que F08 : le nom vaut l'identifiant (avant, la proposition
+    se perdait en silence). Un nom qui ne désigne aucun pêcheur, ou plusieurs, ne vise personne."""
+    world, _, _ = make_world(tmp_path, "noms")
+    a, b, c = world.fishers[:3]
+    asm = Assembly("valley", [x.id for x in world.fishers], 1, 99.0)
+    world.propose_sanction(a, asm, b.profile.first_name, "exclure", {"event_id": "u"})
+    assert [(s.author, s.target, s.votes) for s in asm.sanctions.values()] == [(a.id, b.id, {a.id: True})]
+    assert world.fisher_ref(b.id.lower()) == b.id and world.fisher_ref(b.profile.name) == b.id
+    assert world.fisher_ref("personne") is None
+    assert world.fisher_ref(f"{b.profile.first_name} et {c.profile.first_name}") is None
 
 
 def test_a_vote_against_keeps_the_fisher_free(tmp_path):
