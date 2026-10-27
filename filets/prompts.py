@@ -493,7 +493,7 @@ def narration_messages(p, facts: list[str], capacity: float, villages=()) -> lis
              "N'invente rien : ne parle que de ce qui est dans cette liste. S'il n'y est question ni de promesses, ni de "
              "règle, ni d'accusation, n'en parle pas. Pour le lac, reprends le mot de la liste, sans l'exagérer ; pour une "
              "règle, dis si c'est la première, une règle reconduite, plus stricte ou assouplie, comme la liste le dit. "
-             "Des phrases simples et complètes, en bon français. "
+             "Le temps de la pêche peut expliquer de maigres prises : tu peux le dire. Des phrases simples et complètes, en bon français. "
              "Réponds en JSON : {\"recit\": \"<ton récit>\"}")
     return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": ask}]
 

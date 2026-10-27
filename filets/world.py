@@ -1726,7 +1726,8 @@ class World:
             verdict = 'voté' if r["adopted"] else 'refusé'
             if r["action"] in PATROL_ACTIONS:
                 what = "d'installer" if r["action"] == "patrouille" else "de retirer"
-                facts.append(f"Le conseil a {verdict} {what} la patrouille du lac ({len(r['for'])} voix sur {r['voters']}).")
+                facts.append(f"Le conseil a {verdict} {what} la patrouille du lac, dès la saison {season + 1} "
+                             f"({len(r['for'])} voix sur {r['voters']}).")
                 continue
             what = "d'interdire de pêche" if r["action"] == "exclure" else "de laisser pêcher à nouveau"
             facts.append(f"La vallée a {verdict} {what} {self.first_name(r['target'])} "
@@ -1741,9 +1742,19 @@ class World:
         cond = next((p.get("conditions") for p in of("season_start")), None) or {}
         if cond.get("climate"):
             facts.append(f"Saison de l'année : {cond['climate']}.")
+            days = cond.get("days") or []                  # le temps de la pêche : tout le monde l'a vu
+            sky = [f"{days.count(k)} jour{'s' if days.count(k) > 1 else ''} {w + 's' if w[0] != 'd' and days.count(k) > 1 else w}"
+                   for k, w in (("calme", "calme"), ("ordinaire", "ordinaire"), ("agité", "agité"), ("tempête", "de tempête"))
+                   if days.count(k)]
+            if sky:
+                facts.append("Temps de la pêche : " + ", ".join(sky) + " (les petites barques souffrent le plus des mauvais jours).")
         for ev in of("world_event"):
             facts.append(f"Événement : {ev['label']} ({ev['text']}).")
-        if self.patrol_active(season):
+        route = next((p["legs"] for p in of("patrol_route")), None)         # l'ancien l'a envoyée : il sait où elle est passée
+        if route:
+            facts.append("La patrouille du lac est passée par " + " puis ".join(
+                "le large" if leg["zone"] == "large" else leg["zone"] for leg in route) + ".")
+        elif self.patrol_active(season):
             facts.append("Une patrouille surveille le lac cette saison.")
         council = next((p.get("delegates") for p in of("assembly_start") if p.get("delegates")), None)
         if council:
@@ -1779,8 +1790,9 @@ class World:
             else:
                 what = "règle plus stricte adoptée" if n["quota"] < before.quota else "règle assouplie"
                 instead = f" (au lieu de {before.quota:g} t)"
+            who = "élus" if n.get("delegates") else "pêcheurs"           # au conseil, ce sont les élus qui soutiennent
             facts.append(f"À la veillée, {what}{whose} : pas plus de {n['quota']:g} t par pêcheur{instead} à partir de la "
-                         f"saison {n['effective_season']}, soutenue par {len(n['supporters'])} pêcheurs sur {present}.")
+                         f"saison {n['effective_season']}, soutenue par {len(n['supporters'])} {who} sur {present}.")
         if of("assembly_start") and not adopted:
             facts.append(f"À la veillée, {len(of('proposal'))} proposition(s), mais aucune règle n'a réuni la moitié des pêcheurs.")
         outcomes = of("promise_outcome")

@@ -52,6 +52,19 @@ def test_an_adopted_rule_says_which_rule_it_replaces(tmp_path):
         assert after.startswith(f"À la veillée, {kind} : ") and (new == old or f"(au lieu de {old:g} t)" in after)
 
 
+def test_the_story_tells_the_weather_the_patrol_and_who_sat_at_the_council(tmp_path):
+    events = play(tmp_path, run_id="conseil", seasons=2, time__mode="sync", climate__enabled=True,
+                  scenario__patrol={"cost": 15, "from_season": 1})
+    facts = [f for n in kinds(events, "narration") for f in n["payload"]["facts"]]
+    sky = next(f for f in facts if f.startswith("Temps de la pêche : "))
+    assert sum(int(part.split()[0]) for part in sky.split(" : ")[1].split(" (")[0].split(", ")) == 20      # chaque jour de pêche
+    assert any(f.startswith("La patrouille du lac est passée par ") for f in facts)
+    assert any(f.startswith("Au conseil de la vallée siégeaient : ") for f in facts)
+    assert any(" élus sur " in f for f in facts if f.startswith("À la veillée"))                  # au conseil, ce sont les élus
+    votes = [f for f in facts if "la patrouille du lac, dès la saison" in f]
+    assert all(" dès la saison 2 " in f or " dès la saison 3 " in f for f in votes)
+
+
 def elder_game(tmp_path, run_id, recit):
     rec = Recorder(recit=recit)
     cfg = cfg_for(tmp_path, seasons=1, time__mode="sync", population__custom=FOUR, population__elder=True,
