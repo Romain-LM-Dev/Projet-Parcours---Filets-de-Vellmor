@@ -157,6 +157,16 @@ func _initialize() -> void:
 	check(m.lbl_patrol.text.begins_with("Patrouille"), "la barre d'intervention dit où en est la patrouille du lac : " + m.lbl_patrol.text)
 	check(m.world.hamlet_pos.size() == 4, "la carte pose les quatre villages de la vallée de base")
 	check(not reputations.is_empty(), "le run de test fait bouger la confiance")
+	# l'onglet Confiance : la moyenne des autres, ou la confiance qu'un personnage accorde aux autres
+	m._set_trust_mode("avg")
+	check("moyenne" in m.trust_view.get_parsed_text(), "par défaut : la confiance moyenne des autres")
+	var watcher: String = str(m.agents.keys()[0])
+	m.trust_observer = watcher
+	m._set_trust_mode("from")
+	var seen_text: String = m.trust_view.get_parsed_text()
+	check("accorde aux autres" in seen_text and m.trust_who.visible and m.trust_who.item_count == m.agents.size(), "vue par un personnage : " + seen_text.substr(0, 90))
+	check(not (str(m.agents[watcher]["info"].get("name", "")).split(" ")[0] + "  ") in seen_text.substr(seen_text.find("PÊCHEUR")), "le personnage observé n'est pas dans sa propre liste")
+	m._set_trust_mode("avg")                   # la suite lit la moyenne des autres
 	check(absent_checked > 0 and bad_absent == 0, "au conseil, les absents sont les seuls à ne pas siéger (%d séances, %d erreurs)" % [absent_checked, bad_absent])
 	check(m.tabs.get_tab_title(2) == "Confiance", "l'onglet « Confiance » suit le récit : " + m.tabs.get_tab_title(2))
 	m._render_trust()

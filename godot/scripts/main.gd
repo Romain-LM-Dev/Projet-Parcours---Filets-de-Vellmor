@@ -33,6 +33,9 @@ var feed: RichTextLabel
 var narration: RichTextLabel    # le récit de chaque saison par l'ancien (onglet « Récit de l'ancien »)
 var trust_view: RichTextLabel   # jauges de confiance, vraies prises et déclarations (onglet « Confiance »)
 var trust_dirty := false
+var trust_mode := "avg"          # « avg » : la confiance moyenne des autres ; « from » : celle qu'un personnage accorde aux autres
+var trust_observer := ""         # le personnage dont on lit la confiance (mode « from ») : le dernier qu'on a sélectionné
+var trust_who: OptionButton
 var feed_only_selected: CheckBox
 var inspector: RichTextLabel
 var rules_view: RichTextLabel
@@ -459,9 +462,34 @@ func _build_ui() -> void:
 	narration.name = "Récit de l'ancien"
 	narration.scroll_following = true
 	tabs.add_child(narration)
+	var trust_box := VBoxContainer.new()
+	trust_box.name = "Confiance"
+	tabs.add_child(trust_box)
+	var trust_row := HBoxContainer.new()
+	trust_row.add_theme_constant_override("separation", 6)
+	trust_box.add_child(trust_row)
+	var trust_group := ButtonGroup.new()
+	for item in [["avg", "Moyenne des autres", "La confiance moyenne que les autres accordent à chacun."],
+			["from", "Vue par un personnage", "La confiance qu'un personnage accorde aux autres (choisissez-le dans la liste, ou cliquez sur lui sur la carte)."]]:
+		var tb := Button.new()
+		tb.text = str(item[1])
+		tb.tooltip_text = str(item[2])
+		tb.toggle_mode = true
+		tb.button_group = trust_group
+		tb.button_pressed = item[0] == "avg"
+		tb.focus_mode = Control.FOCUS_NONE
+		tb.pressed.connect(_set_trust_mode.bind(str(item[0])))
+		trust_row.add_child(tb)
+	trust_who = OptionButton.new()
+	trust_who.visible = false
+	trust_who.focus_mode = Control.FOCUS_NONE
+	trust_who.item_selected.connect(func(i: int) -> void:
+		trust_observer = str(trust_who.get_item_metadata(i))
+		_render_trust())
+	trust_row.add_child(trust_who)
 	trust_view = _rich()
-	trust_view.name = "Confiance"
-	tabs.add_child(trust_view)
+	trust_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	trust_box.add_child(trust_view)
 	inspector = _rich()
 	inspector.name = "Agent"
 	tabs.add_child(inspector)
@@ -1218,11 +1246,38 @@ static func trust_bar(v: float) -> String:
 	return "%s%s  [b]%d %%[/b]" % [full, empty, roundi(v * 100.0)]
 
 
+func _set_trust_mode(mode: String) -> void:
+	trust_mode = mode
+	trust_who.visible = mode == "from"
+	_render_trust()
+
+
+## La liste des personnages observables (l'ancien compris), dans l'ordre de la vallée.
+func _fill_trust_who() -> void:
+	var ids: Array = agents.keys()
+	if trust_who.item_count != ids.size():
+		trust_who.clear()
+		for id in ids:
+			trust_who.add_item(str(agents[id]["info"].get("name", id)).split(" ")[0])
+			trust_who.set_item_metadata(trust_who.item_count - 1, str(id))
+	for i in trust_who.item_count:
+		if str(trust_who.get_item_metadata(i)) == trust_observer:
+			trust_who.select(i)
+
+
 func _render_trust() -> void:
-	var s := "[color=#f3dca8][b]CONFIANCE[/b][/color] [color=#6f7896]· la confiance moyenne que les autres accordent à chacun[/color]\n"
+	if trust_mode == "from":
+		if not agents.has(trust_observer) and not agents.is_empty():
+			trust_observer = str(agents.keys()[0])
+		_fill_trust_who()
+	var obs := trust_observer if trust_mode == "from" and agents.has(trust_observer) else ""
+	var s := "[color=#f3dca8][b]CONFIANCE[/b][/color] [color=#6f7896]· %s[/color]\n" % (
+		"la confiance moyenne que les autres accordent à chacun" if obs == "" else "la confiance que %s accorde aux autres" % _who(obs))
 	s += "[color=#8f97b2][font_size=12]La vallée ne connaît que les déclarations faites à l'ancien ; les vraies prises, seuls vous et chaque pêcheur les connaissez.[/font_size][/color]\n\n"
-	var ids: Array = agents.keys().filter(func(k): return str(agents[k]["info"].get("role", "")) == "pecheur")
-	ids.sort_custom(func(x, y): return float(agents[x]["reputation"]) > float(agents[y]["reputation"]))
+	var ids: Array = agents.keys().filter(func(k): return str(agents[k]["info"].get("role", "")) == "pecheur" and str(k) != obs)
+	var trust_of := func(k) -> float:
+		return float(agents[k]["reputation"]) if obs == "" else float(agents[k]["trust_from"].get(obs, 0.5))
+	ids.sort_custom(func(x, y): return trust_of.call(x) > trust_of.call(y))
 	var head := "[color=#6f7896][font_size=11]%s[/font_size][/color]"
 	s += "[table=5][cell]%s[/cell][cell]%s[/cell][cell]%s[/cell][cell]%s[/cell][cell]%s[/cell]" % [head % "PÊCHEUR", head % "CONFIANCE",
 		head % "PÊCHÉ", head % "DÉCLARÉ", head % "MENSONGES"]
@@ -1241,7 +1296,7 @@ func _render_trust() -> void:
 				said_txt = ("[color=#ff8a7e][b]%s t[/b] (ment)[/color]" % _num(said)) if landed - said > 0.05 else ("%s t" % _num(said))
 		var lies := int(a["lies_found"])
 		var who := _who(id) + (" [color=#ff6a5c][font_size=10]INTERDIT[/font_size][/color]" if bool(a["banned"]) else "")
-		s += "[cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s[/cell]" % [who, trust_bar(float(a["reputation"])),
+		s += "[cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s  [/cell][cell]%s[/cell]" % [who, trust_bar(trust_of.call(id)),
 			landed_txt, said_txt, ("[color=#ff6a5c]%d[/color]" % lies) if lies > 0 else "—"]
 	s += "[/table]"
 	trust_view.text = s
@@ -1250,6 +1305,8 @@ func _render_trust() -> void:
 # ------------------------------------------------------------------ inspecteur (D2)
 func _select(id: String) -> void:
 	selected = id
+	trust_observer = id               # l'onglet Confiance, vu par ce personnage, suit la sélection
+	trust_dirty = true
 	world.selected = id
 	inspector_dirty = true
 	feed_dirty = feed_only_selected.button_pressed
