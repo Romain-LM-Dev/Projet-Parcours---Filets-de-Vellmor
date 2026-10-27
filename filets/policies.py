@@ -164,7 +164,9 @@ def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
     out = {"message": "", "destinataire": "tous", "proposition_quota": None, "soutien": None,
            "promesse": None, "accuse": None, "confiance": judged, "exclure": None, "reautoriser": None, "patrouille": None}
     lies, wants = s.get("lies_recent", 0), PATROL_WANTS.get(archetype)
-    if archetype in ("ancienne_famille", "beau_parleur") and not s.get("has_patrol") and wants is not None and lies >= wants:
+    if not s.get("patrol_enabled", True):
+        pass
+    elif archetype in ("ancienne_famille", "beau_parleur") and not s.get("has_patrol") and wants is not None and lies >= wants:
         out["patrouille"] = "installer"
     elif archetype in ("taiseux", "nouveau_venu") and s.get("has_patrol") and (wants is None or lies < wants):
         out["patrouille"] = "retirer"

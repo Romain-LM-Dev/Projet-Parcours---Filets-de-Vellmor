@@ -67,6 +67,7 @@ var lbl_cap_hint: Label
 var opt_comm: OptionButton
 var opt_council: OptionButton
 var chk_climate: CheckButton
+var chk_patrol: CheckButton
 var spin_events: SpinBox
 var spin_luck: SpinBox
 var spin_villages: SpinBox
@@ -405,6 +406,12 @@ func _build_left(body: Control) -> void:
 	chk_climate.focus_mode = Control.FOCUS_NONE
 	chk_climate.tooltip_text = "Printemps, été, automne, hiver : la pêche rend plus ou moins, le lac se repeuple plus ou moins vite. Des événements s'y ajoutent (sécheresse, tempête, banc de poissons, algues, crue, maladie)."
 	col.add_child(chk_climate)
+	chk_patrol = CheckButton.new()
+	chk_patrol.text = "Patrouille du lac"
+	chk_patrol.button_pressed = true
+	chk_patrol.focus_mode = Control.FOCUS_NONE
+	chk_patrol.tooltip_text = "Le conseil de la vallée peut voter une patrouille, aux frais de chaque pêcheur. Son capitaine est une IA : il décide seul où aller d'après les soupçons et les indices que les villageois ont partagés, et mesure les barques qu'il croise. Décochée : pas de patrouille dans la partie."
+	col.add_child(chk_patrol)
 	spin_events = _spin(0, 100, 5, 30, 84)
 	spin_events.suffix = "%"
 	spin_events.tooltip_text = "Chance qu'un événement survienne à chaque saison, à partir de la deuxième."
@@ -673,6 +680,7 @@ func reset_all() -> void:
 	_select_meta(opt_council, str(d.get("council", "delegates")))
 	_select_meta(opt_fleet, str(d.get("fleet", "mixte")))
 	chk_climate.button_pressed = bool(d.get("climate", true))
+	chk_patrol.button_pressed = bool(d.get("patrol", true))
 	spin_events.value = roundf(float(d.get("event_rate", 0.3)) * 100.0)
 	spin_luck.value = roundf(float(d.get("luck", 0.4)) * 100.0)
 	spin_villages.value = int(d.get("villages", 4))
@@ -1158,7 +1166,7 @@ func build_config() -> Dictionary:
 		"mode": mode, "seasons": int(spin_seasons.value), "seed": int(spin_seed.value),
 		"communication": str(opt_comm.get_item_metadata(opt_comm.selected)), "catches_visible": chk_visible.button_pressed,
 		"assembly_rounds": int(spin_rounds.value),
-		"council": str(opt_council.get_item_metadata(opt_council.selected)), "climate": chk_climate.button_pressed,
+		"council": str(opt_council.get_item_metadata(opt_council.selected)), "climate": chk_climate.button_pressed, "patrol": chk_patrol.button_pressed,
 		"event_rate": float(spin_events.value) / 100.0, "luck": float(spin_luck.value) / 100.0,
 		"llm": str(opt_llm.get_item_metadata(opt_llm.selected)), "speed": opt_speed.get_item_metadata(opt_speed.selected),
 		"reflection": str(opt_reflection.get_item_metadata(opt_reflection.selected)),

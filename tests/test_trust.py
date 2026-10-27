@@ -95,13 +95,16 @@ def test_a_neighbour_who_saw_the_boat_exposes_the_lie_and_the_cheater_keeps_quie
 
 
 def test_the_patrol_measures_the_boats_of_the_zone_it_visits(tmp_path, monkeypatch):
-    monkeypatch.setattr(World, "plan_patrol_rule", lambda self, legs: ["Ostrel"])      # l'ancien l'envoie à Ostrel
+    monkeypatch.setattr(World, "patrol_rule", lambda self, season, legs, days: ([("Ostrel", 8)], "test"))      # son capitaine va à Ostrel
+    monkeypatch.setattr(World, "patrol_schedule", lambda self, plan: [        # et y reste toute la saison de pêche
+        {"zone": z, "follow": None, "days": d, "from_day": 0.0, "to_day": 30.0} for z, d in plan])
     # la patrouille sort dès la 2e saison, la première où Elwen dépasse la règle (adoptée à la veillée de la 1re)
     world, events, _ = game(tmp_path, "patrouille", PATROL, seasons=2, patrol={"legs": 1, "from_season": 2})
     [route] = [e["payload"] for e in kinds(events, "patrol_route")]
     assert route["legs"][0]["zone"] == "Ostrel" and route["season"] == 2
     measured = {e["payload"]["subject"]: e["payload"] for e in kinds(events, "clue") if e["payload"]["kind"] == "patrouille"}
     assert set(measured) == {a.id for a in world.fishers if a.profile.hamlet == "Ostrel"}      # sa zone, et elle seule
+    assert {m["observer"] for m in measured.values()} == {"PAT"} and all(m["public"] for m in measured.values())
     [found] = [e["payload"] for e in kinds(events, "lie_discovered")]
     assert found["agent"] == elwen_of(world).id and found["how"] == "patrouille" and found["estimated"] == found["landed"]
 

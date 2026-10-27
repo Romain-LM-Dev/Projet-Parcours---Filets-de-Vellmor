@@ -46,7 +46,7 @@ class Recorder:
         self.sanction = sanction                  # le vote sur chaque proposition d'exclure ou de réautoriser
         self.elect = elect or {}                  # l'élection : prénom de l'électeur -> prénom du candidat (sinon le premier)
         self.debrief = debrief or {}              # le jugement d'un villageois absent du conseil
-        self.route = route                        # la route de la patrouille que choisit l'ancien (None : aucune zone lisible)
+        self.route = route                        # la route que choisit le capitaine de la patrouille : [(cible, jours)] (None : illisible)
         self.speech = speech or {}                # champs ajoutés à chaque réplique (ex. {"patrouille": "installer"})
         self.requests: list[dict] = []
         self.propose_first, self.proposed = propose_first, False
@@ -82,8 +82,10 @@ class Recorder:
                     content = json.dumps({"vote": next((c for c, text in cands if want and text.startswith(want)), cands[0][0])})
                 elif "Tu n'étais pas au conseil" in user:               # le bilan d'un villageois absent du conseil
                     content = json.dumps({"confiance": outer.debrief})
-                elif '{"zones"' in user:                                # la route de la patrouille
-                    content = json.dumps({"zones": outer.route} if outer.route else {"autre": "rien"})
+                elif '"etapes"' in user:                                # la route de la patrouille
+                    content = json.dumps({"raison": "Des soupçons pèsent sur cette rive.",
+                                          "etapes": [{"cible": t, "jours": d} for t, d in outer.route]}
+                                         if outer.route else {"autre": "rien"})
                 elif '"vote"' in user:                                  # bulletin de vote : la première proposition de la liste
                     ids = re.findall(r"^- (P\d+) :", user, re.M)
                     content = json.dumps({"vote": ids[0] if ids else "aucune"})

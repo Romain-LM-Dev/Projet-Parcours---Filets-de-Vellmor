@@ -315,23 +315,30 @@ async def debrief_villager(world, agent: Agent, asm) -> None:
         world.judge(agent, data.get("confiance"))
 
 
-async def route_decision(world, season: int, legs: int) -> list[str] | None:
-    """L'ancien envoie la patrouille du lac : les zones qu'elle visitera, dans l'ordre, d'après ce qu'il sait des villages, des
-    mensonges et des interdits. None : pas de réponse lisible (la route sera celle d'un ancien à règles)."""
-    elder = world.elder
-    data, _, _ = await _ask_llm(world, elder, "route", prompts.route_messages(
-        elder.profile, world.capacity, world.hamlets, world.route_lines(elder, season), legs), {"round": 95}, "S2",
-        schema=prompts.route_schema(world.zones, legs), max_tokens=prompts.ROUTE_MAX_TOKENS)
-    raw = (data or {}).get("zones")
-    if not isinstance(raw, list):
+async def patrol_decision(world, season: int, legs: int, days: int, lines: list[str]) -> tuple[list[tuple[str, int]], str] | None:
+    """Le capitaine de la patrouille décide où aller : jusqu'à `legs` étapes (une zone du lac, ou un pêcheur qu'il suit), et combien de
+    jours à chacune (`days` jours de mer en tout), d'après ce qu'on lui a dit et ce qu'il a relevé. Renvoie (étapes, raison), ou None si
+    la réponse est illisible (le plan sera celui d'un capitaine à règles)."""
+    agent = world.patrol_agent
+    targets = [*world.zones, *(a.id for a in world.fishers)]
+    data, _, _ = await _ask_llm(world, agent, "route", prompts.patrol_messages(
+        agent.profile, world.capacity, world.hamlets, lines, legs, days), {"round": 95}, "S2",
+        schema=prompts.patrol_schema(targets, legs, days), max_tokens=prompts.PATROL_MAX_TOKENS)
+    steps = (data or {}).get("etapes")
+    if not isinstance(steps, list):
         return None
-    known = {_plain(z): z for z in world.zones}
-    chosen: list[str] = []
-    for z in raw:
-        zone = known.get(_plain(str(z)))
-        if zone and zone not in chosen:
-            chosen.append(zone)
-    return chosen[:legs] or None
+    known = {_plain(t): t for t in targets}
+    plan: list[tuple[str, int]] = []
+    left = days
+    for step in steps:
+        target = known.get(_plain(str(step.get("cible", "")))) if isinstance(step, dict) else None
+        n = to_number(step.get("jours")) if isinstance(step, dict) else None
+        if target is None or n is None or left <= 0 or any(target == t for t, _ in plan):
+            continue
+        n = int(max(1, min(n, left)))
+        plan.append((target, n))
+        left -= n
+    return (plan[:legs], str((data or {}).get("raison", "")).strip()[:200]) if plan else None
 
 
 async def _quota_ballot(world, agent: Agent, asm) -> None:

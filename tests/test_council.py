@@ -159,15 +159,16 @@ def test_a_banned_fisher_cannot_be_elected(tmp_path):
 
 
 # ============================================================ la patrouille du lac
-def test_the_council_installs_a_patrol_and_the_elder_sends_it(tmp_path):
-    rec = Recorder(speech={"patrouille": "installer"}, route=["Tilque"], elect={"Mathis": "Mathis", "Inès": "Mathis"})
+def test_the_council_installs_a_patrol_and_its_captain_chooses_the_route(tmp_path):
+    rec = Recorder(speech={"patrouille": "installer"}, route=[("Tilque", 8)], elect={"Mathis": "Mathis", "Inès": "Mathis"})
     world, events, _ = fake_game(tmp_path, "patrouille", rec, seasons=3, elder=True)
     [vote] = [e["payload"] for e in kinds(events, "sanction_result") if e["payload"]["action"] == "patrouille"][:1]
     assert vote["adopted"] and vote["target"] == ""
     [installed] = [e["payload"] for e in kinds(events, "patrol") if e["payload"]["state"] == "installed"][:1]
     assert installed["effective_season"] == 2 and installed["cost"] == 15
     routes = {e["payload"]["season"]: e["payload"] for e in kinds(events, "patrol_route")}
-    assert 1 not in routes and routes[2]["legs"][0]["zone"] == "Tilque" and routes[2]["by"] == "ancien"
+    assert 1 not in routes and routes[2]["legs"][0]["zone"] == "Tilque" and routes[2]["by"] == "patrouille"
+    assert routes[2]["legs"][0]["days"] == 8 and routes[2]["why"] and routes[2]["legs"][0]["follow"] is None
     # elle coûte à chaque pêcheur, dès la saison où elle sort
     a = world.fishers[0]
     assert world.upkeep(a, 2) - world.upkeep(a, 1) == 15
@@ -175,11 +176,50 @@ def test_the_council_installs_a_patrol_and_the_elder_sends_it(tmp_path):
     assert any("patrouille du lac mesure" in r["user"] for r in rec.requests if '"prise"' in r["user"])
 
 
-def test_the_elder_rule_route_takes_over_when_his_ai_says_nothing(tmp_path):
+def test_the_captain_rule_route_takes_over_when_his_ai_says_nothing(tmp_path):
     rec = Recorder(speech={"patrouille": "installer"}, route=None)
     world, events, _ = fake_game(tmp_path, "route-repli", rec, seasons=2, elder=True)
     [route] = [e["payload"] for e in kinds(events, "patrol_route")]
     assert route["by"].endswith("(règle)") and route["legs"][0]["zone"] in world.zones
+
+
+def test_the_captain_can_follow_a_suspect_and_never_exceeds_his_days_at_sea(tmp_path):
+    rec = Recorder(speech={"patrouille": "installer"}, route=[("F03", 5), ("Ostrel", 99), ("F03", 2), ("Narnia", 3)])
+    world, events, _ = fake_game(tmp_path, "suivi", rec, seasons=2, elder=True)
+    [route] = [e["payload"] for e in kinds(events, "patrol_route")]
+    legs = route["legs"]
+    assert legs[0]["follow"] == "F03" and legs[0]["zone"] == world.agents["F03"].profile.hamlet     # sur les talons de F03
+    assert sum(leg["days"] for leg in legs) <= world.patrol_cfg["days"] and len({leg["follow"] or leg["zone"] for leg in legs}) == len(legs)
+    assert all(a["to_day"] <= b["from_day"] for a, b in zip(legs, legs[1:])) and legs[-1]["to_day"] <= 20.0    # l'une après l'autre
+    # suivre un pêcheur, c'est le croiser où qu'il pêche
+    assert world.patrolled(2, "large", [legs[0]["from_day"] + 1.0], "F03") == 1.0 and world.patrolled(2, "large", [legs[0]["from_day"] + 1.0]) == 0.0
+
+
+def test_the_captain_reads_what_the_valley_shared(tmp_path):
+    rec = Recorder(speech={"patrouille": "installer"}, route=[("Tilque", 6)])
+    world, events, _ = fake_game(tmp_path, "dossier", rec, seasons=3, elder=True)
+    asked = [r["user"] for r in rec.requests if '"etapes"' in r["user"]]
+    assert asked and all("Tilque :" in u and "large :" in u and "Ce que tu as relevé toi-même" in u for u in asked)
+    assert "rien encore" in asked[0]                                                     # la première sortie : rien relevé encore
+    if len(asked) > 1:
+        assert "Saison 2 : je suis allé vers" in asked[1]                                # ensuite, il se souvient de sa route
+    dossier = chr(10).join(world.patrol_dossier(3))
+    assert all(a.id in dossier for a in world.fishers if a.id not in world.banned)       # chaque pêcheur est dans son village
+    me = world.patrol_agent
+    assert me.profile.role == "patrouille" and me.id == "PAT" and me.id not in world.agents and any(m.kind == "patrouille" for m in me.memory.items)
+
+
+def test_a_patrol_that_is_switched_off_does_not_exist(tmp_path):
+    rec = Recorder(speech={"patrouille": "installer"}, route=[("Tilque", 6)])
+    world, events, _ = fake_game(tmp_path, "sans-patrouille", rec, seasons=3, elder=True, scenario__patrol={"enabled": False})
+    assert world.patrol_agent is None and not world.patrol_active(2) and not world.patrol_exists()
+    assert not kinds(events, "patrol") and not kinds(events, "patrol_route")
+    assert not [e for e in kinds(events, "sanction_proposal") if e["payload"]["action"] in ("patrouille", "fin_patrouille")]
+    a = world.fishers[0]
+    assert world.upkeep(a, 2) == world.upkeep(a, 1)                                      # aucun coût
+    speaking = [r["user"] for r in rec.requests if "Veillée chez l'ancien" in r["user"]]
+    assert speaking and not any("patrouille" in u.lower() for u in speaking)             # personne ne la propose, personne n'en parle
+    assert kinds(events, "run_start")[0]["payload"]["scenario"]["patrol"] is False
 
 
 def test_the_council_can_lift_the_patrol(tmp_path):
@@ -231,7 +271,7 @@ def test_asynchronous_dialogues_are_independent(tmp_path):
 # ============================================================ le reste du monde
 def test_every_event_of_a_full_game_obeys_its_schema(tmp_path):
     """Élections, conseil, patrouille, climat, réussite du jour : aucun événement hors contrat (lettres mortes vides)."""
-    rec = Recorder(speech={"patrouille": "installer"}, route=["Ostrel", "large"], elect={})
+    rec = Recorder(speech={"patrouille": "installer"}, route=[("Ostrel", 6), ("large", 4)], elect={})
     world, events, dead = fake_game(tmp_path, "contrat", rec, population=THREE_VILLAGES, seasons=4, elder=True,
                                     economy__luck=0.25, climate__enabled=True, climate__event_rate=1.0)
     assert not dead, [d for d in dead][:2]

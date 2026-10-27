@@ -141,7 +141,7 @@ func _initialize() -> void:
 	check(joined.count("INDICE") == clues, "une ligne « INDICE » par indice (%d, trouvé %d)" % [clues, joined.count("INDICE")])
 	check(world_events > 0 and joined.count("ÉVÉNEMENT") == world_events, "une ligne « ÉVÉNEMENT » par événement du climat (%d)" % world_events)
 	check(councils > 0 and joined.count("CONSEIL") == councils, "une ligne « CONSEIL » par séance du conseil des élus (%d)" % councils)
-	check(routes > 0 and joined.count("l'ancien l'envoie vers") == routes, "une ligne « PATROUILLE » par route de la patrouille (%d)" % routes)
+	check(routes > 0 and joined.count("le capitaine fait route vers") == routes, "une ligne « PATROUILLE » par route de la patrouille (%d)" % routes)
 	check(elections > 0 and "ÉLU" in joined and m.reps.size() == 4, "les élus des quatre villages sont notés : " + str(m.reps))
 	# le temps de la saison : dit dans le fil au début de chaque saison, jour par jour dans la barre du bas
 	var skies := 0

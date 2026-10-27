@@ -57,9 +57,10 @@ scenario:
   # Chaque pêcheur déclare sa prise à l'ancien en rentrant, et peut mentir : seuls lui et le joueur connaissent la vraie.
   catches_visible: true       # les déclarations sont-elles connues de toute la vallée (sinon : du seul hameau) ?
   # Les mensonges se découvrent sur des indices, pas au hasard. Le lac a une zone par village (sa rive) et le large :
-  # - la patrouille du lac, si le conseil en a voté une (elle coûte `patrol.cost` écus par pêcheur et par saison), visite
-  #   `patrol.legs` zones par saison, au gré de l'ancien ; elle repère les barques qui sortent quand elle passe dans leur zone
-  #   (patrol) et mesure leur charge (à patrol_error près) ;
+  # - la patrouille du lac, si le conseil en a voté une (elle coûte `patrol.cost` écus par pêcheur et par saison), est un agent :
+  #   son capitaine décide seul, avant chaque saison, où aller (au plus `patrol.legs` étapes, `patrol.days` jours de mer en tout :
+  #   une zone du lac, ou les talons d'un pêcheur) d'après ce que les villageois et les pêcheurs ont partagé (accusations, indices
+  #   dits à la veillée). Elle repère les barques qu'elle croise (patrol) et mesure leur charge (à patrol_error près) ;
   # - un voisin qui pêche dans la même zone voit une barque rentrer (witness) et en estime la charge (à witness_error près) ;
   # - la barque d'un pêcheur interdit est vue partant à l'aube par son hameau (seen_leaving) ;
   # - un voisin remarque qu'un pêcheur vit bien pour ce qu'il déclare (lifestyle) ;
@@ -68,11 +69,12 @@ scenario:
   # l'ouverture de la veillée, l'ancien relate ce que les indices établissent : un mensonge quand ils pèsent `proof` (patrouille 3,
   # témoin 1, départ vu 1, train de vie 0,5, comptes 0,5) et que la charge estimée dépasse la déclaration d'au moins margin_t
   # tonnes et margin_ratio. Il ne sanctionne pas : la confiance, chacun la juge ; l'exclusion de pêche, la vallée la vote.
-  detection: {patrol: 0.8, patrol_error: 0.12, witness: 0.4, witness_error: 0.3, seen_leaving: 0.3, lifestyle: 0.5,
+  detection: {patrol: 0.9, patrol_error: 0.12, witness: 0.4, witness_error: 0.3, seen_leaving: 0.3, lifestyle: 0.5,
               lake_error: 0.03, margin_t: 0.3, margin_ratio: 0.25, proof: 2.0}
-  # coût par pêcheur et par saison (écus) ; zones visitées par saison ; from_season : une patrouille installée d'emblée dès cette
-  # saison, sans vote du conseil (pour comparer des parties ; null : c'est au conseil de la voter)
-  patrol: {cost: 15, legs: 2, from_season: null}
+  # enabled : la patrouille fait-elle partie de la partie (false : ni vote, ni capitaine, ni coût) ; coût par pêcheur et par
+  # saison (écus) ; étapes et jours de mer par saison ; from_season : une patrouille installée d'emblée dès cette saison, sans
+  # vote du conseil (pour comparer des parties ; null : c'est au conseil de la voter)
+  patrol: {enabled: true, cost: 15, legs: 3, days: 14, from_season: null}
   # Tours de parole par veillée. Synchrone : on parle à tour de rôle et chacun entend les précédents (dialogues dépendants) ;
   # asynchrone : un seul tour, chacun s'exprime de son côté sans entendre les autres (dialogues indépendants), puis tous votent.
   assembly_rounds: 2

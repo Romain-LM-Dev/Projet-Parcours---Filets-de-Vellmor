@@ -244,3 +244,11 @@ def test_a_slow_lake_regrows_in_proportion_to_its_rate(tmp_path):
         gains[rate] = regrowth[0]["delta"]
     assert 0 < gains[0.3] < gains[0.9]
     assert gains[0.9] / gains[0.3] == pytest.approx(0.9 / 0.3, rel=0.02)
+
+
+def test_the_patrol_can_be_left_out_of_the_menu_request(tmp_path):
+    base = cfg_for(tmp_path)
+    assert build_game_config(base, request())["scenario"]["patrol"]["enabled"] is True
+    cfg = build_game_config(base, request(patrol=False))
+    assert cfg["scenario"]["patrol"]["enabled"] is False and cfg["scenario"]["patrol"]["cost"] == 15       # le reste du réglage demeure
+    assert validate_request(request(patrol="non")) and build_catalog(load_config(None))["defaults"]["patrol"] is True

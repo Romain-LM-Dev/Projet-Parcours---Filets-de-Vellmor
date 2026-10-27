@@ -160,7 +160,7 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
         "defaults": {
             "mode": cfg["time"]["mode"], "seasons": int(cfg["run"]["seasons"]), "seed": int(cfg["run"]["seed"]),
             "communication": scn["communication"], "catches_visible": bool(scn["catches_visible"]),
-            "council": scn.get("council", "delegates"),
+            "council": scn.get("council", "delegates"), "patrol": bool((scn.get("patrol") or {}).get("enabled", True)),
             "speed": 1.0, "llm": option["id"],
             "reflection": option["reflection"], "assembly_rounds": int(scn["assembly_rounds"]), "capacity": None,
             "stop_on_extinction": bool(cfg["run"].get("stop_on_extinction", True)),

@@ -96,9 +96,10 @@ PAYLOADS: dict[str, dict] = {
     # interdit de pêche, ou levée de l'interdiction, par un vote de la vallée (`proposal_id`, ses voix `for` sur `voters`)
     "ban": obj({"agent": STR, "banned": BOOL, "reputation": NUM}, {"proposal_id": STR, "for": IDS, "voters": INT}),
     # la patrouille du lac, si le conseil en a voté une : sa route de la saison (étapes : zone = un village ou « large », jours
-    # depuis le début de la saison), décidée par l'ancien ; puis son installation ou son retrait par un vote du conseil
-    "patrol_route": obj({"season": INT, "legs": {"type": "array", "items": obj({"zone": STR, "from_day": NUM, "to_day": NUM})},
-                         "by": STR}),
+    # depuis le début de la saison), décidée par son capitaine (un agent) ; puis son installation ou son retrait par un vote du conseil
+    "patrol_route": obj({"season": INT, "legs": {"type": "array", "items": obj({"zone": STR, "from_day": NUM, "to_day": NUM},
+                                                                                {"follow": STR_OR_NULL, "days": NUM})},
+                         "by": STR}, {"why": STR}),
     "patrol": obj({"state": {"enum": ["installed", "lifted"]}, "effective_season": INT, "proposal_id": STR, "for": IDS,
                    "voters": INT, "cost": NUM}),
     # l'élection de l'élu d'un village pour la saison (`ballots` : électeur → candidat choisi, `votes` : voix par candidat)

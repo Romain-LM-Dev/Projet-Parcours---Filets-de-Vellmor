@@ -40,6 +40,7 @@ func _initialize() -> void:
 	check(cfg0["lake"]["capacity"] == null and cfg0["reflection"] == "rapide" and cfg0["assembly_rounds"] == 2,
 		"par défaut : stock du lac automatique, réflexion rapide, deux tours de parole")
 
+	check(m.chk_patrol.button_pressed and m.build_config()["patrol"] == true, "la patrouille est activée par défaut")
 	check(m.opt_fleet.item_count == 3 and str(m.opt_fleet.get_item_metadata(m.opt_fleet.selected)) == "mixte", "trois flottes, « mixte » par défaut")
 
 	# --- vitesse conseillée : en asynchrone avec une vraie IA, le monde doit ralentir pour lui laisser le temps de répondre

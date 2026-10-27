@@ -68,6 +68,7 @@ Au lancement, Godot propose le menu **Nouvelle partie** tant que le moteur est e
 | La vallée | veillées (**conseil de la vallée**, par village, interdites), conseil (**un élu par village** ou tous les pêcheurs), **tours de parole** par veillée (1 à 3, 2 par défaut ; un seul en asynchrone), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
 | Le lac | **stock max** : la limite du stock, de 10 à 1000 t, ou *Auto* (12,5 t par pêcheur, qui suit alors le nombre de pêcheurs). C'est 100 % de la jauge : le lac part plein et ne la dépasse jamais. **Repeuplement** : le taux `r` du lac, de 0,1 à 2 par saison (1 = normal). Le menu rappelle ce que le lac renouvelle (`r·K/4` par saison) face à ce que les barques peuvent ramener. **Arrêter si le lac est vide** (coché par défaut) |
 | Saisons et hasard | **saisons de l'année et événements** (sécheresse, tempête, banc de poissons…), leur fréquence, et l'amplitude de la **chance à la pêche** (0 : ni chance ni malchance, seul le temps compte) |
+| Patrouille | case **Patrouille du lac** : cochée (par défaut), le conseil peut voter une patrouille dont le capitaine, une IA, choisit sa route d'après les soupçons partagés ; décochée, il n'y en a pas dans la partie |
 | Moteur d'IA | faux LLM de test, **Ollama · rapide** (3B + 1,5B, recommandé), Ollama · qualité (7B + 1,5B) ou Groq ; le moteur vérifie avant de lancer (Ollama joignable, modèles présents, clé d'API) |
 | Réflexion | **Adaptative (système 1 / 2)** : un réflexe d'un nombre pour les prises de routine, la réflexion pour le reste ([détail](docs/architecture.md)). **Rapide** (une phrase courte, contexte allégé, réponse bornée : environ deux fois plus rapide) ou **Complète** (réponses libres, contexte entier : le profil de référence des expériences) |
 | Pêcheurs | de 1 à 24 : prénom, village, archétype, **bateau** (barque, chaloupe, cotre), expérience, avoir, dette par saison, « cerveau » (IA auto/grand/petit, ou règles). **Générer la vallée** : on choisit le nombre de **villages** (1 à 8), de pêcheurs et la **flotte** (petits bateaux, mixte, gros bateaux), le moteur génère la vallée d'après la graine, que l'on retouche ensuite ; elle se régénère dès qu'on change l'un de ces réglages ou la graine |
@@ -255,7 +256,7 @@ commence au printemps) :
 
 | Moment | Ce qui se passe |
 |---|---|
-| avant J0 | chaque village choisit son **élu** ; l'ancien envoie la **patrouille du lac** si le conseil en a voté une |
+| avant J0 | chaque village choisit son **élu** ; le capitaine de la **patrouille du lac** (une IA) choisit sa route, si le conseil en a voté une |
 | J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %) et décide de sa **prise visée** ; ce qu'il rapporte vraiment dépend du temps de chaque jour, de sa chance, de la saison et des événements |
 | J20 | fermeture : une décision encore en cours est abandonnée et la sortie est perdue (`missed_window`, « sortie perdue ») |
 | J25 18:00 | veillée chez l'ancien : le **conseil de la vallée** (l'ancien et l'élu de chaque village), des veillées par village, ou aucune ; 1 à 3 tours de parole à tour de rôle (synchrone) ou une parole de chacun, de son côté (asynchrone) ; une parole pas prête à la fermeture est une « réplique perdue » |
@@ -405,11 +406,7 @@ lues à toute la vallée ou au seul hameau (menu : « Les déclarations à l'anc
 d'ordinaire) et le large. Le soir de la veillée, les indices de la saison sont réunis (événements `clue`, réglages
 `scenario.detection`) :
 
-* **la patrouille du lac**, si le conseil en a voté une (voir plus bas) : elle visite `scenario.patrol.legs` zones par saison, l'une après l'autre, et
-  repère les barques qui sortent quand elle passe dans leur zone (80 %) ; elle mesure leur charge (à ±12 %). Chaque pêcheur sort un jour de la
-  fenêtre de pêche, tiré à l'avance (le même dans les deux modes) : une barque est vue si la patrouille était dans sa zone ce jour-là.
-  L'ancien décide de sa route (il réfléchit à ce qu'il sait des villages, des mensonges et des interdits ; un ancien à règles va là où il
-  se méfie le plus), et les pêcheurs savent qu'elle existe, pas où elle passera ;
+* **la patrouille du lac**, si le conseil en a voté une (voir plus bas) : son capitaine, une IA, décide où aller d'après les soupçons partagés ; elle croise les barques de la zone où elle se trouve et mesure leur charge (à ±12 %) ;
 * **les voisins** qui pêchent dans la même zone voient une barque rentrer (40 %) et en estiment la charge (à ±30 %) ;
 * **la barque d'un interdit** est vue partant à l'aube par son hameau (30 %) ;
 * **le train de vie** : déclarer moins qu'il ne faut pour vivre, et pourtant vivre comme avant, se remarque (50 %) ;
@@ -450,7 +447,7 @@ confiance qui en résulte et la **réputation**, moyenne de la confiance des aut
 **La confiance oriente les réactions.** Les IA la lisent dans leur **carnet** (« Ta confiance envers les autres : Loïc faible,
 Théo forte ; les autres, moyenne », et leur propre réputation) et devant chaque parole de la veillée. Un témoin ne dénonce pas devant
 tous celui à qui il fait toute confiance (0,8 et plus) ; un agent à règles ne soutient pas la proposition de quelqu'un qu'il ne croit
-plus ; l'ancien envoie la patrouille là où il se méfie le plus.
+plus ; le capitaine de la patrouille va là où les soupçons partagés le mènent.
 
 **Exclure de la pêche, ou réautoriser : la vallée vote.** À la veillée, un pêcheur peut proposer d'**interdire un autre de pêche**
 (champ `exclure`) ou de **laisser pêcher à nouveau un exclu** (`reautoriser`), selon sa confiance, ses intérêts et sa morale
@@ -495,18 +492,36 @@ besoins moyens pour vivre figurent dans son contexte). Résultat sur les tokens 
 
 ## La patrouille du lac
 
-Le radar est remplacé par une **patrouille qui se déplace sur le lac**. Elle n'existe que si le conseil la vote : un élu **propose de
-l'installer** (champ `patrouille: "installer"`) s'il juge qu'il faut démasquer des fraudes ; les élus votent (`sanction_proposal`,
-`sanction_vote`, `sanction_result` avec l'action `patrouille`) ; elle sort dès la saison suivante (`patrol`). Elle coûte à **chaque pêcheur**
-`scenario.patrol.cost` écus par saison (15), ce qui pèse sur le vote : le nouveau venu endetté rechigne, le taiseux n'en veut jamais, la
-famille ancienne et le beau parleur la veulent dès qu'un mensonge a été établi (`policies.PATROL_WANTS`, pour les agents à règles ; une IA
-réfléchit). Un élu peut aussi proposer de la **retirer** (`"retirer"`) quand elle ne sert plus ; elle sort encore la saison du vote.
+**La patrouille est un agent.** Son capitaine (« Capitaine Aubry », l'agent `PAT`) est une IA, ou un agent à règles comme l'ancien (il en
+suit le choix) ; il ne pêche pas, ne siège pas, ne vote pas, n'a aucun pouvoir de punir. Il décide seul où aller, d'après les soupçons et
+les indices que les villageois et les pêcheurs ont **partagés**, et se souvient de ce qu'il a relevé.
 
-Chaque saison, l'ancien décide de sa **route** : `scenario.patrol.legs` zones (2), l'une après l'autre, étalées sur la fenêtre de pêche
-(`patrol_route`). Son IA réfléchit à ce qu'il sait de chaque village (sa confiance en ses pêcheurs, les mensonges établis depuis deux
-saisons) et du large (les interdits qui peuvent y sortir en cachette) ; sans réponse lisible, ou pour un ancien à règles, la route va
-là où il se méfie le plus, avec une étape sur quatre au hasard. `scenario.patrol.from_season` installe une patrouille d'emblée, sans vote
-(pour comparer des parties).
+**Elle est un réglage de départ.** Le menu propose « Patrouille du lac » (`scenario.patrol.enabled`, activée par défaut). Décochée, il n'y a
+ni capitaine, ni proposition au conseil, ni coût, ni route : les agents n'en entendent pas parler.
+
+**Elle est votée.** Un élu propose de l'installer (champ `patrouille: "installer"`) s'il juge qu'il faut démasquer des fraudes ; les élus votent
+(`sanction_proposal`, `sanction_vote`, `sanction_result` avec l'action `patrouille`) ; elle sort dès la saison suivante (`patrol`). Elle coûte à
+**chaque pêcheur** `scenario.patrol.cost` écus par saison (15), ce qui pèse sur le vote : le nouveau venu endetté rechigne, le taiseux n'en veut
+jamais, la famille ancienne et le beau parleur la veulent dès qu'un mensonge a été établi (`policies.PATROL_WANTS`, pour les agents à règles ;
+une IA réfléchit). Un élu peut aussi proposer de la **retirer** (`"retirer"`) ; elle sort encore la saison du vote. `scenario.patrol.from_season`
+installe une patrouille d'emblée, sans vote (pour comparer des parties).
+
+**Avant chaque saison, son capitaine décide de sa route** (`World.plan_patrol`, événement `patrol_route`, avec `why`, sa raison). Il dispose de
+`scenario.patrol.days` jours de mer (14) à répartir sur `scenario.patrol.legs` étapes (3) : chaque étape est **une zone du lac** (un village ou
+« large »), où il mesure les barques de ceux qui y pêchent, ou **un pêcheur qu'il suit de près**, qu'il croise où qu'il aille (même au large,
+quand il est interdit de pêche). Les étapes se suivent, réparties sur la fenêtre de pêche. Il lit son **dossier** (`World.patrol_dossier`), zone par
+zone : ce qui s'est dit devant tous (accusations, indices relatés par l'ancien, mensonges établis, comptes du lac), ce que la vallée pense de
+chacun (la confiance moyenne, en mots), et ce qu'il a lui-même relevé les deux dernières saisons. Un indice que quelqu'un garde pour lui (on
+ne dénonce pas un ami), la vérité des sorties et les déclarations qu'il n'a pas entendues ne lui parviennent pas. Un capitaine à règles
+(`World.patrol_rule`) suit le pêcheur le plus soupçonné d'après ce qui a été dit, puis va là où l'on se méfie le plus ; une zone où il est passé
+sans rien trouver inspire moins de méfiance ; un coup d'œil ailleurs une fois sur cinq pour qu'on ne le devine pas. Les pêcheurs savent
+qu'elle existe, pas où elle passera.
+
+**Ce qu'elle trouve.** Une barque est croisée en proportion des jours de sortie où la patrouille était dans sa zone (ou sur ses talons) :
+chance de la mesurer `scenario.detection.patrol` (90 %) fois cette part ; la charge est mesurée à ±12 %. Le relevé est un indice (`clue`,
+`kind: patrouille`, observateur `PAT`) que l'ancien relate à la veillée ; il pèse 3, de quoi établir un mensonge à lui seul. Son capitaine
+note après chaque saison où il est passé, qui il a mesuré et si cela collait avec ce qui était déclaré ; il le relit avant de choisir sa
+route suivante. Un capitaine ne peut être partout : couvrir une zone, c'est en laisser d'autres sans surveillance.
 
 ## Synchrone et asynchrone : les dialogues
 

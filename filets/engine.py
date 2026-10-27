@@ -58,7 +58,7 @@ def validate_request(req: dict) -> list[str]:
         errs.append("« prises visibles » doit être vrai ou faux")
     if req.get("council", "delegates") not in [c["id"] for c in COUNCILS]:
         errs.append("composition du conseil inconnue (un élu par village, ou tous les pêcheurs)")
-    for key, label in (("climate", "le climat"), ):
+    for key, label in (("climate", "le climat"), ("patrol", "la patrouille")):
         if not isinstance(req.get(key, True), bool):
             errs.append(f"{label} doit être vrai ou faux")
     rate = req.get("event_rate", 0.3)
@@ -119,6 +119,7 @@ def build_game_config(base_cfg: dict, req: dict) -> dict:
         "time": {"mode": req["mode"]},
         "scenario": {"communication": req["communication"], "catches_visible": req["catches_visible"],
                      "council": req.get("council", base_cfg["scenario"].get("council", "delegates")),
+                     "patrol": {"enabled": req.get("patrol", True)},
                      "assembly_rounds": req.get("assembly_rounds", base_cfg["scenario"]["assembly_rounds"])},
         "population": {"custom": copy.deepcopy(pop["fishers"]), "elder": bool(pop.get("elder", True)),
                        "elder_kind": pop.get("elder_kind", "llm")},

@@ -921,10 +921,20 @@ func _on_event(ev: Dictionary) -> void:
 		"patrol_route":
 			# la route de la patrouille cette saison : le joueur la voit, les pêcheurs ne la connaissent pas
 			var zs := PackedStringArray()
+			var rich := PackedStringArray()
 			for leg in p.get("legs", []):
-				zs.append("le large" if str(leg.get("zone", "")) == "large" else str(leg.get("zone", "")))
+				var where := "le large" if str(leg.get("zone", "")) == "large" else str(leg.get("zone", ""))
+				var days := " (%d j)" % int(leg.get("days", 0)) if leg.has("days") else ""
+				if leg.get("follow") != null:
+					var fa = _agent(str(leg["follow"]))
+					zs.append("sur les talons de " + (str(fa["info"].get("name", "")).split(" ")[0] if fa else str(leg["follow"])) + days)
+					rich.append("sur les talons de " + _who(str(leg["follow"])) + days)
+				else:
+					zs.append(where + days)
+					rich.append(where + days)
 			lbl_patrol.text = "Patrouille : en route vers " + " → ".join(zs)
-			_feed(lab + _tag("PATROUILLE", "#7fe0c8") + " l'ancien l'envoie vers [b]%s[/b]  [color=#6f7896](les pêcheurs ne savent pas où elle passera)[/color]" % " → ".join(zs), [])
+			var why := "" if str(p.get("why", "")) == "" else "  [color=#9ba1ba]« %s »[/color]" % _esc(str(p.get("why")))
+			_feed(lab + _tag("PATROUILLE", "#7fe0c8") + " le capitaine fait route vers [b]%s[/b]%s  [color=#6f7896](les pêcheurs ne savent pas où il passera)[/color]" % [" → ".join(rich), why], [])
 		"patrol":
 			var on := str(p.get("state", "")) == "installed"
 			patrol_installed = on
@@ -1184,6 +1194,7 @@ func _reset(ev: Dictionary) -> void:
 	patrol_installed = false              # une nouvelle partie : pas de patrouille tant que le conseil n'en vote pas
 	reps.clear()
 	lbl_patrol.text = "Patrouille : aucune"
+	lbl_patrol.visible = bool(sc.get("patrol", true))       # désactivée au départ : ni étiquette, ni vote, ni capitaine
 	weather_days = []
 	lbl_weather.text = ""
 	feed.clear()

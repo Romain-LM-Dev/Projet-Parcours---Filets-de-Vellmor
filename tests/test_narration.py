@@ -58,7 +58,7 @@ def test_the_story_tells_the_weather_the_patrol_and_who_sat_at_the_council(tmp_p
     facts = [f for n in kinds(events, "narration") for f in n["payload"]["facts"]]
     sky = next(f for f in facts if f.startswith("Temps de la pêche : "))
     assert sum(int(part.split()[0]) for part in sky.split(" : ")[1].split(" (")[0].split(", ")) == 20      # chaque jour de pêche
-    assert any(f.startswith("La patrouille du lac est passée par ") for f in facts)
+    assert any(f.startswith("La patrouille du lac a fait route vers ") for f in facts)
     assert any(f.startswith("Au conseil de la vallée siégeaient : ") for f in facts)
     assert any(" élus sur " in f for f in facts if f.startswith("À la veillée"))                  # au conseil, ce sont les élus
     votes = [f for f in facts if "la patrouille du lac, dès la saison" in f]

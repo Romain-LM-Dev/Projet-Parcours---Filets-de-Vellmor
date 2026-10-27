@@ -100,9 +100,17 @@ def reflex_messages(p, obs: dict) -> list[dict]:
     return [{"role": "system", "content": who}, {"role": "user", "content": "\n".join(lines)}]
 
 
+PATROL_WHO = ("Tu es le capitaine de la patrouille du lac de Vellmor : une barque de surveillance, payée par la vallée (chaque "
+              "pêcheur y contribue). Tu ne pêches pas et tu n'as aucun pouvoir de punir : tu mesures la charge des barques que tu "
+              "croises, et ce que tu mesures, l'ancien le dit à toute la vallée. Tu choisis toi-même où aller, d'après les soupçons "
+              "et les indices que les villageois et les pêcheurs ont partagés ; personne ne sait où tu passeras. Tu es juste : tu ne "
+              "soupçonnes que sur des indices, et tu laisses tranquilles ceux que tu as trouvés honnêtes.")
+
+
 def persona(p, capacity: float, brief: bool = False, villages=()) -> str:
-    who = (f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. "
-           f"{p.experience} an{'s' if p.experience > 1 else ''} de pêche sur le lac. {p.traits} Ta façon de parler : {p.voice}.")
+    who = PATROL_WHO if getattr(p, "role", "") == "patrouille" else (
+        f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. "
+        f"{p.experience} an{'s' if p.experience > 1 else ''} de pêche sur le lac. {p.traits} Ta façon de parler : {p.voice}.")
     world = WORLD.format(capacity=capacity, half=capacity / 2, villages=villages_text(villages))
     return f"{world}\n\n{who}\n\n{STYLE}{BRIEF_STYLE if brief else ''}"
 
@@ -422,12 +430,18 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         fields.append("\"exclure\": \"<identifiant d'un pêcheur que tu proposes d'interdire de pêche>\" ou null")
         fields.append("\"reautoriser\": \"<identifiant d'un pêcheur interdit que tu proposes de laisser pêcher à nouveau>\" ou null"
                       if banned else "\"reautoriser\": null (personne n'est interdit de pêche)")
-        fields.append("\"patrouille\": \"retirer\" (tu proposes au conseil de supprimer la patrouille du lac) ou null" if patrol
-                      else "\"patrouille\": \"installer\" (tu proposes au conseil de voter une patrouille du lac) ou null")
+        if obs.get("patrol_enabled", True):
+            fields.append("\"patrouille\": \"retirer\" (tu proposes au conseil de supprimer la patrouille du lac) ou null" if patrol
+                          else "\"patrouille\": \"installer\" (tu proposes au conseil de voter une patrouille du lac) ou null")
     rumor_hint = ("Une rumeur court : tu peux la relayer, la démentir, t'en défendre si elle te vise, ou accuser quelqu'un. "
                   if obs.get("rumors") else "")
     if obs.get("clues"):
         rumor_hint += "Les indices peuvent te faire soupçonner quelqu'un (ou te viser) : à toi de juger qui croire. "
+    sanction_acts = ""
+    if fisher:
+        sanction_acts = ", proposer d'interdire un pêcheur de pêche" + (" (ou d'en réautoriser un)" if banned else "")
+        if obs.get("patrol_enabled", True):
+            sanction_acts += ", " + ("de retirer la patrouille du lac" if patrol else "d'installer une patrouille du lac")
     sanctions = ("Propositions d'exclure, de réautoriser ou de patrouille sur la table :\n" + _bullets(obs["sanctions"]) + "\n\n"
                  if obs.get("sanctions") else "")
     who_line = "".join(f"{x}\n" for x in (obs.get("delegate"), obs.get("patrol_line")) if x)
@@ -436,14 +450,12 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         room = ("Chacun s'exprime ce soir de son côté, sans entendre les autres : tu ne sais pas ce qu'ils diront. Tous voteront "
                 "ensuite sur tout ce qui aura été proposé.\n\n")
         acts = ("À toi de parler. Tu peux proposer une règle, promettre, accuser"
-                + (", proposer d'interdire un pêcheur de pêche" + (" (ou d'en réautoriser un)" if banned else "") + ", "
-                   + ("de retirer la patrouille du lac" if patrol else "d'installer une patrouille du lac") if fisher else ""))
+                + sanction_acts)
     else:
         room = (f"Ce qui a déjà été dit ce soir :\n{transcript}\n\nPropositions de règle sur la table :\n{proposals}\n\n"
                 f"{sanctions}")
         acts = ("À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser"
-                + (", proposer d'interdire un pêcheur de pêche" + (" (ou d'en réautoriser un)" if banned else "") + ", "
-                   + ("de retirer la patrouille du lac" if patrol else "d'installer une patrouille du lac") if fisher else ""))
+                + sanction_acts)
     turn = "" if obs.get("independent") else f", tour de parole {obs['round']}"
     ask = (
         f"Veillée chez l'ancien ({obs['scope_label']}){turn}. Présents : {people}.\n\n"
@@ -496,6 +508,126 @@ def narration_messages(p, facts: list[str], capacity: float, villages=()) -> lis
              "Le temps de la pêche peut expliquer de maigres prises : tu peux le dire. Des phrases simples et complètes, en bon français. "
              "Réponds en JSON : {\"recit\": \"<ton récit>\"}")
     return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": ask}]
+
+
+def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:
+    """Les niveaux de prise proposés au modèle de décision : de la prise minimale à la capacité de la barque, en `n` paliers."""
+    return [round(lo + i * (boat_capacity - lo) / (n - 1), 1) for i in range(n)]
+
+
+def reflex_system_one(p, obs: dict) -> dict:
+    """La prise de routine en question typée : l'état (les mêmes lignes que `reflex_messages`), une échelle de prises."""
+    msgs = reflex_messages(p, obs)
+    state = msgs[0]["content"].replace(" Réponds uniquement par un objet JSON.", "") + "\n" + \
+        msgs[1]["content"].rsplit("\n", 1)[0]
+    levels = catch_levels(obs["boat_capacity"], lo=obs.get("min_catch", 0.0))
+    criteria = [f"{t:g} t" + (" : il reste à quai" if t == 0 else "") for t in levels]
+    return {"state": state, "values": {"prise": levels},
+            "questions": {"prise": {"type": "score", "criteria": criteria,
+                                    "instructions": "Combien de tonnes ce pêcheur pêche-t-il cette saison, vu l'état du lac, "
+                                                    "ses engagements et les règles ?"}}}
+
+
+# Le vote sur une exclusion (ou une réautorisation) : « oui » ou « non » par proposition, selon sa confiance envers le pêcheur
+# visé, sa morale (le caractère) et ses intérêts (sa situation).
+SANCTION_MAX_TOKENS = 40
+
+
+def sanction_schema(ids: list[str]) -> dict:
+    return {"type": "object", "properties": {i: {"enum": ["oui", "non"]} for i in ids}, "required": list(ids),
+            "additionalProperties": False}
+
+
+def sanction_messages(p, items: dict[str, str], situation: str) -> list[dict]:
+    who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    body = ("La veillée touche à sa fin. La vallée vote sur ces propositions ; tu votes selon ta confiance, ta morale et tes "
+            f"intérêts. {situation}\n" + "\n".join(f"- {i} : {t}" for i, t in items.items())
+            + "\nRéponds en JSON : {" + ", ".join(f"\"{i}\": \"oui\" ou \"non\"" for i in items) + "}")
+    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
+
+
+def sanction_system_one(p, items: dict[str, str], situation: str) -> dict:
+    """Le même vote en questions typées : une question oui/non par proposition (la probabilité du oui)."""
+    state = f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n{situation}"
+    return {"state": state, "questions": {i: {"type": "noul", "instructions": f"Ce pêcheur vote-t-il pour : {t}"}
+                                          for i, t in list(items.items())[:25]}}
+
+
+def ballot_system_one(p, proposals: dict[str, str], est: float, capacity: float, collapse_ratio: float = 0.05) -> dict:
+    """Le bulletin de vote en question typée : `proposals` = identifiant → description (« 1.5 t par pêcheur, proposée par… »)."""
+    state = (f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n"
+             f"La veillée touche à sa fin. Le lac est à {100 * est / capacity:.0f} % ({lake_level(est, capacity, collapse_ratio)}).")
+    criteria = {**dict(list(proposals.items())[:25]), "aucune": "aucune de ces propositions"}   # 26 options au plus
+    return {"state": state,
+            "questions": {"vote": {"type": "choice", "criteria": criteria,
+                                   "instructions": "Pour quelle proposition de règle ce pêcheur vote-t-il ?"}}}
+
+
+# L'élection de l'élu d'un village : chaque pêcheur vote pour celui qui, selon lui, parlera le mieux au conseil pour le village.
+ELECTION_MAX_TOKENS = 10
+
+
+def election_schema(ids: list[str]) -> dict:
+    return {"type": "object", "properties": {"vote": {"enum": list(ids)}}, "required": ["vote"], "additionalProperties": False}
+
+
+def election_messages(p, items: dict[str, str], situation: str) -> list[dict]:
+    who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    body = ("Ton village choisit celui qui siégera pour lui au conseil de la vallée, chez l'ancien : il y parlera et y votera au "
+            "nom de tous les pêcheurs du village, toi compris, et ceux-ci subiront ses décisions. Tu votes pour celui que tu "
+            f"juges le plus apte à défendre tes intérêts et ceux du village, selon ta confiance et ta morale. {situation}\n"
+            + "\n".join(f"- {i} : {t}" for i, t in items.items())
+            + "\nPour qui votes-tu ? Réponds en JSON : {\"vote\": \"<identifiant>\"}")
+    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
+
+
+def election_system_one(p, items: dict[str, str], situation: str) -> dict:
+    """La même élection en question typée : un choix parmi les pêcheurs du village."""
+    state = f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n{situation}"
+    return {"state": state, "questions": {"vote": {"type": "choice", "criteria": dict(list(items.items())[:26]),
+                                                   "instructions": "Qui ce pêcheur choisit-il pour siéger au conseil de la "
+                                                                   "vallée au nom de son village ?"}}}
+
+
+# Le bilan d'un villageois qui n'était pas au conseil : ce que l'ancien lui en rapporte, et ce qu'il en pense de chacun.
+DEBRIEF_MAX_TOKENS = 70
+DEBRIEF_SCHEMA = {"type": "object", "properties": {"confiance": {
+    "type": "object", "additionalProperties": {"type": "integer", "minimum": -3, "maximum": 3}}},
+    "required": ["confiance"], "additionalProperties": False}
+
+
+def debrief_messages(p, lines: list[str], trust: str, situation: str) -> list[dict]:
+    who = (f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.experience} ans de pêche sur le lac. {p.traits} "
+           "Réponds uniquement par un objet JSON.")
+    body = ("Tu n'étais pas au conseil de la vallée, chez l'ancien : ton élu y parlait pour ton village. Voici ce que l'ancien "
+            f"t'en rapporte, et ce que tu sais des autres pêcheurs :\n{_bullets(lines, 'rien de particulier')}\n{trust}\n"
+            f"{situation}\nCe que tu apprends change-t-il ta confiance envers l'un d'eux, selon ta morale et tes intérêts ? "
+            "Réponds en JSON : {\"confiance\": {\"<identifiant>\": <de -3 à +3>}} (-3 : tu ne le crois plus du tout, +3 : il a "
+            "gagné ta confiance ; {} si rien ne change).")
+    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
+
+
+# La route de la patrouille du lac, décidée par son capitaine au début de la saison.
+PATROL_MAX_TOKENS = 170
+
+
+def patrol_schema(targets: list[str], legs: int, days: int) -> dict:
+    step = {"type": "object", "properties": {"cible": {"enum": list(targets)}, "jours": {"type": "integer", "minimum": 1,
+                                                                                        "maximum": days}},
+            "required": ["cible", "jours"], "additionalProperties": False}
+    return {"type": "object", "properties": {"raison": {"type": "string", "maxLength": 160},
+                                             "etapes": {"type": "array", "items": step, "minItems": 1, "maxItems": legs}},
+            "required": ["raison", "etapes"], "additionalProperties": False}
+
+
+def patrol_messages(p, capacity: float, villages, lines: list[str], legs: int, days: int) -> list[dict]:
+    body = (f"Une saison de pêche va s'ouvrir. Tu as {days} jours de mer à répartir sur {legs} étape{'s' if legs > 1 else ''} au plus. "
+            f"Voici ce que tu sais, zone par zone :\n{_bullets(lines)}\n\n"
+            "Une étape est une zone du lac (un village, ou « large ») où tu passes les jours que tu y mets, en mesurant les barques de "
+            "ceux qui y pêchent ; ou un pêcheur que tu suis de près (son identifiant), que tu mesures où qu'il aille. Où vas-tu, "
+            "combien de jours à chaque étape, et pourquoi ? Réponds en JSON : {\"raison\": \"<une phrase>\", \"etapes\": "
+            "[{\"cible\": \"<zone ou identifiant>\", \"jours\": <nombre>}]}")
+    return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": body}]
 
 
 def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:
