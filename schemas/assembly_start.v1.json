@@ -9,6 +9,15 @@
       "items": {
         "type": "string"
       }
+    },
+    "mode": {
+      "enum": [
+        "sync",
+        "async"
+      ]
+    },
+    "delegates": {
+      "type": "object"
     }
   },
   "required": [

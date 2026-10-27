@@ -2,22 +2,25 @@
 
 Calendrier d'une saison (jours simulés depuis le début de la saison, configurable) :
 
-    J0 06:00   ouverture de la pêche : chaque pêcheur décide de sa prise
+    J0 06:00   ouverture de la pêche : chaque pêcheur décide de sa prise visée (la prise réelle dépend de la réussite du jour,
+               de la saison de l'année et des événements : voir `climate.py`)
     J20        fermeture : une sortie décidée après est perdue (incident `missed_window`)
-    J25 18:00  veillée chez l'ancien (selon le mode de communication) : tours de parole,
-               propositions de quota, soutiens, promesses, accusations
-    J29        fin de la veillée : adoption d'une règle si au moins la moitié des pêcheurs présents la soutient
+    J25 18:00  veillée chez l'ancien (selon le mode de communication) : au conseil de la vallée, un élu par village et l'ancien ;
+               propositions de quota, soutiens, promesses, accusations, exclusions, patrouille du lac
+    J29        fin de la veillée : adoption d'une règle si au moins la moitié des élus présents la soutient
     J29 21:36  repeuplement du lac, bilan de saison, promesses tenues ou trahies
 
 Mode synchrone : à chaque pas, tous les agents observent le même instantané, décident
 (la latence des LLM n'a aucun effet sur le temps simulé), puis leurs actions s'appliquent
 au même instant. Si la somme des prises dépasse le stock, elles sont rationnées au prorata.
+À la veillée, on parle à tour de rôle et chacun entend ceux qui ont parlé avant lui : les dialogues sont dépendants.
 
 Mode asynchrone : l'horloge avance avec le temps réel. Chaque pêcheur se réveille à son
 propre rythme, observe le lac, réfléchit (latence réelle du LLM), et sa prise s'applique
 au stock *du moment où il a fini de réfléchir* : il a pu changer entre-temps (écart tracé
-dans l'événement `catch` : `stock_observed` vs `stock_before`). À la veillée, chacun parle
-dès qu'il a fini de réfléchir et n'entend que ce qui a été dit avant.
+dans l'événement `catch` : `stock_observed` vs `stock_before`). À la veillée, chacun s'exprime
+de son côté dès qu'il a fini de réfléchir, sans entendre les autres : les dialogues sont indépendants,
+et tous votent ensuite sur ce qui a été déposé.
 
 Chaque saison est jouée par l'un des deux orchestrateurs, choisi à son début : le joueur peut donc
 passer de l'un à l'autre en cours de partie (effet à la saison suivante), mettre en pause, changer
@@ -32,16 +35,20 @@ import heapq
 import itertools
 import json
 import logging
+import math
 import random
 import re
 import time
 import unicodedata
+import zlib
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import prompts
-from .agents import Agent, _ask_llm, ballot, decide_catch, speak
-from .policies import sanction_vote
+from .agents import (Agent, _ask_llm, ballot, ballot_election, debrief_villager, decide_catch, route_decision, speak)
+from .climate import EVENTS, Climate
+from .policies import patrol_vote, sanction_vote
 from .clock import SimClock
 from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
@@ -49,7 +56,7 @@ from .events import EventFactory, Recorder
 from .lake import Lake
 from .memory import MemoryBank, MemoryStore, VectorMemory
 from .objects import archive_run, make_objects
-from .profiles import HAMLETS, build_population
+from .profiles import build_population, villages_of
 from .rag import Retriever, VectorRetriever
 from .schemas import validate_command
 from .llm import LLMRouter, to_number
@@ -65,14 +72,23 @@ TRUST_START = 0.5
 TRUST_STEP = 0.1
 LOYAL = 0.8        # un témoin ne dénonce pas devant tous celui à qui il fait confiance à ce point
 
-# Le lac a cinq zones : la rive de chaque hameau, où ses pêcheurs vont d'ordinaire, et le large.
-ZONES = [*HAMLETS, "large"]
+# Le lac a une zone par village (sa rive, où ses pêcheurs vont d'ordinaire) et le large : voir `World.zones`.
 # Les indices et ce qu'ils pèsent dans le jugement de l'ancien (voir `World.weigh_evidence` et `scenario.detection`).
-DETECTION = {"radar": 0.95, "radar_error": 0.1, "witness": 0.4, "witness_error": 0.3, "seen_leaving": 0.3, "lifestyle": 0.5,
+DETECTION = {"patrol": 0.8, "patrol_error": 0.12, "witness": 0.4, "witness_error": 0.3, "seen_leaving": 0.3, "lifestyle": 0.5,
              "lake_error": 0.03, "margin_t": 0.3, "margin_ratio": 0.25, "proof": 2.0}
-EVIDENCE = {"radar": 3.0, "temoin": 1.0, "depart": 1.0, "train_de_vie": 0.5, "comptes": 0.5}
-HOW = {"radar": "le radar de l'ancien a mesuré sa barque", "temoins": "des voisins l'ont vu",
+PATROL = {"cost": 15, "legs": 2}
+EVIDENCE = {"patrouille": 3.0, "temoin": 1.0, "depart": 1.0, "train_de_vie": 0.5, "comptes": 0.5}
+HOW = {"patrouille": "la patrouille du lac a mesuré sa barque", "temoins": "des voisins l'ont vu",
        "indices": "les indices concordaient"}
+PATROL_ACTIONS = ("patrouille", "fin_patrouille")      # les propositions du conseil qui ne visent aucun pêcheur
+LOW_LAKE = 0.3                 # sous ce niveau du lac (part de la capacité), le poisson est plus dur à prendre
+SKILL_STEP = 0.005             # rendement gagné par année d'expérience au-delà de 15 ans (perdu en deçà), de 0 à 40 ans
+
+
+def day_word(factor: float) -> str:
+    """Ce que rapporte une sortie par rapport à la prise visée, dit comme un pêcheur : « une bonne journée »."""
+    return ("très mauvaise" if factor < 0.6 else "mauvaise" if factor < 0.85 else "ordinaire" if factor < 1.15
+            else "bonne" if factor < 1.4 else "excellente")
 
 
 @dataclass
@@ -87,7 +103,8 @@ class Proposal:
 
 @dataclass
 class Sanction:
-    """Une proposition d'interdire un pêcheur de pêche (`exclure`), ou de lever son interdiction (`reautoriser`)."""
+    """Une proposition soumise au vote du conseil : interdire un pêcheur de pêche (`exclure`), lever son interdiction
+    (`reautoriser`), ou installer (`patrouille`) / retirer (`fin_patrouille`) la patrouille du lac, qui ne vise personne."""
     id: str
     author: str
     target: str
@@ -108,12 +125,21 @@ class Assembly:
     support: dict[str, tuple[str, float, str]] = field(default_factory=dict)  # agent -> (proposal, t, event_id)
     stated: dict[str, float] = field(default_factory=dict)     # agent -> dernier quota qu'il a dit vouloir (proposé ou promis)
     accused: list[tuple[float, str]] = field(default_factory=list)     # (instant, accusé) : qui a été mis en cause, et quand
-    sanctions: dict[str, Sanction] = field(default_factory=dict)        # propositions d'exclure ou de réautoriser
+    sanctions: dict[str, Sanction] = field(default_factory=dict)        # propositions soumises au vote (voir `Sanction`)
+    mode: str = "sync"               # sync : on s'entend, tour à tour ; async : chacun parle de son côté, sans entendre les autres
+    delegates: bool = False          # le conseil des élus (un par village), et non tous les pêcheurs
     closed: bool = False
 
     @property
     def label(self) -> str:
-        return "toute la vallée" if self.scope == "valley" else f"hameau de {self.scope.split(':', 1)[1]}"
+        if self.scope == "valley":
+            return "conseil de la vallée" if self.delegates else "toute la vallée"
+        return f"village de {self.scope.split(':', 1)[1]}"
+
+    @property
+    def independent(self) -> bool:
+        """Dialogues indépendants (asynchrone) : personne n'entend les paroles des autres avant de voter."""
+        return self.mode == "async"
 
 
 @dataclass
@@ -178,10 +204,21 @@ class World:
             self.agents[p.id] = Agent(p, memory_of(p.id), arng, p.wealth, offset_days=round(arng.uniform(lo, hi), 3))
         self.fishers = [a for a in self.agents.values() if a.is_fisher]
         self.elder = next((a for a in self.agents.values() if not a.is_fisher), None)
-        # une sortie rapporte au plus la capacité du lac divisée par deux fois le nombre de pêcheurs (et jamais plus que la
-        # barque) : à eux tous, ils ne peuvent prendre que la moitié du lac en une saison ; et au moins la prise minimale
-        self.max_catch = min(self.econ["boat_capacity"], self.capacity / (2 * max(1, len(self.fishers))))
-        self.min_catch = min(self.econ.get("min_catch", 0.0), self.max_catch)
+        # la vallée : ses villages (une zone du lac chacun, plus le large), et son conseil, un élu par village
+        self.hamlets = villages_of([a.profile for a in self.fishers])
+        self.zones = [*self.hamlets, "large"]
+        self.delegates = self.scn.get("council", "delegates") == "delegates"
+        self.reps: dict[str, str] = {}           # village -> pêcheur élu pour le représenter au conseil
+        self.last_council: Assembly | None = None    # le dernier conseil de la vallée : les absents en apprennent la suite
+        # les bateaux : la prise d'un pêcheur ne dépasse ni la cale de son bateau, ni sa part de la moitié du lac (proportionnelle
+        # à la cale : à eux tous, ils ne peuvent prendre que la moitié du lac en une saison) ; au moins la prise minimale visée
+        self.boats = self.econ["boats"]
+        holds = {a.id: float(self.boats[a.profile.boat]["capacity"]) for a in self.fishers}
+        total = sum(holds.values()) or 1.0
+        self.hold = {aid: min(h, self.capacity / 2 * h / total) for aid, h in holds.items()}
+        self.boat_max = max(float(b["capacity"]) for b in self.boats.values())       # le plus gros bateau qui existe
+        self.max_catch = max(self.hold.values(), default=0.0)
+        self.min_catch = min(self.econ.get("min_catch", 0.0), min(self.hold.values(), default=0.0))
         values = {"capacity": f"{self.capacity:.0f}", "half_capacity": f"{self.capacity / 2:.0f}",
                   "n_fishers": len(self.fishers), "price": self.econ["price_per_tonne"],
                   "upkeep": self.econ["upkeep_per_season"]}
@@ -199,7 +236,7 @@ class World:
         self.reports: dict[tuple[str, int], dict] = {}
         self.lies: dict[str, dict] = {}
         self.trust = {o: {s.id: TRUST_START for s in self.fishers if s.id != o} for o in self.agents}
-        # la détection : sorties de chaque saison ({agent, zone, landed, secret, radar, event_id}), indices (payload de `clue`
+        # la détection : sorties de chaque saison ({agent, zone, landed, secret, patrol, day, event_id}), indices (payload de `clue`
         # + saison, instant), comptes du lac, accusations ((instant, accusé, accusateur)), et ce que la vallée tient pour établi
         # ((agent, saison) -> {value, t, how, secret}) ; ses propres tirages, pour ne pas déplacer les autres hasards
         self.detection = {**DETECTION, **(self.scn.get("detection") or {})}
@@ -211,8 +248,15 @@ class World:
         self.lie_rng = random.Random(seed + 7)
         self._investigated_season = self._weighed_season = 0
         self.banned: dict[str, int] = {}         # pêcheur interdit de pêche -> saison où l'interdiction a pris effet
-        self.radar_zone: str | None = None       # où le radar de la vallée surveille le lac, et qui l'y a mis
-        self.radar_by = "ancien"
+        # la patrouille du lac, si le conseil en a voté une ({since, proposal_id}) ; ses étapes de la saison ({zone, from_day,
+        # to_day}, en jours depuis le début de la saison) ; le climat de la saison (saison de l'année, événements)
+        self.patrol: dict | None = None
+        self.patrol_cfg = {**PATROL, **(self.scn.get("patrol") or {})}
+        if self.patrol_cfg.get("from_season"):          # patrouille installée d'emblée, sans vote (expériences de comparaison)
+            self.patrol = {"since": int(self.patrol_cfg["from_season"]), "proposal_id": "config"}
+        self.patrol_legs: dict[int, list[dict]] = {}
+        self.climate = Climate(cfg, seed)
+        self.conditions = self.climate.conditions()
         self.season = 0
         self.stop_requested = False
         self.stopped_reason = "completed"
@@ -350,17 +394,17 @@ class World:
                 "reputation": self.reputation(sid), "by": observer.id, "delta": round(new - old, 3),
                 "source_event_id": source_event_id}, actor=observer.id)
 
-    # ------------------------------------------------------------ indices, jugement, interdiction, radar
+    # ------------------------------------------------------------ indices, jugement, interdiction, patrouille
     def beyond_declared(self, estimate: float, said: float) -> bool:
-        """L'estimation dépasse-t-elle nettement la déclaration : de plus de 25 % de celle-ci (au-delà de l'erreur du radar,
-        ±10 %) et d'au moins 0,3 t ? Un plancher de 1 t laissait passer un mensonge flagrant sur une petite prise (le radar
-        mesurait 1,9 t pour 1 t déclarée)."""
+        """L'estimation dépasse-t-elle nettement la déclaration : de plus de 25 % de celle-ci (au-delà de l'erreur de la
+        patrouille, ±12 %) et d'au moins 0,3 t ? Un plancher de 1 t laissait passer un mensonge flagrant sur une petite prise
+        (1,9 t mesurées pour 1 t déclarée)."""
         det = self.detection
         return estimate - said > max(det["margin_t"], det["margin_ratio"] * said)
 
     def investigate(self, season: int):
-        """Le soir de la veillée, les indices de la saison sont réunis. Le radar a relevé les barques de sa zone (l'ancien le dit
-        à tous) ; un voisin qui pêchait dans la même zone a pu voir une barque rentrer et en estimer la charge ; la barque d'un
+        """Le soir de la veillée, les indices de la saison sont réunis. La patrouille a relevé les barques qu'elle a croisées
+        (l'ancien le dit à tous) ; un voisin qui pêchait dans la même zone a pu voir une barque rentrer et en estimer la charge ; la barque d'un
         interdit a pu être vue partant à l'aube ; un train de vie peut ne pas coller avec une déclaration ; l'ancien fait les
         comptes du lac. Qui n'a rien à se reprocher dit ce qu'il a vu ; qui a triché se tait (pour ne pas attirer l'attention),
         et l'on ne dénonce pas un ami (confiance d'au moins `LOYAL`). Tout part des vraies sorties : un indice dit vrai, à l'erreur
@@ -390,8 +434,8 @@ class World:
             return v * (1 + rng.uniform(-err, err))
 
         for t in trips:
-            if t["radar"] and rng.random() < det["radar"]:
-                clue("radar", elder, t, noisy(t["landed"], det["radar_error"]))
+            if t["patrol"] and rng.random() < det["patrol"]:
+                clue("patrouille", elder, t, noisy(t["landed"], det["patrol_error"]))
             for o in self.fishers:                 # les barques qui pêchaient dans la même zone
                 mine = by_agent.get(o.id)
                 if o.id != t["agent"] and mine is not None and mine["zone"] == t["zone"] and rng.random() < det["witness"]:
@@ -405,7 +449,7 @@ class World:
             else:
                 # déclarer moins qu'il ne faut pour vivre, et pourtant vivre comme avant (payer sa dette, son entretien)
                 a = self.agents[t["agent"]]
-                need = (self.econ["upkeep_per_season"] + a.profile.debt_payment) / self.econ["price_per_tonne"]
+                need = (self.upkeep(a) + a.profile.debt_payment) / self.econ["price_per_tonne"]
                 if a.declared.get(season, t["landed"]) < need <= a.catches.get(season, 0.0):
                     for o in neighbours:
                         if rng.random() < det["lifestyle"]:
@@ -422,7 +466,7 @@ class World:
 
     def weigh_evidence(self, season: int):
         """À l'ouverture de la veillée, l'ancien dit ce que les indices dits devant tous établissent, pêcheur par pêcheur. Un
-        mensonge est établi quand ils pèsent `proof` (radar 3, témoin 1, départ vu 1, train de vie 0,5, comptes 0,5 s'ils ne
+        mensonge est établi quand ils pèsent `proof` (patrouille 3, témoin 1, départ vu 1, train de vie 0,5, comptes 0,5 s'ils ne
         tombent pas juste) et que la charge estimée dépasse nettement la déclaration ; pour un interdit, toute sortie prouvée est
         une faute. Il relate, il ne sanctionne pas : ce que chacun en pense, et ce que la vallée décide, appartient aux pêcheurs.
         Seuls les indices comptent, jamais la vérité : l'ancien peut se tromper (`wrongful`)."""
@@ -451,8 +495,8 @@ class World:
         """L'ancien tient pour établi que `a` a menti (ou est sorti en cachette) : il le dit à tous, et chacun s'en souvient. La
         vallée retient l'estimation des indices, pas la vérité."""
         kinds = {c["kind"] for c in clues}
-        how = "radar" if "radar" in kinds else ("temoins" if kinds & {"temoin", "depart"} else "indices")
-        witnesses = sorted({c["observer"] for c in clues if c["observer"] and c["kind"] != "radar"})
+        how = "patrouille" if "patrouille" in kinds else ("temoins" if kinds & {"temoin", "depart"} else "indices")
+        witnesses = sorted({c["observer"] for c in clues if c["observer"] and c["kind"] != "patrouille"})
         value = None if est is None else round(est, 1)
         self.established[(a.id, season)] = {"value": value, "t": self.clock.now(), "how": how, "secret": trip["secret"]}
         rep = self.reports.get((a.id, season))
@@ -474,32 +518,63 @@ class World:
                         f"disent {about} ({HOW[how]}).")
             self.remember(o, text, "mensonge", 0.9, source_event_id=ev["event_id"])
 
-    def place_radar(self, zone: str, by: str):
-        self.radar_zone, self.radar_by = zone, by
-        self.events.emit("radar_placed", {"zone": zone, "by": by})
+    def upkeep(self, agent: Agent, season: int | None = None) -> float:
+        """Ce que coûte une saison à ce pêcheur, hors dette : la vie, l'entretien de son bateau, et la patrouille du lac si le
+        conseil en a voté une (chacun y contribue)."""
+        patrol = self.patrol_cfg["cost"] if self.patrol_active(season or self.season or 1) else 0
+        return self.econ["upkeep_per_season"] + self.boats[agent.profile.boat]["upkeep"] + patrol
 
-    def move_radar(self):
-        """Pour la saison suivante, l'ancien (ou la vallée, sans ancien) place le radar en secret là où il se méfie le plus : la
-        rive du hameau dont il croit le moins les pêcheurs, ou le large s'il y a des interdits (c'est là qu'on pêche en
-        cachette). Une fois sur quatre, ailleurs au hasard, pour que personne ne puisse compter dessus. Le joueur qui l'a placé
-        lui-même garde la main jusqu'à ce qu'il la rende (« auto »)."""
-        if self.radar_by == "joueur":
-            return
-        judge = self.elder.id if self.elder else None
+    def patrol_active(self, season: int) -> bool:
+        """La patrouille du lac sort-elle cette saison ? (`since` : sa première saison ; `until` : sa dernière, si le conseil l'a retirée.)"""
+        p = self.patrol
+        return p is not None and p["since"] <= season <= p.get("until", math.inf)
 
-        def distrust(aid: str) -> float:
-            return 1.0 - (self.trust[judge].get(aid, TRUST_START) if judge else self.reputation(aid))
+    def patrol_exists(self) -> bool:
+        """Y a-t-il une patrouille, installée ou votée, que le conseil n'a pas retirée ?"""
+        return self.patrol is not None and "until" not in self.patrol
 
-        score = {h: sum(distrust(a.id) for a in self.fishers if a.profile.hamlet == h and a.id not in self.banned)
-                 for h in HAMLETS}
-        score["large"] = 0.3 + sum(distrust(aid) for aid in self.banned)     # un hameau très suspect peut l'emporter
-        rng = self.lie_rng
-        zone = rng.choice(ZONES) if rng.random() < 0.25 else max(ZONES, key=lambda z: (score[z], z))
-        self.place_radar(zone, "ancien" if judge else "vallee")
+    def set_patrol(self, s: Sanction, season: int, yes: list[str], voters: int):
+        """Le conseil installe la patrouille du lac (dès la saison suivante), ou la retire (elle sort encore cette saison)."""
+        installed = s.action == "patrouille"
+        if installed:
+            self.patrol = {"since": season + 1, "proposal_id": s.id}
+        elif self.patrol is not None:
+            self.patrol["until"] = season
+        self.events.emit("patrol", {"state": "installed" if installed else "lifted", "effective_season": season + 1,
+                                    "proposal_id": s.id, "for": yes, "voters": voters, "cost": self.patrol_cfg["cost"]})
+
+    def patrolled(self, season: int, zone: str, day: float) -> bool:
+        """La patrouille se trouvait-elle dans cette zone ce jour-là (jours depuis le début de la saison) ?"""
+        return any(leg["zone"] == zone and leg["from_day"] <= day < leg["to_day"] for leg in self.patrol_legs.get(season, []))
+
+    def outing_day(self, agent: Agent, season: int) -> float:
+        """Le jour de la fenêtre de pêche où part la barque : tiré à l'avance et étalé sur la fenêtre, le même dans les deux modes
+        (la prise s'applique à l'instant où l'agent a fini de réfléchir ; la patrouille, elle, suit le calendrier de la saison)."""
+        u = (zlib.crc32(f"{self.cfg['run']['seed']}|day|{agent.id}|{season}".encode()) % 10000) / 10000
+        lo, hi = self.T["fishing_open_day"], self.T["fishing_close_day"]
+        return round(lo + u * (hi - lo - 0.01), 2)
+
+    def outing_yield(self, agent: Agent, season: int) -> tuple[float, float]:
+        """(rendement de la sortie, réussite du jour) : ce que la sortie rapporte par rapport à la prise visée. La réussite du jour
+        est tirée pour ce pêcheur et cette saison (la même quel que soit l'ordre dans lequel les barques rentrent) ; elle se
+        prolonge d'une saison à l'autre (`economy.luck_streak`). S'y ajoutent son expérience, le lac bas (le poisson est plus dur
+        à prendre sous `LOW_LAKE`), la saison de l'année et les événements. `economy.luck: 0` : toujours la prise visée."""
+        amp = float(self.econ.get("luck", 0.0))
+        weather = self.climate.yield_for(agent.profile.boat)
+        if amp <= 0:
+            return weather, 1.0
+        rng = random.Random(f"{self.cfg['run']['seed']}|luck|{agent.id}|{season}")
+        keep = float(self.econ.get("luck_streak", 0.5))
+        agent.form = max(-2.5, min(2.5, keep * agent.form + math.sqrt(max(0.0, 1 - keep * keep)) * rng.gauss(0, 1)))
+        luck = max(0.3, 1 + amp * agent.form)
+        skill = 1 + SKILL_STEP * (min(max(agent.profile.experience, 0), 40) - 15)
+        ratio = self.lake.stock / self.capacity
+        density = 1.0 if ratio >= LOW_LAKE else 0.55 + 1.5 * ratio
+        return luck * skill * weather * density, luck
 
     def secret_zone(self, agent: Agent) -> str:
         """Où un interdit va pêcher en cachette : loin de sa rive (ses voisins le connaissent), plutôt au large."""
-        others = [z for z in ZONES if z != agent.profile.hamlet]
+        others = [z for z in self.zones if z != agent.profile.hamlet] or ["large"]
         weights = [2.0 if z == "large" else 1.0 for z in others]
         return self.lie_rng.choices(others, weights)[0]
 
@@ -509,8 +584,8 @@ class World:
         boat = "ta barque" if mine else f"la barque de {self.first_name(c['subject'])}"
         said = "" if c["declared"] is None else \
             (f" (tu as déclaré {c['declared']:g} t)" if mine else f" ({self.first_name(c['subject'])} a déclaré {c['declared']:g} t)")
-        if c["kind"] == "radar":
-            return f"le radar de l'ancien a mesuré environ {c['estimate']:g} t dans {boat}{said}"
+        if c["kind"] == "patrouille":
+            return f"la patrouille du lac a mesuré environ {c['estimate']:g} t dans {boat}{said}"
         if c["kind"] == "temoin":
             return f"{boat} rentrer avec environ {c['estimate']:g} t{said}"
         if c["kind"] == "depart":
@@ -524,7 +599,7 @@ class World:
         for c in self.clues:
             if c["t"] > horizon or c["season"] < season - 1 or not (c["public"] or c["observer"] == agent.id):
                 continue
-            if c["kind"] == "radar":
+            if c["kind"] == "patrouille":
                 text = self.clue_text(c, agent.id)
             elif c["observer"] == agent.id:
                 text = f"tu as vu {self.clue_text(c, agent.id)}" + ("" if c["public"] else " ; tu ne l'as dit à personne")
@@ -700,6 +775,12 @@ class World:
         banned = agent.id in self.banned
         clues = self.clue_lines(agent, horizon, season)
         wealth, stock_true = agent.wealth, round(self.lake.stock, 3)
+        # son bateau : ce qu'il peut porter, ce que la saison lui coûte (vie, entretien, patrouille)
+        hold = self.hold.get(agent.id, self.max_catch)
+        min_catch = 0.0 if banned else min(self.min_catch, hold)
+        upkeep = self.upkeep(agent, season) if agent.is_fisher else self.econ["upkeep_per_season"]
+        patrol = self.patrol_active(season)
+        lies_recent = sum(1 for (_, s), f in self.established.items() if s >= season - 1 and f["t"] <= horizon)
         if self.vectors is None:
             # en mémoire : aucune attente, le monde ne bouge pas pendant l'observation
             mems = agent.memory.retrieve(query, horizon, self.cfg["memory"]["top_k"], exclude=skip)
@@ -723,11 +804,14 @@ class World:
         obs = {
             "label": self.clock.label(horizon), "season": season, "stock_estimate": est, "role": p.role,
             "capacity": self.capacity, "collapse_ratio": self.lake.collapse_ratio, "stock_history": history,
-            "n_fishers": len(self.fishers), "_entry": entry,
-            "wealth": wealth, "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
-            "price": self.econ["price_per_tonne"], "boat_capacity": self.max_catch,
+            "n_fishers": len(self.fishers), "_entry": entry, "villages": self.hamlets,
+            "wealth": wealth, "upkeep": upkeep, "debt_payment": p.debt_payment,
+            "price": self.econ["price_per_tonne"], "boat_capacity": hold, "boat": p.boat,
+            "growth": self.lake.r * self.conditions.get("growth", 1.0),
+            "conditions": self.climate.line(season), "events": [e["label"] for e in self.conditions.get("events", [])],
+            "patrol": patrol,
             # un interdit ne sort qu'en cachette, ou reste à quai (0 t)
-            "min_catch": 0.0 if banned else self.min_catch, "carnet": carnet, "norms": norm_lines,
+            "min_catch": min_catch, "carnet": carnet, "norms": norm_lines,
             "known_catches": catches_txt, "clues": clues, "banned": banned,
             "banned_others": [self.first_name(b) for b in self.banned if b != agent.id],
             "trust": [(self.first_name(s), v) for s, v in trust],
@@ -744,17 +828,20 @@ class World:
         }
         state = {
             "stock_estimate": est, "stock_true": stock_true, "capacity": self.capacity, "n_fishers": len(self.fishers),
-            "quota": norm.quota if norm else None, "boat_capacity": self.max_catch,      # limite d'une sortie
-            "min_catch": 0.0 if banned else self.min_catch, "banned": banned,
-            "upkeep": self.econ["upkeep_per_season"], "debt_payment": p.debt_payment,
+            "quota": norm.quota if norm else None, "boat_capacity": hold,      # limite d'une sortie
+            "min_catch": min_catch, "banned": banned,
+            "upkeep": upkeep, "debt_payment": p.debt_payment,
             "price": self.econ["price_per_tonne"], "wealth": wealth,
-            "growth_rate": self.lake.r, "round": rnd,
+            "growth_rate": self.lake.r * self.conditions.get("growth", 1.0), "round": rnd,
+            "has_patrol": patrol, "lies_recent": lies_recent, "patrol_cost": self.patrol_cfg["cost"],
             "rumors": obs["rumors"], "rumor_targets": self.named_fishers(obs["rumors"]) if rumors else [],
             "self_id": agent.id, "names": {a.id: (a.profile.first_name or a.profile.name.split()[0]) for a in self.fishers},
             "exposed": exposed, "trust": dict(self.trust[agent.id]),     # un mensonge à lui découvert depuis peu ; sa confiance
         }
         if assembly:
-            visible_u = [u for u in assembly.utterances if u["sim_time"] <= horizon]
+            # synchrone : on entend ceux qui ont parlé avant soi (dialogues dépendants) ; asynchrone : chacun s'exprime de son
+            # côté, sans rien entendre ni voir des propositions des autres avant le vote (dialogues indépendants)
+            visible_u = [] if assembly.independent else [u for u in assembly.utterances if u["sim_time"] <= horizon]
             row = self.trust[agent.id]
 
             def speaker(aid: str) -> str:      # chaque parole se pèse à la confiance qu'on fait à celui qui la dit
@@ -768,7 +855,7 @@ class World:
                 + ("" if u["payload"]["to"] == "tous" else f", à {self.name(u['payload']['to'])}")
                 + f" : « {u['payload']['text']} »" for u in visible_u[-12:]]
             used += [u["event_id"] for u in visible_u[-12:]]
-            props = [pr for pr in assembly.proposals.values() if pr.t <= horizon]
+            props = [] if assembly.independent else [pr for pr in assembly.proposals.values() if pr.t <= horizon]
             obs["proposals"] = []
             best = None
             for pr in props:
@@ -780,11 +867,13 @@ class World:
                     best = (pr.id, pr.quota, len(sup), pr.author)
             state["leading_proposal"] = (best[0], best[1]) if best else None
             state["leading_trust"] = row.get(best[3], 1.0) if best else 1.0
-            obs["sanctions"] = [
-                f"{s.id} : {'interdire de pêche' if s.action == 'exclure' else 'laisser pêcher à nouveau'} "
-                f"{self.name(s.target)} ({s.target}), proposé par {self.name(s.author)} ; pour : "
+            obs["sanctions"] = [] if assembly.independent else [
+                f"{s.id} : {self.motion_text(s)}, proposé par {self.name(s.author)} ; pour : "
                 f"{', '.join(a for a, v in s.votes.items() if v) or 'personne'}"
                 for s in assembly.sanctions.values() if s.t <= horizon]
+            obs["independent"] = assembly.independent
+            obs["delegate"] = self.delegate_line(agent) if assembly.delegates and agent.is_fisher else ""
+            obs["patrol_line"] = self.patrol_line(season) if agent.is_fisher else ""
             obs["promises"] = self.promise_lines(agent, season, horizon)
             mine = [u for u in visible_u if u["payload"]["speaker"] == agent.id]
             state["facts"] = self.trust_facts(agent, season, horizon,
@@ -844,19 +933,26 @@ class World:
         before = self.lake.stock
         obs = decision["payload"]["observed"]
         stock_observed = obs["stock_estimate"]
-        landed = round(self.lake.take(requested * ration), 3)
+        # la pêche n'est pas toujours bonne : la prise visée × la réussite du jour × la saison de l'année et les événements, sans
+        # jamais dépasser la cale du bateau ; puis, en synchrone, le rationnement si la flotte demande plus que le lac
+        factor, luck = self.outing_yield(agent, season)
+        landed = round(self.lake.take(min(requested * factor, self.hold[agent.id]) * ration), 3)
+        day = self.outing_day(agent, season)
         ev = self.events.emit("catch", {
             "agent": agent.id, "hamlet": agent.profile.hamlet, "requested": requested, "landed": landed,
             "stock_observed": stock_observed, "stock_before": round(before, 3), "stock_after": round(self.lake.stock, 3),
             "decision_event_id": decision["event_id"], "info_horizon": round(horizon, 6), "rationed": ration < 1.0,
             "stock_at_horizon": obs["stock_true"],
             "stock_at_action": round(before if stock_at_action is None else stock_at_action, 3),
-            "zone": zone, "secret": secret,
+            "zone": zone, "secret": secret, "yield": round(factor, 3), "luck": round(luck, 3), "day": day,
         }, actor=agent.id)
-        # la sortie : où, combien, et si le radar surveillait cette zone à ce moment-là (lu le soir de la veillée)
+        # la sortie : où, combien, quel jour, et si la patrouille du lac était dans cette zone ce jour-là (lu le soir de la veillée)
         self.trips.setdefault(season, []).append({"agent": agent.id, "zone": zone, "landed": landed, "secret": secret,
-                                                  "radar": zone == self.radar_zone, "event_id": ev["event_id"]})
+                                                  "patrol": self.patrolled(season, zone, day), "day": day,
+                                                  "event_id": ev["event_id"]})
         agent.catches[season] = agent.catches.get(season, 0.0) + landed
+        agent.aimed[season] = agent.aimed.get(season, 0.0) + requested
+        agent.day_factor[season] = factor
         self.lake_update("catch", -landed)
         income = landed * self.econ["price_per_tonne"]
         agent.wealth += income
@@ -878,7 +974,9 @@ class World:
             self.lies[rep["event_id"]] = {"agent": agent.id, "season": season, "declared": said, "landed": landed,
                                           "found_t": None, "report_event_id": rep["event_id"]}
         note = f"J'ai pêché {landed:g} t cette saison ; le lac m'a semblé contenir environ {stock_observed:.0f} t."
-        if landed + 1e-6 < requested * ration or ration < 1:
+        if abs(factor - 1.0) >= 0.15 and requested > 0:
+            note += f" J'en visais {requested:g} : {day_word(factor)} journée."
+        elif landed + 1e-6 < requested * ration or ration < 1:
             note += f" J'en voulais {requested:g}, je n'ai pas pu tout prendre."
         if landed - said > 0.05:
             note += f" J'ai déclaré {said:g} t à l'ancien."
@@ -892,7 +990,7 @@ class World:
             return
         ctype = cmd["type"]
         params = {k: v for k, v in cmd.items() if k != "type"}
-        if ctype in ("start_game", "new_game"):
+        if ctype in ("start_game", "new_game", "generate_world"):
             return          # commandes du salon (Engine) : sans objet pendant une partie
         if ctype in ("pause", "resume", "set_speed", "set_mode", "stop"):
             self._control_command(ctype, cmd, params, source)
@@ -910,12 +1008,6 @@ class World:
                 self.comm = cmd["value"]
         elif ctype == "set_visibility":
             self.visible = bool(cmd.get("value"))
-        elif ctype == "place_radar":
-            # le joueur place le radar où il veut (il en garde la main) ; « auto » la rend à l'ancien, qui le déplacera
-            if cmd.get("value") in ZONES:
-                self.place_radar(cmd["value"], "joueur")
-            elif cmd.get("value") == "auto":
-                self.radar_by = "ancien"
         elif ctype == "announcement":
             text = str(cmd.get("text", "")).strip()[:300]
             if text:
@@ -999,7 +1091,103 @@ class World:
                 self.handle_command({k: v for k, v in inj.items() if k != "season"}, source="scenario")
 
     # ------------------------------------------------------------ veillée
-    def open_assemblies(self, season: int, close_t: float) -> list[Assembly]:
+    async def elect(self, season: int):
+        """Au conseil de la vallée, chaque village est représenté par un élu, choisi à chaque saison par ses pêcheurs. Chacun vote
+        pour le pêcheur de son village qu'il juge le plus apte à parler pour lui, selon sa confiance, son caractère et ses
+        intérêts (une IA par son bulletin, un agent à règles selon sa règle : `policies.elect_rule`). Le moteur ne fait que
+        compter les voix ; à égalité, le plus de confiance moyenne, l'élu sortant, le plus d'expérience. Un interdit de pêche
+        ne peut pas être élu : un menteur démasqué ne garde pas le siège de son village."""
+        if not (self.delegates and self.comm == "valley"):
+            self.reps = {}
+            return
+        for h in self.hamlets:
+            villagers = [a for a in self.fishers if a.profile.hamlet == h]
+            candidates = [a for a in villagers if a.id not in self.banned]
+            if not candidates:
+                self.reps.pop(h, None)
+                continue
+            incumbent = self.reps.get(h)
+            if len(candidates) == 1:
+                ballots = {v.id: candidates[0].id for v in villagers}
+            else:
+                picks = await asyncio.gather(*(ballot_election(self, v, candidates, season) for v in villagers))
+                ballots = {v.id: pick for v, pick in zip(villagers, picks) if pick is not None}
+            votes = Counter(ballots.values())
+
+            def mean_trust(c: Agent) -> float:
+                others = [self.trust[v.id].get(c.id, TRUST_START) for v in villagers if v.id != c.id]
+                return sum(others) / len(others) if others else TRUST_START
+
+            winner = max(candidates, key=lambda c: (votes[c.id], mean_trust(c), c.id == incumbent, c.profile.experience,
+                                                    -self.fishers.index(c)))
+            self.reps[h] = winner.id
+            ev = self.events.emit("election", {"season": season, "hamlet": h, "representative": winner.id,
+                                               "votes": dict(votes), "voters": len(villagers), "incumbent": incumbent,
+                                               "ballots": ballots}, actor=winner.id)
+            if winner.id != incumbent:
+                self.remember(winner, f"Mon village m'a élu pour le représenter au conseil de la vallée "
+                                      f"({votes[winner.id]} voix sur {len(villagers)}).", "conseil", 0.7,
+                              source_event_id=ev["event_id"])
+
+    async def debrief(self, season: int):
+        """Les villageois qui n'étaient pas au conseil de la saison `season` en apprennent par l'ancien les décisions et les faits
+        établis, et en jugent chacun pour soi : leur confiance envers chaque pêcheur bouge selon leur caractère et leurs intérêts
+        (une IA dans sa réflexion, un agent à règles selon `policies.trust_rule`). C'est ce qui fait ensuite leur vote."""
+        asm = self.last_council
+        if asm is None or asm.season != season:
+            return
+        absent = [a for a in self.fishers if a.id not in asm.participants]
+        await asyncio.gather(*(debrief_villager(self, a, asm) for a in absent))
+
+    async def plan_patrol(self, season: int):
+        """Avant la saison, la patrouille du lac (si le conseil en a voté une) prend la mer : elle visite `patrol.legs` zones,
+        l'une après l'autre, dans la fenêtre de pêche. C'est l'ancien qui l'envoie, là où il le juge bon : il réfléchit à ce qu'il
+        sait des villages, des mensonges et des interdits (un ancien à règles va là où il se méfie le plus ; voir
+        `plan_patrol_rule`). Les pêcheurs savent qu'elle existe, pas où elle sera."""
+        if not self.patrol_active(season):
+            return
+        legs_n = max(1, min(int(self.patrol_cfg["legs"]), len(self.zones)))
+        chosen = await route_decision(self, season, legs_n) if self.elder is not None and not self.policy_voter(self.elder) else None
+        by = "ancien" if self.elder else "vallee"
+        if chosen is None:
+            chosen, by = self.plan_patrol_rule(legs_n), by + " (règle)"
+        lo, hi = self.T["fishing_open_day"], self.T["fishing_close_day"]
+        step = (hi - lo) / len(chosen)
+        legs = [{"zone": z, "from_day": round(lo + k * step, 2), "to_day": round(lo + (k + 1) * step, 2)}
+                for k, z in enumerate(chosen)]
+        self.patrol_legs[season] = legs
+        self.events.emit("patrol_route", {"season": season, "legs": legs, "by": by}, actor=self.elder.id if self.elder else None)
+
+    def plan_patrol_rule(self, legs_n: int) -> list[str]:
+        """La route d'un ancien à règles (ou de la vallée sans ancien, ou le repli d'un ancien dont l'IA n'a pas répondu) : les
+        zones où l'on se méfie le plus, la rive du village dont on croit le moins les pêcheurs, ou le large s'il y a des
+        interdits (c'est là qu'on pêche en cachette) ; une étape sur quatre, ailleurs au hasard."""
+        judge = self.elder.id if self.elder else None
+
+        def distrust(aid: str) -> float:
+            return 1.0 - (self.trust[judge].get(aid, TRUST_START) if judge else self.reputation(aid))
+
+        score = {h: sum(distrust(a.id) for a in self.fishers if a.profile.hamlet == h and a.id not in self.banned)
+                 for h in self.hamlets}
+        score["large"] = 0.3 + sum(distrust(aid) for aid in self.banned)     # un village très suspect peut l'emporter
+        rng, chosen = self.lie_rng, []
+        for _ in range(legs_n):
+            free = [z for z in self.zones if z not in chosen]
+            chosen.append(rng.choice(free) if rng.random() < 0.25 else max(free, key=lambda z: (score[z], z)))
+        rng.shuffle(chosen)
+        return chosen
+
+    def council_members(self, season: int) -> list[str]:
+        """Qui siège au conseil de la vallée : l'ancien, qui ouvre la séance, puis un élu par village (le tour de parole commence
+        chaque saison par un village différent) ; ou tous, si `scenario.council` vaut `all`."""
+        elder = [self.elder.id] if self.elder else []
+        if not self.delegates or not self.reps:         # (sans élus, par exemple si la communication vient d'être rouverte : tous)
+            return elder + [a.id for a in self.fishers]
+        reps = [self.reps[h] for h in self.hamlets if h in self.reps]
+        k = season % len(reps) if reps else 0
+        return elder + reps[k:] + reps[:k]
+
+    def open_assemblies(self, season: int, close_t: float, mode: str = "sync") -> list[Assembly]:
         # le soir de la veillée (qu'elle se tienne ou non) : les indices de la saison réunis, et ce qu'ils établissent, relaté
         # par l'ancien ; ce que chacun en pense, et ce que la vallée en décide, se dira à la veillée
         self.investigate(season)
@@ -1007,19 +1195,21 @@ class World:
         if self.comm == "none":
             return []
         if self.comm == "valley":
-            groups = {"valley": [a.id for a in self.agents.values()]}
+            groups = {"valley": self.council_members(season)}
         else:
             groups = {}
-            for h in HAMLETS:
+            for h in self.hamlets:
                 members = [a.id for a in self.fishers if a.profile.hamlet == h]
                 if self.elder and self.elder.profile.hamlet == h:
-                    members.append(self.elder.id)
+                    members.insert(0, self.elder.id)
                 if len([m for m in members if self.agents[m].is_fisher]) >= 1:
                     groups[f"hamlet:{h}"] = members
         out = []
         for scope, members in groups.items():
-            asm = Assembly(scope, members, season, close_t)
-            self.events.emit("assembly_start", {"scope": scope, "participants": members})
+            council = scope == "valley" and self.delegates and bool(self.reps)
+            asm = Assembly(scope, members, season, close_t, mode=mode, delegates=council)
+            self.events.emit("assembly_start", {"scope": scope, "participants": members, "mode": mode,
+                                                **({"delegates": dict(self.reps)} if council else {})})
             out.append(asm)
         self.assemblies = out
         return out
@@ -1030,7 +1220,7 @@ class World:
         to = str(d.get("destinataire") or "tous").strip()
         if to not in asm.participants:
             to = "tous"
-        heard = [u["event_id"] for u in asm.utterances if u["sim_time"] <= horizon]
+        heard = [] if asm.independent else [u["event_id"] for u in asm.utterances if u["sim_time"] <= horizon]
         u = self.events.emit("utterance", {"speaker": agent.id, "to": to, "text": text, "scope": asm.scope,
                                            "round": rnd, "info_horizon": round(horizon, 6), "heard": heard[-12:],
                                            "decision_event_id": outcome.decision["event_id"]}, actor=agent.id)
@@ -1040,7 +1230,7 @@ class World:
         # proposition de règle
         q = to_number(d.get("proposition_quota"))
         lo, hi = self.min_catch, self.max_catch      # proposer ou promettre hors de ce qu'une sortie rapporte, c'en est la borne
-        if q is not None and 0 <= q <= self.econ["boat_capacity"]:
+        if q is not None and 0 <= q <= self.boat_max:
             q = round(min(max(q, lo), hi), 2)
             asm.stated[agent.id] = q
             twin = self._similar_proposal(asm, q)
@@ -1069,7 +1259,7 @@ class World:
         # promesse
         if agent.is_fisher:
             pv = to_number(d.get("promesse"))
-            if pv is not None and 0 <= pv <= self.econ["boat_capacity"]:
+            if pv is not None and 0 <= pv <= self.boat_max:
                 pv = min(max(pv, lo), hi)
                 asm.stated.setdefault(agent.id, round(pv, 2))     # une proposition de quota, si elle existe, prime sur la promesse
                 pe = self.events.emit("promise", {"agent": agent.id, "amount": round(pv, 2), "for_season": season + 1,
@@ -1099,6 +1289,8 @@ class World:
             for action in ("exclure", "reautoriser"):
                 if d.get(action):
                     self.propose_sanction(agent, asm, d[action], action, u)
+            if d.get("patrouille") and asm.scope == "valley":      # la patrouille du lac se décide au conseil de la vallée
+                self.propose_patrol(agent, asm, d["patrouille"], u)
         # ce que chacun retient
         self.remember(agent, f"À la veillée, j'ai dit : « {text} »", "parole", 0.4, source_event_id=u["event_id"])
         for pid in asm.participants:
@@ -1136,17 +1328,36 @@ class World:
         if tid is None or tid == agent.id or (action == "exclure") == (tid in self.banned):
             return
         target = self.agents[tid]
-        same = next((s for s in asm.sanctions.values() if s.target == tid and s.action == action), None)
+        same = self._motion(agent, asm, action, tid, u)
+        if same.author == agent.id and len(same.votes) == 0 and tid in asm.participants and action == "exclure":
+            self.remember(target, f"{agent.profile.name} a proposé devant tous de m'interdire de pêche.", "sanction",
+                          0.95, pinned=True, expires_season=asm.season + 1, source_event_id=same.event_id)
+        self.vote_sanction(agent, same, True)
+
+    def propose_patrol(self, agent: Agent, asm: Assembly, raw, u: dict):
+        """Un élu propose d'installer la patrouille du lac (« installer ») ou de la retirer (« retirer ») : la première s'il n'y en
+        a pas, la seconde s'il y en a une. Une proposition déjà sur la table est soutenue plutôt que doublée. L'auteur vote pour."""
+        word = str(raw).strip().lower()
+        if word.startswith(("inst", "mett", "cré", "cre", "voter", "cr")):
+            action = "patrouille"
+        elif word.startswith(("ret", "lev", "fin", "supp", "arr", "abol")):
+            action = "fin_patrouille"
+        else:
+            return
+        if (action == "patrouille") == self.patrol_exists():
+            return
+        self.vote_sanction(agent, self._motion(agent, asm, action, "", u), True)
+
+    def _motion(self, agent: Agent, asm: Assembly, action: str, target: str, u: dict) -> Sanction:
+        """La motion `action` visant `target` ("" : aucun pêcheur) : celle qui est déjà sur la table, ou une nouvelle."""
+        same = next((s for s in asm.sanctions.values() if s.target == target and s.action == action), None)
         if same is None:
             sid = f"X{next(self._xid)}"
-            pe = self.events.emit("sanction_proposal", {"proposal_id": sid, "author": agent.id, "target": tid,
+            pe = self.events.emit("sanction_proposal", {"proposal_id": sid, "author": agent.id, "target": target,
                                                         "action": action, "scope": asm.scope, "utterance_id": u["event_id"]},
                                   actor=agent.id)
-            same = asm.sanctions[sid] = Sanction(sid, agent.id, tid, action, self.clock.now(), pe["event_id"])
-            if tid in asm.participants and action == "exclure":
-                self.remember(target, f"{agent.profile.name} a proposé devant tous de m'interdire de pêche.", "sanction",
-                              0.95, pinned=True, expires_season=asm.season + 1, source_event_id=pe["event_id"])
-        self.vote_sanction(agent, same, True)
+            same = asm.sanctions[sid] = Sanction(sid, agent.id, target, action, self.clock.now(), pe["event_id"])
+        return same
 
     def vote_sanction(self, agent: Agent, s: Sanction, yes: bool):
         if agent.id == s.target or agent.id in s.votes or not agent.is_fisher:
@@ -1159,26 +1370,40 @@ class World:
         return agent.profile.kind == "rule" or self.cfg["llm"]["tiers"]["petit"]["provider"] == "scripted"
 
     def close_sanctions(self, asm: Assembly):
-        """À la clôture, chaque proposition d'exclure ou de réautoriser est tranchée : les pêcheurs présents (sauf celui qu'elle
-        vise) qui n'ont pas encore voté le font selon leur caractère s'ils votent ainsi ; adoptée avec au moins la moitié
-        d'entre eux, elle prend effet dès la saison suivante. Les IA ont voté par leur bulletin, selon leur confiance, leur
-        morale et leurs intérêts."""
+        """À la clôture, chaque proposition du conseil (exclure ou réautoriser un pêcheur, installer ou retirer la patrouille) est
+        tranchée : les pêcheurs présents (sauf celui qu'elle vise) qui n'ont pas encore voté le font selon leur caractère s'ils
+        votent ainsi ; adoptée avec au moins la moitié d'entre eux, elle prend effet dès la saison suivante. Les IA ont voté par
+        leur bulletin, selon leur confiance, leur morale et leurs intérêts. Tout le monde en apprend la décision, même les
+        villageois qui n'étaient pas au conseil."""
         for s in asm.sanctions.values():
             voters = [a for a in asm.participants if self.agents[a].is_fisher and a != s.target]
             for aid in voters:
                 a = self.agents[aid]
-                if aid not in s.votes and self.policy_voter(a):
+                if aid in s.votes or not self.policy_voter(a):
+                    continue
+                if s.action in PATROL_ACTIONS:
+                    lies = sum(1 for (_, ls), f in self.established.items() if ls >= asm.season - 1)
+                    self.vote_sanction(a, s, patrol_vote(a.archetype, lies, s.action))
+                else:
                     self.vote_sanction(a, s, sanction_vote(a.archetype, self.trust[aid][s.target], s.action))
             yes = sorted(a for a, v in s.votes.items() if v)
             adopted = bool(voters) and len(yes) * 2 >= len(voters)
             res = self.events.emit("sanction_result", {
                 "proposal_id": s.id, "target": s.target, "action": s.action, "adopted": adopted, "for": yes,
-                "against": sorted(a for a, v in s.votes.items() if not v), "voters": len(voters)}, actor=s.target)
+                "against": sorted(a for a, v in s.votes.items() if not v), "voters": len(voters)}, actor=s.target or None)
+            if s.action in PATROL_ACTIONS:
+                what = "installer la patrouille du lac" if s.action == "patrouille" else "retirer la patrouille du lac"
+                for agent in self.agents.values():
+                    self.remember(agent, f"Au conseil, la vallée a {'décidé' if adopted else 'refusé'} de {what} "
+                                         f"({len(yes)} voix sur {len(voters)}).", "sanction", 0.9, source_event_id=res["event_id"])
+                if adopted:
+                    self.set_patrol(s, asm.season, yes, len(voters))
+                continue
             name = self.agents[s.target].profile.name
             what = "l'interdire de pêche" if s.action == "exclure" else "lui rendre le droit de pêcher"
-            for aid in asm.participants:
-                self.remember(self.agents[aid], f"À la veillée, la vallée a {'décidé' if adopted else 'refusé'} de {what} : "
-                                                f"{name} ({len(yes)} voix sur {len(voters)}).", "sanction", 0.9,
+            for agent in self.agents.values():
+                self.remember(agent, f"Au conseil, la vallée a {'décidé' if adopted else 'refusé'} de {what} : "
+                                     f"{name} ({len(yes)} voix sur {len(voters)}).", "sanction", 0.9,
                               source_event_id=res["event_id"])
             if not adopted:
                 continue
@@ -1205,6 +1430,46 @@ class World:
         near = [p for p in asm.proposals.values() if abs(p.quota - q) <= tol + 1e-9]
         return min(near, key=lambda p: (abs(p.quota - q), p.id), default=None)
 
+    def motion_text(self, s: Sanction) -> str:
+        """Ce que propose une motion du conseil, en mots."""
+        if s.action == "patrouille":
+            return (f"installer une patrouille du lac (chaque pêcheur y contribuerait de {self.patrol_cfg['cost']:g} écus par "
+                    "saison)")
+        if s.action == "fin_patrouille":
+            return "retirer la patrouille du lac"
+        return f"{'interdire de pêche' if s.action == 'exclure' else 'laisser pêcher à nouveau'} {self.name(s.target)} ({s.target})"
+
+    def patrol_line(self, season: int) -> str:
+        """L'état de la patrouille du lac, pour les élus qui doivent décider d'en voter une ou de la retirer : ce qu'elle coûte, et ce
+        que la vallée a établi depuis deux saisons (de quoi juger si elle est nécessaire, sans qu'aucun seuil ne le dise)."""
+        lies = sum(1 for (_, s), _f in self.established.items() if s >= season - 1)
+        seen = f" Mensonges ou sorties en cachette établis depuis deux saisons : {lies}."
+        if self.patrol_active(season):
+            return (f"Une patrouille surveille le lac depuis la saison {self.patrol['since']} : chaque pêcheur y contribue de "
+                    f"{self.patrol_cfg['cost']:g} écus par saison ; elle mesure les barques qu'elle croise, et nul ne sait où "
+                    f"elle passera.{seen}")
+        return ("Il n'y a pas de patrouille sur le lac. Le conseil peut en voter une, aux frais de chaque pêcheur "
+                f"({self.patrol_cfg['cost']:g} écus par saison), s'il juge qu'il faut démasquer des fraudes.{seen}")
+
+    def delegate_line(self, agent: Agent) -> str:
+        """Pour qui parle un élu : les pêcheurs de son village, et ce qu'il leur faut pour vivre."""
+        mates = [a for a in self.fishers if a.profile.hamlet == agent.profile.hamlet]
+        if len(mates) == 1:
+            return f"Tu es le seul pêcheur de {agent.profile.hamlet}, et son élu au conseil de la vallée."
+        need = sum((self.upkeep(a) + a.profile.debt_payment) / self.econ["price_per_tonne"] for a in mates) / len(mates)
+        others = ", ".join(self.first_name(a.id) for a in mates if a.id != agent.id)
+        return (f"Tu es l'élu de {agent.profile.hamlet} au conseil de la vallée : tu parles aussi pour {others}, qui n'y viennent "
+                f"pas et subiront la décision (il leur faut en moyenne {need:.1f} t par saison pour vivre).")
+
+    def motion_item(self, observer: Agent, s: Sanction, season: int) -> str:
+        """Une motion au bulletin d'un élu, en une ligne : ce qu'on propose, par qui, et ce qu'il sait pour en juger."""
+        if s.action in PATROL_ACTIONS:
+            return f"{self.motion_text(s)}, proposé par {self.name(s.author)}. {self.patrol_line(season)}"
+        first, trust = self.first_name(s.target), self.trust[observer.id].get(s.target, TRUST_START)
+        return (f"{self.motion_text(s)}, proposé par {self.name(s.author)}. Ta confiance envers {first} : "
+                f"{prompts.trust_word(trust)} ({100 * trust:.0f} %). Ce que tu sais de lui : "
+                f"{self.sanction_brief(observer, s.target, season)}.")
+
     def ballot_candidates(self, asm: Assembly) -> list[Agent]:
         """Les pêcheurs à IA qui ont encore un bulletin à remplir : aucune proposition de règle soutenue, ou une proposition
         d'exclure ou de réautoriser sur laquelle ils n'ont pas voté. Pas avec le faux LLM : il ne sait pas répondre à un
@@ -1221,7 +1486,64 @@ class World:
                 out.append(a)
         return out
 
-    def sanction_brief(self, observer: Agent, target: str, season: int) -> str:
+    def candidate_line(self, voter: Agent, cand: Agent, season: int) -> str:
+        """Un candidat à l'élection de son village, vu par un électeur : qui il est, ce que celui-ci en pense et en sait."""
+        if cand.id == voter.id:
+            return f"toi-même ({cand.profile.experience} ans de pêche, {cand.profile.boat})"
+        trust = self.trust[voter.id].get(cand.id, TRUST_START)
+        known = self.sanction_brief(voter, cand.id, season - 1, "rien de particulier") if season > 1 else "rien de particulier"
+        return (f"{self.first_name(cand.id)}, {cand.profile.archetype_label}, {cand.profile.experience} ans de pêche, "
+                f"{cand.profile.boat}. Ta confiance : {prompts.trust_word(trust)} ({100 * trust:.0f} %). Ce que tu sais de "
+                f"lui : {known}.")
+
+    def debrief_lines(self, agent: Agent, asm: Assembly, facts: dict[str, dict]) -> list[str]:
+        """Ce que l'ancien rapporte à un villageois absent du conseil : les décisions prises, les accusations portées, et ce que
+        la vallée sait de chaque pêcheur (seuls ceux sur qui il y a quelque chose à dire)."""
+        evs = [e for e in self.events.index.values() if e["season"] == asm.season]
+        lines = []
+        adopted = [e["payload"] for e in evs if e["type"] == "norm_adopted" and e["payload"]["scope"] == "valley"]
+        lines.append(f"le conseil a adopté une règle : pas plus de {adopted[-1]['quota']:g} t par pêcheur dès la saison "
+                     f"{adopted[-1]['effective_season']}" if adopted else "le conseil n'a adopté aucune règle")
+        for e in evs:
+            p = e["payload"]
+            if e["type"] == "sanction_result":
+                verdict = "voté" if p["adopted"] else "refusé"
+                if p["action"] in PATROL_ACTIONS:
+                    what = "d'installer la patrouille du lac" if p["action"] == "patrouille" else "de retirer la patrouille du lac"
+                else:
+                    what = ("d'interdire de pêche " if p["action"] == "exclure" else "de laisser pêcher à nouveau ") \
+                        + self.first_name(p["target"])
+                lines.append(f"le conseil a {verdict} {what} ({len(p['for'])} voix sur {p['voters']})")
+            elif e["type"] == "accusation":
+                lines.append(f"{self.first_name(p['accuser'])} a accusé {self.first_name(p['accused'])} de trop pêcher")
+        for cid, f in facts.items():
+            if f.get("over", 0.0) > 0 or f.get("lie") or f.get("secret") or f.get("accused_me") or f.get("testified") \
+                    or f.get("stayed_away") or f.get("promise") is not None:
+                bits = [self.sanction_brief(agent, cid, asm.season)]
+                if f.get("testified"):
+                    bits.append("a témoigné devant tous")
+                if f.get("accused_me"):
+                    bits.append("t'a accusé devant le conseil")
+                lines.append(f"{self.first_name(cid)} ({cid}) : " + " ; ".join(bits))
+        return lines
+
+    def route_lines(self, elder: Agent, season: int) -> list[str]:
+        """Ce que l'ancien sait de chaque zone du lac, pour y envoyer la patrouille : les pêcheurs du village, sa confiance en eux,
+        les mensonges établis depuis deux saisons ; au large, les interdits qui peuvent y sortir en cachette."""
+        out, row = [], self.trust[elder.id]
+        for h in self.hamlets:
+            here = [a for a in self.fishers if a.profile.hamlet == h]
+            mean = sum(row.get(a.id, TRUST_START) for a in here) / len(here)
+            lies = sum(1 for (aid, s), f in self.established.items()
+                       if s >= season - 2 and self.agents[aid].profile.hamlet == h and not f["secret"])
+            out.append(f"{h} : {len(here)} pêcheur{'s' if len(here) > 1 else ''}, ta confiance moyenne en eux : "
+                       f"{prompts.trust_word(mean)} ; mensonges établis depuis deux saisons : {lies}")
+        banned = [self.first_name(b) for b in self.banned]
+        out.append("large : " + (f"les interdits de pêche ({', '.join(banned)}) peuvent y sortir en cachette" if banned
+                                   else "personne n'y pêche d'ordinaire"))
+        return out
+
+    def sanction_brief(self, observer: Agent, target: str, season: int, none: str = "rien de particulier cette saison") -> str:
         """Ce que `observer` sait de `target` cette saison, en une ligne : de quoi voter sur son exclusion."""
         now, bits = self.clock.now(), []
         known, norm = self.known_catch(target, season, now), self.applicable_norm(self.agents[target], season, now)
@@ -1235,7 +1557,7 @@ class World:
         promise = self.promises.get((target, season))
         if promise is not None and known is not None:
             bits.append("promesse tenue" if known <= promise[0] + self.scn["promise_tolerance"] else "promesse trahie")
-        return " ; ".join(bits) or "rien de particulier cette saison"
+        return " ; ".join(bits) or none
 
     async def ballots(self, asms: list[Assembly]) -> None:
         """Le bulletin de chacun, en même temps (synchrone : juste avant la clôture)."""
@@ -1275,16 +1597,22 @@ class World:
                 pr = asm.proposals[pid]
                 ne = self.events.emit("norm_adopted", {
                     "proposal_id": pid, "quota": pr.quota, "scope": asm.scope, "effective_season": asm.season + 1,
-                    "supporters": sorted(sups), "participants": asm.participants, "author": pr.author})
+                    "supporters": sorted(sups), "participants": asm.participants, "author": pr.author,
+                    **({"delegates": dict(self.reps)} if asm.delegates else {})})
                 self.norms.append(Norm(asm.scope, pr.quota, asm.season + 1, pid, self.clock.now(),
                                        ne["event_id"], sorted(sups)))
                 adopted = pid
-                for aid in asm.participants:
+                # la règle vaut pour tous : les villageois qui n'étaient pas au conseil l'apprennent aussi
+                everyone = list(self.agents) if asm.delegates else asm.participants
+                for aid in everyone:
                     self.remember(self.agents[aid], f"Règle adoptée chez l'ancien ({asm.label}) : pas plus de "
                                                     f"{pr.quota:g} t par pêcheur à partir de la saison {asm.season + 1}, "
-                                                    f"soutenue par {len(sups)} pêcheurs sur {len(fishers_present)}.",
+                                                    f"soutenue par {len(sups)} {'élus' if asm.delegates else 'pêcheurs'} "
+                                                    f"sur {len(fishers_present)}.",
                                   "regle", 0.9, source_event_id=ne["event_id"])
         self.close_sanctions(asm)
+        if asm.delegates:
+            self.last_council = asm          # les villageois absents en jugeront avant la saison suivante (voir `debrief`)
         self.events.emit("assembly_end", {"scope": asm.scope, "adopted_proposal": adopted,
                                           "utterances": len(asm.utterances)})
 
@@ -1293,7 +1621,7 @@ class World:
         # la veillée finie, l'ancien pèse les indices et les accusations (sans veillée, il le fait seul)
         self.investigate(season)
         self.weigh_evidence(season)
-        delta = self.lake.regrow()
+        delta = self.lake.regrow(self.conditions.get("growth", 1.0))       # la saison de l'année et les événements
         self.lake_update("regrowth", delta)
         tol = self.scn["promise_tolerance"]
         now = self.clock.now()
@@ -1315,10 +1643,9 @@ class World:
                     self.remember(a, f"J'avais promis {promised:g} t pour la saison {season} et j'en ai pris "
                                      f"{landed:g}. " + ("Personne ne le sait." if known_kept else "Tout le monde le sait."),
                                   "promesse", 0.9)
-            a.wealth -= self.econ["upkeep_per_season"] + a.profile.debt_payment
+            a.wealth -= self.upkeep(a, season) + a.profile.debt_payment
             self.remember(a, f"Bilan de la saison {season} : {landed:g} t pêchées, il me reste {a.wealth:.0f} écus.",
                           "bilan", 0.5)
-        self.move_radar()
         self.events.emit("season_end", {
             "stock": round(self.lake.stock, 3),
             "catches": {a.id: round(a.catches.get(season, 0.0), 3) for a in self.fishers},
@@ -1368,9 +1695,14 @@ class World:
         if audit and audit[0]["significant"]:
             facts.append(f"Les comptes du lac ne tombent pas juste : il a perdu environ {audit[0]['drop']:g} t, les "
                          f"déclarations n'en expliquent que {audit[0]['declared']:g}.")
-        for r in of("sanction_result"):          # ce que la vallée a voté : exclure ou réautoriser
+        for r in of("sanction_result"):          # ce que la vallée a voté : exclure ou réautoriser, la patrouille du lac
+            verdict = 'voté' if r["adopted"] else 'refusé'
+            if r["action"] in PATROL_ACTIONS:
+                what = "d'installer" if r["action"] == "patrouille" else "de retirer"
+                facts.append(f"Le conseil a {verdict} {what} la patrouille du lac ({len(r['for'])} voix sur {r['voters']}).")
+                continue
             what = "d'interdire de pêche" if r["action"] == "exclure" else "de laisser pêcher à nouveau"
-            facts.append(f"La vallée a {'voté' if r['adopted'] else 'refusé'} {what} {self.first_name(r['target'])} "
+            facts.append(f"La vallée a {verdict} {what} {self.first_name(r['target'])} "
                          f"({len(r['for'])} voix sur {r['voters']}).")
         if self.banned:
             facts.append("Interdits de pêche : " + both([self.first_name(b) for b in self.banned]) + ".")
@@ -1379,6 +1711,17 @@ class World:
         facts.append((f"Le lac : {start:.0f} t au début de la saison, " if start is not None else "Le lac : ")
                      + f"{self.lake.stock:.0f} t après le repeuplement, sur {self.capacity:.0f} t possibles "
                        f"({100 * self.lake.stock / self.capacity:.0f} % : {level}).")
+        cond = next((p.get("conditions") for p in of("season_start")), None) or {}
+        if cond.get("climate"):
+            facts.append(f"Saison de l'année : {cond['climate']}.")
+        for ev in of("world_event"):
+            facts.append(f"Événement : {ev['label']} ({ev['text']}).")
+        if self.patrol_active(season):
+            facts.append("Une patrouille surveille le lac cette saison.")
+        council = next((p.get("delegates") for p in of("assembly_start") if p.get("delegates")), None)
+        if council:
+            facts.append("Au conseil de la vallée siégeaient : "
+                         + ", ".join(f"{self.first_name(a)} ({h})" for h, a in council.items()) + ".")
         for inj in of("injection"):
             if inj["injection_type"] == "drought":
                 facts.append("Une sécheresse a frappé le lac : son stock a baissé d'un coup.")
@@ -1435,7 +1778,8 @@ class World:
         if elder is not None and elder.profile.kind == "llm" and elder.profile.tier and \
                 self.cfg["llm"]["tiers"][elder.profile.tier]["provider"] != "scripted":
             data, res, _ = await _ask_llm(self, elder, "narration",
-                                          prompts.narration_messages(elder.profile, facts, self.capacity), {"round": 0},
+                                          prompts.narration_messages(elder.profile, facts, self.capacity, self.hamlets),
+                                          {"round": 0},
                                           schema=prompts.NARRATION_SCHEMA, max_tokens=prompts.NARRATION_MAX_TOKENS,
                                           temperature=prompts.NARRATION_TEMPERATURE)
             text = str((data or {}).get("recit", "")).strip()[:600]
@@ -1455,15 +1799,14 @@ class World:
                      "collapse_ratio": self.lake.collapse_ratio, "sustainable_yield": sustainable_yield(self.cfg)},
             "agents": [{**a.profile.public(), "wealth": a.wealth, "offset_days": a.offset_days}
                        for a in self.agents.values()],
-            "hamlets": HAMLETS, "scenario": {"communication": self.comm, "catches_visible": self.visible,
-                                             "assembly_rounds": self.scn["assembly_rounds"]},
+            "hamlets": self.hamlets, "boats": {k: dict(v) for k, v in self.boats.items()},
+            "scenario": {"communication": self.comm, "catches_visible": self.visible,
+                         "assembly_rounds": self.scn["assembly_rounds"], "council": "delegates" if self.delegates else "all"},
             "season_days": self.T["season_days"], "config_hash": cfg_hash, "llm_tiers": self.router.describe(),
             "label": str(self.cfg["run"].get("label", "")),
             "population": {"fishers": len(self.fishers), "rule_fraction": self.cfg["population"]["rule_fraction"]},
         })
         self.lake_update("init", 0.0)
-        # le radar de la vallée commence dans une zone au hasard ; l'ancien le déplacera à la fin de chaque saison
-        self.place_radar(self.lie_rng.choice(ZONES), "ancien" if self.elder else "vallee")
         for a in self.agents.values():
             self.remember(a, "Une nouvelle année commence sur le lac de Vellmor.", "bilan", 0.2)
         self.publish_status()
@@ -1518,9 +1861,25 @@ class World:
     def begin_season(self, season: int, mode: str):
         """Début de saison, commun aux deux orchestrations."""
         self.season = season
-        self.events.emit("season_start", {"stock": round(self.lake.stock, 3), "mode": mode})
+        self.conditions = cond = self.climate.begin(season)
+        self.events.emit("season_start", {"stock": round(self.lake.stock, 3), "mode": mode, "conditions": cond})
+        if self.climate.new:
+            ev = self.climate.new
+            info = EVENTS[ev]
+            self.events.emit("world_event", {"kind": ev, "label": info["label"], "text": info["text"], "season": season,
+                                             "until": season + info["duration"] - 1, "stock_factor": info.get("stock", 1.0)})
+            if self.climate.shock() != 1.0:
+                self.lake_update("event", self.lake.shock(self.climate.shock()))
         self.publish_status()
         self.scheduled_injections(season)
+
+    async def prepare_season(self, season: int):
+        """Entre deux saisons, avant que la suivante ne s'ouvre (le même pas pour les deux orchestrations) : les villageois qui
+        n'étaient pas au conseil en jugent ce que l'ancien leur en a rapporté, puis chaque village choisit son élu, et l'ancien
+        envoie la patrouille du lac (si le conseil en a voté une). Chacun y réfléchit selon son caractère et ce qu'il sait."""
+        self.clock.set(max(self.clock.now(), self.clock.season_start(season)))
+        await self.debrief(season - 1)
+        await asyncio.gather(self.elect(season), self.plan_patrol(season))
 
     async def run(self):
         """Joue les saisons l'une après l'autre ; le mode (synchrone / asynchrone) est relu à chaque saison."""
@@ -1539,6 +1898,7 @@ class World:
                 if self.stop_requested:
                     break
                 await self.ctl.checkpoint()
+                await self.ctl.guard(self.prepare_season(season))
                 runner = SyncRunner(self) if self.ctl.take_mode() == "sync" else AsyncRunner(self)
                 await runner.season(season)
         except StopRun:
@@ -1591,21 +1951,21 @@ class SyncRunner:
             w.apply_catch(a, o.value, o.decision, h, ration, stock_at_action=s0, declared=o.data.get("declaration"))
         await self.goto(t0 + T["fishing_close_day"])
         w.events.emit("phase", {"name": "fishing", "state": "close"})
-        # --- veillée : tours de parole simultanés
+        # --- veillée : on parle à tour de rôle, chacun entend ceux qui ont parlé avant lui (dialogues dépendants)
         ta = t0 + T["assembly_day"]
         await self.goto(ta)
-        asms = w.open_assemblies(season, t0 + T["assembly_close_day"])
+        asms = w.open_assemblies(season, t0 + T["assembly_close_day"], "sync")
         if asms:
             w.events.emit("phase", {"name": "assembly", "state": "open"})
             for rnd in range(1, int(w.scn["assembly_rounds"]) + 1):
                 hr = ta + (rnd - 1) * self.ROUND_STEP
-                await self.goto(hr)
-                jobs = [(asm, w.agents[aid]) for asm in asms for aid in asm.participants
-                        if w.has_reason_to_speak(w.agents[aid], asm, rnd)]
-                outs = await w.ctl.guard(asyncio.gather(*(speak(w, a, asm, rnd, hr) for asm, a in jobs)))
-                await self.goto(hr + self.ROUND_STEP / 2)
-                for (asm, a), o in zip(jobs, outs):
-                    w.post_utterance(a, asm, o, rnd, hr)
+                turns = [(asm, w.agents[aid]) for asm in asms for aid in asm.participants]
+                step = self.ROUND_STEP / (len(turns) + 1)
+                for k, (asm, a) in enumerate(turns):
+                    h = hr + k * step                          # l'horloge avance d'un tour à l'autre : la parole précédente est entendue
+                    await self.goto(h)
+                    if w.has_reason_to_speak(a, asm, rnd):
+                        w.post_utterance(a, asm, await w.ctl.guard(speak(w, a, asm, rnd, h)), rnd, h)
             await w.ctl.guard(w.ballots(asms))               # le bulletin de ceux qui n'ont rien soutenu
             await self.goto(t0 + T["assembly_close_day"])
             for asm in asms:
@@ -1764,7 +2124,7 @@ class AsyncRunner:
         w.apply_catch(a, o.value, o.decision, h, declared=o.data.get("declaration"))
 
     def assembly_open(self, season: int, close_t: float):
-        asms = self.w.open_assemblies(season, close_t)
+        asms = self.w.open_assemblies(season, close_t, "async")
         if not asms:
             return
         self.w.events.emit("phase", {"name": "assembly", "state": "open"})
@@ -1773,27 +2133,21 @@ class AsyncRunner:
                 self.spawn(self.talk(self.w.agents[aid], asm), "talk", aid)
 
     async def talk(self, a: Agent, asm: Assembly):
+        """Asynchrone : chacun s'exprime une fois, à son rythme, sans entendre les autres (dialogues indépendants) ; tous votent
+        ensuite sur ce qui a été déposé (voir `assembly_vote`)."""
         w = self.w
-        gap = float(w.T.get("assembly_turn_gap_days", 0.05))
-        for rnd in range(1, int(w.scn["assembly_rounds"]) + 1):
-            if asm.closed:
-                return
-            if not w.has_reason_to_speak(a, asm, rnd):        # rien de neuf pour lui : il écoute ce tour
-                await self.sleep_until(self.c.now() + gap)
-                continue
-            h = self.c.now()
-            self.thinking[("talk", a.id)] = rnd
-            try:
-                o = await speak(w, a, asm, rnd, h)
-            finally:
-                self.thinking.pop(("talk", a.id), None)
-            if asm.closed or self.c.now() > asm.close_t:
-                w.incident(a.id, "missed_window", f"parole du tour {rnd} prête après la fin de la veillée",
-                           "réplique perdue")
-                return
-            w.post_utterance(a, asm, o, rnd, h)
-            # on écoute les autres avant de reprendre la parole
-            await self.sleep_until(self.c.now() + gap)
+        if asm.closed:
+            return
+        h = self.c.now()
+        self.thinking[("talk", a.id)] = 1
+        try:
+            o = await speak(w, a, asm, 1, h)
+        finally:
+            self.thinking.pop(("talk", a.id), None)
+        if asm.closed or self.c.now() > asm.close_t:
+            w.incident(a.id, "missed_window", "parole prête après la fin de la veillée", "réplique perdue")
+            return
+        w.post_utterance(a, asm, o, 1, h)
 
     def assembly_vote(self):
         """Quelques heures avant la fin de la veillée, chaque pêcheur qui n'a rien soutenu remplit son bulletin. Une IA trop lente

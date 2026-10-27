@@ -52,7 +52,9 @@ def reference(events):
                 if cand:
                     under[f] = cand[-1]
                     break
-        supporters = sum(f in n["supporters"] for f, n in under.items())
+        # au conseil des élus, un pêcheur soutient la règle si l'élu de son village l'a soutenue
+        supporters = sum(f in n["supporters"] or (n.get("delegates") or {}).get(hamlet[f]) in n["supporters"]
+                         for f, n in under.items())
         compliers = sum(c[f] <= n["quota"] + TOL for f, n in under.items())
         agreement = supporters / len(fishers)
         compliance = compliers / len(under) if under else 0.0

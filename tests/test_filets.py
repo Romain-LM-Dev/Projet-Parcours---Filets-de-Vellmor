@@ -22,6 +22,9 @@ def cfg_for(tmp_path, **over):
     cfg["time"]["fast"] = True
     cfg["run"]["seasons"] = 3
     cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
+    cfg["economy"]["luck"] = 0.0                              # la prise est celle qu'on vise, la météo ne change rien
+    cfg["climate"]["enabled"] = False
+    cfg["population"]["boat_mix"] = {"chaloupe": 1.0}         # des bateaux tous pareils
     for k, v in over.items():
         sec, key = k.split("__")
         cfg[sec][key] = v

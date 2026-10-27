@@ -16,9 +16,17 @@ extends Control
 
 signal agent_clicked(agent_id: String)
 
-const HAMLET_POS := {
-	"Ostrel": Vector2(0.14, 0.21), "Bramois": Vector2(0.86, 0.21),
-	"Tilque": Vector2(0.86, 0.84), "Hennad": Vector2(0.14, 0.84),
+const DEFAULT_HAMLETS := ["Ostrel", "Bramois", "Tilque", "Hennad"]
+## Les emplacements possibles des villages autour du lac (normalisés), et ceux que l'on prend selon leur nombre : les quatre coins
+## pour la vallée de base, puis les flancs, puis le bas. Le haut au centre reste à l'ancien, le bas au centre à la jauge du lac.
+const SLOTS := {
+	"NW": Vector2(0.14, 0.25), "NE": Vector2(0.86, 0.25), "SE": Vector2(0.86, 0.84), "SW": Vector2(0.14, 0.84),
+	"W": Vector2(0.08, 0.52), "E": Vector2(0.92, 0.52), "BL": Vector2(0.30, 0.89), "BR": Vector2(0.70, 0.89),
+}
+const LAYOUTS := {
+	1: ["SW"], 2: ["NW", "SE"], 3: ["NW", "E", "SW"], 4: ["NW", "NE", "SE", "SW"], 5: ["NW", "NE", "SE", "SW", "W"],
+	6: ["NW", "NE", "SE", "SW", "W", "E"], 7: ["NW", "NE", "SE", "SW", "W", "E", "BL"],
+	8: ["NW", "NE", "SE", "SW", "W", "E", "BL", "BR"],
 }
 const ELDER_POS := Vector2(0.5, 0.115)
 const LAKE_C := Vector2(0.5, 0.535)
@@ -60,7 +68,10 @@ var sim_time := 0.0
 var light := 1.0
 var phase := ""
 var assembly_scope := ""            # "" | "valley" | "hamlet"
-var radar_zone := ""                # où le radar de la vallée surveille le lac (un hameau ou « large »)
+var hamlet_pos := layout(DEFAULT_HAMLETS)    # où est chaque village autour du lac (voir layout)
+var patrol_legs: Array = []         # la route de la patrouille du lac cette saison : {zone, from_day, to_day}
+var patrol_season := 0
+var seats := 0                      # sièges occupés à la veillée (le conseil des élus, ou toute la vallée)
 var hamlet_fires: Array = []        # hameaux qui tiennent veillée
 var room_alpha := 0.0
 var dry := 0.0
@@ -117,6 +128,15 @@ func _on_resized() -> void:
 
 
 # ================================================================== géométrie
+## Où poser les villages (dans l'ordre donné, celui de la vallée) : la table du nombre de villages, de 1 à 8.
+static func layout(names: Array) -> Dictionary:
+	var slots: Array = LAYOUTS[clampi(names.size(), 1, 8)]
+	var out := {}
+	for i in names.size():
+		out[str(names[i])] = SLOTS[slots[mini(i, slots.size() - 1)]]
+	return out
+
+
 static func lake_shape(th: float) -> float:
 	return 1.0 + 0.06 * sin(3.0 * th + 1.0) + 0.04 * sin(5.0 * th + 2.0) + 0.03 * sin(7.0 * th + 0.5)
 
@@ -139,7 +159,7 @@ func _nm(p: Vector2) -> Vector2:
 
 
 func _hamlet_angle(h: String) -> float:
-	var d: Vector2 = (HAMLET_POS[h] - LAKE_C) / LAKE_R
+	var d: Vector2 = (hamlet_pos[h] - LAKE_C) / LAKE_R
 	return atan2(d.y, d.x)
 
 
@@ -151,8 +171,8 @@ func _generate_decor() -> void:
 	var docks := {}
 	var paths: Array = []
 	var elder_px := _px(ELDER_POS)
-	for h in HAMLET_POS:
-		var c := _px(HAMLET_POS[h])
+	for h in hamlet_pos:
+		var c := _px(hamlet_pos[h])
 		var n := 6
 		for i in n:
 			var ang := TAU * float(i) / float(n) + rng.randf_range(-0.25, 0.25) + 0.4
@@ -183,8 +203,8 @@ func _generate_decor() -> void:
 		if lake_rn(n_p) < 1.22:
 			continue
 		var bad := false
-		for h in HAMLET_POS:
-			if p.distance_to(_px(HAMLET_POS[h])) < 105:
+		for h in hamlet_pos:
+			if p.distance_to(_px(hamlet_pos[h])) < 105:
 				bad = true
 		if p.distance_to(elder_px) < 95:
 			bad = true
@@ -239,8 +259,8 @@ func _draw_decor(ci: CanvasItem) -> void:
 		ci.draw_polyline(path, Color("#6b5a3a", 0.55), 11.0, true)
 		ci.draw_polyline(path, Color("#b89c6a", 0.85), 7.0, true)
 	# places des hameaux et devant l'ancien
-	for h in HAMLET_POS:
-		var c := _px(HAMLET_POS[h])
+	for h in hamlet_pos:
+		var c := _px(hamlet_pos[h])
 		_ellipse(ci, c, Vector2(58, 46), Color("#7d6844", 0.55))
 		_ellipse(ci, c, Vector2(54, 42), Color("#c4a978"))
 		_ellipse(ci, c + Vector2(-8, -6), Vector2(34, 24), Color(1, 1, 1, 0.06))
@@ -342,7 +362,8 @@ func _fire_pos() -> Vector2:
 
 
 # ================================================================== état
-func reset_world(agent_list: Array, cap: float, days: float = 30.0) -> void:
+func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Array = []) -> void:
+	hamlet_pos = layout(hamlets if not hamlets.is_empty() else DEFAULT_HAMLETS)
 	agents.clear()
 	order.clear()
 	effects.clear()
@@ -356,7 +377,9 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0) -> void:
 	stock_ratio = 1.0
 	dry = 0.0
 	assembly_scope = ""
-	radar_zone = ""
+	patrol_legs.clear()
+	patrol_season = 0
+	seats = 0
 	hamlet_fires.clear()
 	var per_hamlet := {}
 	for a in agent_list:
@@ -382,12 +405,22 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0) -> void:
 				slot = k - 6
 				count = n - 6
 			var ang := -PI / 2.0 + TAU * float(slot) / float(max(count, 1)) + (0.5 if ring == 1.0 else 0.25)
-			home = HAMLET_POS.get(h, Vector2(0.5, 0.5)) + Vector2(cos(ang) * 0.027, sin(ang) * 0.032) * ring
+			home = hamlet_pos.get(h, Vector2(0.5, 0.5)) + Vector2(cos(ang) * 0.027, sin(ang) * 0.032) * ring
 		agents[id] = {"id": id, "info": a, "home": home, "pos": home, "path": [], "hold": 0.0, "heading": 0.0,
 			"wake_t": 0.0, "fishing": 0.0}
 		order.append(id)
 	fish.clear()
 	_sync_fish(true)
+	if size.x > 10:
+		_generate_decor()                # les villages ont changé de place : maisons, pontons et chemins aussi
+		decor.queue_redraw()
+
+
+## L'élu d'un village : un astre doré au-dessus de son pion (un seul par village).
+func set_rep(hamlet: String, id: String) -> void:
+	for k in agents:
+		if str(agents[k]["info"].get("hamlet", "")) == hamlet:
+			agents[k]["rep"] = (k == id)
 
 
 func remember_proposal(pid: String, author: String) -> void:
@@ -402,6 +435,9 @@ func on_event(ev: Dictionary) -> void:
 		"season_start":
 			dry = max(0.0, dry - 0.5)
 			var md := "" if not p.has("mode") else (" · asynchrone" if str(p["mode"]) == "async" else " · synchrone")
+			var cond: Dictionary = p.get("conditions", {})
+			if cond.get("climate") != null:
+				md = " · %s%s" % [str(cond["climate"]), md]
 			_banner("Saison %d" % int(ev.get("season", 0)), "Le lac compte %.0f tonnes%s" % [float(p.get("stock", 0)), md], Art.PROMISE)
 		"phase":
 			var nm := str(p.get("name", ""))
@@ -453,8 +489,21 @@ func on_event(ev: Dictionary) -> void:
 						a["path"] = [[dk["shore"], 0.0], [dk["tip"], 0.0], [spot, 1.6], [dk["tip"], 0.0],
 							[dk["shore"], 0.0], [a["home"], 0.0]]
 					a["landed"] = float(p.get("landed", 0.0))
-		"radar_placed":
-			radar_zone = str(p.get("zone", ""))
+		"patrol_route":
+			patrol_legs = p.get("legs", [])
+			patrol_season = int(p.get("season", 0))
+			_banner("La patrouille prend la mer", "Elle visite quelques zones du lac cette saison", Color("#7fe0c8"))
+		"patrol":
+			if str(p.get("state", "")) == "lifted":
+				_banner("Patrouille retirée", "Dès la saison %d" % int(p.get("effective_season", 0)), Art.MUTED)
+			else:
+				_banner("Patrouille votée", "Elle sort dès la saison %d" % int(p.get("effective_season", 0)), Color("#7fe0c8"))
+		"election":
+			set_rep(str(p.get("hamlet", "")), str(p.get("representative", "")))
+		"world_event":
+			_banner(str(p.get("label", "")).capitalize(), _short(str(p.get("text", "")), 90), Art.INCIDENT)
+			if str(p.get("kind", "")) == "secheresse":
+				dry = 1.0
 		"ban":
 			var id: String = str(p.get("agent", ""))
 			if agents.has(id):
@@ -466,7 +515,10 @@ func on_event(ev: Dictionary) -> void:
 			var parts: Array = p.get("participants", [])
 			if scope == "valley":
 				assembly_scope = "valley"
-				_banner("Veillée chez l'ancien", "Toute la vallée est réunie", Art.TALK)
+				if p.has("delegates"):
+					_banner("Veillée chez l'ancien", "Le conseil des élus se réunit", Art.TALK)
+				else:
+					_banner("Veillée chez l'ancien", "Toute la vallée est réunie", Art.TALK)
 				var ids: Array = []
 				for x in parts:
 					var sx := str(x)
@@ -476,6 +528,7 @@ func on_event(ev: Dictionary) -> void:
 						ids.push_front(sx)
 					else:
 						ids.append(sx)
+				seats = ids.size()
 				for i in ids.size():
 					var ang := -PI / 2.0 + TAU * float(i) / float(max(ids.size(), 1))
 					_move(ids[i], LAKE_C + Vector2(cos(ang), sin(ang)) * RING_R)
@@ -486,7 +539,7 @@ func on_event(ev: Dictionary) -> void:
 					hamlet_fires.append(h)
 				if hamlet_fires.size() == 1:
 					_banner("Veillées dans les hameaux", "Chacun parle chez soi", Art.TALK)
-				var c: Vector2 = HAMLET_POS.get(h, LAKE_C)
+				var c: Vector2 = hamlet_pos.get(h, LAKE_C)
 				for i in parts.size():
 					var ang := -PI / 2.0 + TAU * float(i) / float(max(parts.size(), 1))
 					_move(str(parts[i]), c + Vector2(cos(ang) * 0.05, sin(ang) * 0.06))
@@ -496,6 +549,7 @@ func on_event(ev: Dictionary) -> void:
 				_banner("Pas d'accord ce soir", "Aucune règle n'a réuni la moitié des pêcheurs", Art.MUTED)
 			if scope2 == "valley":
 				assembly_scope = ""
+				seats = 0
 			else:
 				hamlet_fires.erase(scope2.substr(7))
 				if hamlet_fires.is_empty():
@@ -571,33 +625,56 @@ func _move(id: String, target: Vector2, speed: float = 3.0) -> void:
 
 func _fishing_spot(a: Dictionary, zone: String = "") -> Vector2:
 	# chaque pêcheur a son coin, du côté de son hameau (ou de la zone où il pêche en cachette) : les barques ne se superposent pas
-	var h := zone if HAMLET_POS.has(zone) else str(a["info"].get("hamlet", ""))
+	var h := zone if hamlet_pos.has(zone) else str(a["info"].get("hamlet", ""))
 	if zone == "large":
 		return lake_point(randf() * TAU, randf_range(0.05, 0.25))
-	var th: float = _hamlet_angle(h) if HAMLET_POS.has(h) else randf() * TAU
+	var th: float = _hamlet_angle(h) if hamlet_pos.has(h) else randf() * TAU
 	var k := order.find(a["id"])
 	var slot := float(k % 3) - 1.0
 	var depth := 0.38 + 0.2 * float((k / 3) % 2)
 	return lake_point(th + slot * 0.42 + randf_range(-0.08, 0.08), depth + randf_range(-0.05, 0.05))
 
 
-## Le radar : au large, au centre du lac ; sinon devant la rive du hameau qu'il surveille.
-func _radar_pos() -> Vector2:
-	return LAKE_C if radar_zone == "large" else lake_point(_hamlet_angle(radar_zone), 0.62)
+## La patrouille du lac : elle visite les zones de sa route l'une après l'autre (jours depuis le début de la saison), au centre du
+## lac pour « large », devant la rive du village sinon ; entre deux zones, elle fait route.
+func _zone_pos(zone: String) -> Vector2:
+	return LAKE_C if zone == "large" or not hamlet_pos.has(zone) else lake_point(_hamlet_angle(zone), 0.62)
 
 
-func _draw_radar(ci: CanvasItem) -> void:
-	if radar_zone != "large" and not HAMLET_POS.has(radar_zone):
+func _patrol_pos() -> Vector2:
+	var day := sim_time - float(patrol_season - 1) * season_days
+	var k := 0
+	for i in patrol_legs.size():
+		if day >= float(patrol_legs[i]["from_day"]):
+			k = i
+	var leg: Dictionary = patrol_legs[k]
+	var here := _zone_pos(str(leg["zone"]))
+	var span := maxf(float(leg["to_day"]) - float(leg["from_day"]), 0.01)
+	var u := clampf((day - float(leg["from_day"])) / span, 0.0, 1.0)
+	if k > 0 and u < 0.25:
+		here = _zone_pos(str(patrol_legs[k - 1]["zone"])).lerp(here, smoothstep(0.0, 0.25, u))
+	return here + Vector2(cos(t * 0.7) * 0.012, sin(t * 0.9) * 0.014)
+
+
+func _draw_patrol(ci: CanvasItem) -> void:
+	if patrol_legs.is_empty() or int(floor(sim_time / maxf(season_days, 1.0))) + 1 != patrol_season:
 		return
-	var p := _px(_radar_pos())
+	var p := _px(_patrol_pos())
 	var col := Color("#7fe0c8")
-	ci.draw_arc(p, 38.0, 0, TAU, 40, Color(col, 0.35), 1.2, true)
-	ci.draw_arc(p, 22.0, 0, TAU, 32, Color(col, 0.25), 1.0, true)
-	var sweep := fmod(t * 1.6, TAU)
-	ci.draw_line(p, p + Vector2(cos(sweep), sin(sweep)) * 38.0, Color(col, 0.8), 1.6, true)
-	ci.draw_arc(p, 30.0, sweep - 0.7, sweep, 12, Color(col, 0.35), 8.0, true)
-	ci.draw_circle(p, 4.0, col)
-	Art.pill(ci, p + Vector2(-22, 42), "radar", Color(col, 0.9), Color("#0b1f1a"), 10, "ui_black")
+	ci.draw_arc(p, 38.0, 0, TAU, 40, Color(col, 0.30), 1.2, true)
+	var sweep := fmod(t * 1.2, TAU)
+	ci.draw_arc(p, 30.0, sweep - 0.7, sweep, 12, Color(col, 0.30), 6.0, true)
+	var dir := Vector2(1, 0).rotated(sin(t * 0.5) * 0.4)
+	var side := Vector2(-dir.y, dir.x)
+	var hull := PackedVector2Array([p + dir * 17.0, p + dir * 6.0 + side * 7.0, p - dir * 14.0 + side * 6.0, p - dir * 16.0,
+		p - dir * 14.0 - side * 6.0, p + dir * 6.0 - side * 7.0])
+	ci.draw_colored_polygon(hull, Color("#1f6f6a"))
+	ci.draw_colored_polygon(PackedVector2Array([p - dir * 2.0 - side * 1.0, p - dir * 2.0 - side * 16.0, p + dir * 8.0 - side * 1.0]),
+		Color("#e9fff6"))
+	ci.draw_line(p - dir * 2.0, p - dir * 2.0 - side * 18.0, Color("#0b1f1a"), 1.4)
+	ci.draw_colored_polygon(PackedVector2Array([p - dir * 2.0 - side * 18.0, p - dir * 2.0 - side * 24.0 + dir * 4.0,
+		p - dir * 2.0 - side * 24.0 - dir * 4.0]), Color("#ff6a5c"))
+	Art.pill(ci, p + Vector2(-26, 26), "patrouille", Color(col, 0.9), Color("#0b1f1a"), 10, "ui_black")
 
 
 func _link(a: String, b: String, col: Color, width: float, ttl: float, kind: String) -> void:
@@ -792,7 +869,7 @@ func _draw_under(ci: CanvasItem) -> void:
 		var r: float = float(s["r"]) * (1.15 - a)
 		ci.draw_arc(p, r, 0, TAU, 28, Color(1, 1, 1, 0.55 * a), 1.4, true)
 		ci.draw_arc(p, r * 0.55, 0, TAU, 20, Color(1, 1, 1, 0.35 * a), 1.0, true)
-	_draw_radar(ci)
+	_draw_patrol(ci)
 
 
 func _darkness() -> float:
@@ -820,7 +897,7 @@ func _draw_lights(ci: CanvasItem) -> void:
 	var ff := 0.8 + 0.2 * sin(t * 11.0) * sin(t * 7.3)
 	Art.glow(ci, _fire_pos(), 80.0, Color(1.0, 0.5, 0.18, 0.55 * dk * ff))
 	for h in hamlet_fires:
-		Art.glow(ci, _px(HAMLET_POS[h]), 95.0, Color(1.0, 0.5, 0.18, 0.55 * dk * ff))
+		Art.glow(ci, _px(hamlet_pos[h]), 95.0, Color(1.0, 0.5, 0.18, 0.55 * dk * ff))
 	# reflet de lune sur le lac
 	var mp := _px(LAKE_C + Vector2(0.10, -0.07))
 	ci.draw_set_transform(mp, -0.35, Vector2(1.8, 0.55))
@@ -882,7 +959,7 @@ func _draw_room(ci: CanvasItem) -> void:
 		ci.draw_circle(c + Vector2(cos(ang) * 20, sin(ang) * 16), 5.0, Color(Color("#6f6a64"), a))
 	_draw_fire(ci, c - Vector2(0, 4), 1.8 * a)
 	# coussins aux places de la veillée
-	var n_seats := agents.size()
+	var n_seats := seats if seats > 0 else agents.size()
 	for i in n_seats:
 		var ang := -PI / 2.0 + TAU * float(i) / float(max(n_seats, 1))
 		var sp := _px(LAKE_C + Vector2(cos(ang), sin(ang)) * RING_R)
@@ -942,11 +1019,14 @@ func _draw_links(ci: CanvasItem) -> void:
 				ci.draw_arc(pw, 16.0 + (1.0 - a) * (46.0 + k * 22.0), 0, TAU, 48, Color(Art.TALK, aa * 0.7), 2.0, true)
 
 
-func _draw_boat(ci: CanvasItem, p: Vector2, heading: float, col: Color, fishing: float) -> void:
+const BOAT_SCALE := {"barque": 0.78, "chaloupe": 1.0, "cotre": 1.3}
+
+
+func _draw_boat(ci: CanvasItem, p: Vector2, heading: float, col: Color, fishing: float, k: float = 1.0) -> void:
 	var dir := Vector2(cos(heading), sin(heading))
 	var side := Vector2(-dir.y, dir.x)
-	var L := 21.0
-	var W := 8.5
+	var L := 21.0 * k
+	var W := 8.5 * k
 	var hull := PackedVector2Array([p + dir * L, p + dir * L * 0.4 + side * W, p - dir * L * 0.8 + side * W * 0.85,
 		p - dir * L * 0.9, p - dir * L * 0.8 - side * W * 0.85, p + dir * L * 0.4 - side * W])
 	var shadow := PackedVector2Array()
@@ -979,9 +1059,12 @@ func _draw_tokens(ci: CanvasItem) -> void:
 		var info: Dictionary = a["info"]
 		var on_water := lake_rn(a["pos"]) < 0.97 and assembly_scope != "valley"
 		if on_water:
-			_draw_boat(ci, p, float(a["heading"]), Art.agent_color(info), float(a["fishing"]))
+			_draw_boat(ci, p, float(a["heading"]), Art.agent_color(info), float(a["fishing"]),
+				float(BOAT_SCALE.get(str(info.get("boat", "chaloupe")), 1.0)))
 		Art.draw_token(ci, p - (Vector2(0, 7) if on_water else Vector2.ZERO), info, 0.78 if on_water else 1.0, 1.0,
 			id == selected, t)
+		if bool(a.get("rep", false)):           # l'élu de son village au conseil : un astre doré
+			_star(ci, p + Vector2(0, -24 if not on_water else -29), 6.5, Color("#f2c14e"), 5)
 		if bool(a.get("banned", false)):        # interdit de pêche : un anneau barré rouge
 			var q := p - (Vector2(0, 7) if on_water else Vector2.ZERO)
 			ci.draw_arc(q, 15.0, 0, TAU, 28, Art.ACCUSE, 2.2, true)
@@ -1082,8 +1165,8 @@ func _draw_signs(ci: CanvasItem) -> void:
 	if sa <= 0.01:
 		return
 	var tf := Art.font("title")
-	for h in HAMLET_POS:
-		var c := _px(HAMLET_POS[h]) + Vector2(0, -96)
+	for h in hamlet_pos:
+		var c := _px(hamlet_pos[h]) + Vector2(0, -96)
 		var w := tf.get_string_size(h, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 24
 		var r := Rect2(c - Vector2(w / 2, 0), Vector2(w, 26))
 		Art.box(Color(0.10, 0.08, 0.06, 0.72 * sa), 6, Color(Art.HAMLET.get(h, Color("#d8bf8c")), 0.95 * sa), 2).draw(ci.get_canvas_item(), r)
@@ -1168,7 +1251,7 @@ func _draw_over(ci: CanvasItem) -> void:
 	_draw_signs(ci)
 	_draw_room(ci)
 	for h in hamlet_fires:
-		_draw_fire(ci, _px(HAMLET_POS[h]), 1.2)
+		_draw_fire(ci, _px(hamlet_pos[h]), 1.2)
 	if room_alpha < 0.5:
 		_draw_fire(ci, _fire_pos(), 0.9 * (0.4 + 0.6 * _darkness()))
 	_draw_links(ci)

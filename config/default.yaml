@@ -9,7 +9,10 @@ run:
   stop_on_extinction: true    # arrêter le run, tout de suite, quand le lac est à 0 : il ne se repeuple jamais depuis 0
 
 population:
+  # Génération procédurale de la vallée : mêmes paramètres et même graine, même vallée (villages, pêcheurs, bateaux).
+  villages: 4                 # nombre de villages autour du lac (1 à 8 ; au plus un par pêcheur)
   fishers: 8                  # nombre de pêcheurs (C2)
+  boat_mix: {barque: 0.3, chaloupe: 0.5, cotre: 0.2}    # répartition des tailles de bateaux (le caractère l'infléchit)
   rule_fraction: 0.25         # part des pêcheurs à règles (A6) ; 1.0 = baseline sans LLM (E1)
   elder: true                 # l'ancien, arbitre sans pouvoir, ne pêche pas
   elder_kind: llm             # llm | rule
@@ -28,29 +31,48 @@ lake:
 
 economy:
   price_per_tonne: 100        # écus
-  upkeep_per_season: 150      # coût de la vie
-  boat_capacity: 10           # prise maximale par saison et par pêcheur (tonnes) ; une sortie est aussi plafonnée à
-                              # capacité du lac / (2 × pêcheurs) : 6,25 t pour 100 t et 8 pêcheurs
-  min_catch: 1                # prise minimale d'une sortie (tonnes) : on ne revient jamais bredouille
+  upkeep_per_season: 100      # coût de la vie d'une famille, hors bateau (écus par saison)
+  # Les bateaux : `capacity` = prise maximale d'un pêcheur par saison (tonnes) ; `upkeep` = entretien du bateau (écus par saison,
+  # en plus de la vie). Toutes les sorties ensemble sont aussi plafonnées à la moitié du lac : la part d'un bateau est
+  # proportionnelle à sa capacité (6,25 t pour une chaloupe quand huit chaloupes se partagent un lac de 100 t).
+  boats:
+    barque: {capacity: 4.0, upkeep: 20}
+    chaloupe: {capacity: 7.0, upkeep: 50}
+    cotre: {capacity: 11.0, upkeep: 110}
+  min_catch: 1                # prise minimale visée d'une sortie (tonnes) : on ne part pas pour rien
+  # La pêche n'est pas toujours bonne : la prise réelle est la prise visée × la réussite du jour × la saison de l'année et les
+  # événements (voir `climate`) × l'expérience du pêcheur, plus dure quand le lac est bas. La réussite du jour varie de ±`luck`
+  # (écart-type) autour de 1 et se prolonge d'une saison à l'autre (`luck_streak` : un bon jour en annonce un autre). 0 : aucun aléa.
+  luck: 0.25
+  luck_streak: 0.5
 
 scenario:
-  communication: valley       # valley | hamlet | none
+  communication: valley       # valley (le conseil de la vallée) | hamlet (une veillée par village) | none
+  # Au conseil de la vallée, chaque village est représenté par un élu : ses pêcheurs le choisissent à chaque saison selon la
+  # confiance qu'ils lui font. Les autres villageois n'y vont pas (ils en apprennent les décisions). all : tous les pêcheurs y vont.
+  council: delegates          # delegates | all
   # Chaque pêcheur déclare sa prise à l'ancien en rentrant, et peut mentir : seuls lui et le joueur connaissent la vraie.
   catches_visible: true       # les déclarations sont-elles connues de toute la vallée (sinon : du seul hameau) ?
-  # Les mensonges se découvrent sur des indices, pas au hasard. Le lac a cinq zones (la rive de chaque hameau, le large) :
-  # - le radar de la vallée en surveille une par saison (placé en secret par l'ancien, ou par le joueur) : il repère les barques
-  #   qui sortent (radar) et mesure leur charge (à radar_error près) ;
+  # Les mensonges se découvrent sur des indices, pas au hasard. Le lac a une zone par village (sa rive) et le large :
+  # - la patrouille du lac, si le conseil en a voté une (elle coûte `patrol.cost` écus par pêcheur et par saison), visite
+  #   `patrol.legs` zones par saison, au gré de l'ancien ; elle repère les barques qui sortent quand elle passe dans leur zone
+  #   (patrol) et mesure leur charge (à patrol_error près) ;
   # - un voisin qui pêche dans la même zone voit une barque rentrer (witness) et en estime la charge (à witness_error près) ;
   # - la barque d'un pêcheur interdit est vue partant à l'aube par son hameau (seen_leaving) ;
   # - un voisin remarque qu'un pêcheur vit bien pour ce qu'il déclare (lifestyle) ;
   # - l'ancien fait les comptes du lac (à lake_error × capacité près).
   # Les témoins qui n'ont rien à se reprocher parlent à la veillée (sauf contre un ami) ; les tricheurs se taisent. À
-  # l'ouverture de la veillée, l'ancien relate ce que les indices établissent : un mensonge quand ils pèsent `proof` (radar 3,
+  # l'ouverture de la veillée, l'ancien relate ce que les indices établissent : un mensonge quand ils pèsent `proof` (patrouille 3,
   # témoin 1, départ vu 1, train de vie 0,5, comptes 0,5) et que la charge estimée dépasse la déclaration d'au moins margin_t
   # tonnes et margin_ratio. Il ne sanctionne pas : la confiance, chacun la juge ; l'exclusion de pêche, la vallée la vote.
-  detection: {radar: 0.95, radar_error: 0.1, witness: 0.4, witness_error: 0.3, seen_leaving: 0.3, lifestyle: 0.5,
+  detection: {patrol: 0.8, patrol_error: 0.12, witness: 0.4, witness_error: 0.3, seen_leaving: 0.3, lifestyle: 0.5,
               lake_error: 0.03, margin_t: 0.3, margin_ratio: 0.25, proof: 2.0}
-  assembly_rounds: 2          # tours de parole par veillée
+  # coût par pêcheur et par saison (écus) ; zones visitées par saison ; from_season : une patrouille installée d'emblée dès cette
+  # saison, sans vote du conseil (pour comparer des parties ; null : c'est au conseil de la voter)
+  patrol: {cost: 15, legs: 2, from_season: null}
+  # Tours de parole par veillée. Synchrone : on parle à tour de rôle et chacun entend les précédents (dialogues dépendants) ;
+  # asynchrone : un seul tour, chacun s'exprime de son côté sans entendre les autres (dialogues indépendants), puis tous votent.
+  assembly_rounds: 2
   # dès le 2e tour, ne reprend la parole que celui qui a une raison (on lui parle, on le nomme, on conteste sa proposition) ;
   # les autres écoutent, et leur position se recueille au bulletin de vote (bien moins de tokens, moins de redites)
   quiet_listeners: true
@@ -62,8 +84,20 @@ scenario:
   scheduled_injections: []
   #  - {season: 4, type: drought}
 
+# Le climat (voir `climate.py`) : chaque saison de jeu est une saison de l'année (printemps, été, automne, hiver), qui change ce que
+# rapporte la pêche et la vitesse de repeuplement du lac ; des événements aléatoires (sécheresse, tempête, banc de poissons,
+# algues, crue, maladie) s'y ajoutent à partir de la 2e saison, avec la probabilité `event_rate` par saison.
+climate:
+  enabled: true
+  event_rate: 0.3
+  disabled_events: []
+
 time:
-  mode: async                 # sync | async (C4)
+  # sync  : tous observent le même instant ; à la veillée, on parle à tour de rôle et chacun entend ceux qui ont parlé avant lui
+  #         (dialogues dépendants). La lenteur d'une IA n'a aucun effet sur le temps du monde.
+  # async : chacun va à son rythme, le temps du monde suit le temps réel ; à la veillée, chacun s'exprime de son côté sans
+  #         entendre les autres (dialogues indépendants), puis tous votent (C4).
+  mode: async
   season_days: 30
   fishing_open_day: 0.25      # J0 06:00
   fishing_close_day: 20.0     # au-delà, une sortie décidée trop tard est perdue

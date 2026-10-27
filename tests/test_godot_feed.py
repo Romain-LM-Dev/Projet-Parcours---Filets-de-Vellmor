@@ -27,7 +27,10 @@ pytestmark = pytest.mark.skipif(GODOT is None, reason="Godot introuvable (défin
 def slow_async_run_with_announcement(tmp_path, run_id="gdfeed"):
     """Mode asynchrone, modèle 5 fois plus lent que la veillée : des répliques et des sorties sont perdues ; annonce en saison 1."""
     cfg = cfg_for(tmp_path, seasons=2, time__mode="async", time__fast=False, time__sim_hours_per_second=7200,
-                  time__wait_for_ai=False)                   # sans attendre les IA lentes : des fenêtres se ferment sur elles
+                  time__wait_for_ai=False,                   # sans attendre les IA lentes : des fenêtres se ferment sur elles
+                  population__rule_fraction=0.5,             # des agents à règles : eux jugent et votent sans IA
+                  climate__enabled=True, climate__event_rate=1.0,                 # un événement du climat dès la 2e saison
+                  scenario__patrol={"cost": 15, "from_season": 1})                # une patrouille dès la première
     cfg["llm"]["providers"]["scripted"]["latency_scale"] = 5.0
     bus = LocalBus()
     pub = IndicatorPublisher(bus, cfg["output"]["runs_dir"], cfg["scenario"]["quota_tolerance"])

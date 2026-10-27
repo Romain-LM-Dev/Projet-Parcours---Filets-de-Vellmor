@@ -121,7 +121,8 @@ def test_archetype_defaults_are_inside_their_ranges():
 @pytest.mark.parametrize("bad, fragment", [
     ([], "au moins un"),
     ([spec(archetype="pirate")], "archétype"),
-    ([spec(hamlet="Atlantis")], "hameau"),
+    ([spec(hamlet="Atlantis")], "village"),
+    ([spec(boat="galion")], "bateau"),
     ([spec(kind="robot")], "type"),
     ([spec(tier="geant")], "modèle"),
     ([spec(experience=-1)], "experience"),

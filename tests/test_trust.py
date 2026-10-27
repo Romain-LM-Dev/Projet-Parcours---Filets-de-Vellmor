@@ -1,7 +1,7 @@
 """Prises secrètes, déclarations à l'ancien, indices, mensonges, confiance et exclusion de pêche.
 
 Chacun déclare sa prise à l'ancien en rentrant, et peut mentir : seuls lui et le joueur connaissent la vraie. Un mensonge ne se
-découvre pas au hasard mais sur des indices (radar, voisins, barque d'interdit vue partant, train de vie, comptes du lac), que
+découvre pas au hasard mais sur des indices (patrouille, voisins, barque d'interdit vue partant, train de vie, comptes du lac), que
 l'ancien relate à l'ouverture de la veillée. La confiance, le moteur ne la fixe pas : chaque agent juge lui-même ce que ce qu'il
 apprend change pour lui (une IA dans sa réplique ; un agent à règles selon son caractère). Interdire un pêcheur de pêche, ou le
 réautoriser, se propose et se vote à la veillée.
@@ -18,38 +18,30 @@ from helpers import cfg_for, make_world, read_events
 from test_reflection_profile import Profile, long_obs
 from test_rumors import Recorder, fisher
 
-QUIET = {"radar": 0.0, "witness": 0.0, "seen_leaving": 0.0, "lifestyle": 0.0}          # personne ne voit rien
-NEIGHBOURS = {"radar": 0.0, "witness": 1.0, "witness_error": 0.0, "seen_leaving": 0.0, "lifestyle": 0.0, "proof": 1.0}
-RADAR = {"radar": 1.0, "radar_error": 0.0, "witness": 0.0, "seen_leaving": 0.0, "lifestyle": 0.0}
+QUIET = {"patrol": 0.0, "witness": 0.0, "seen_leaving": 0.0, "lifestyle": 0.0}          # personne ne voit rien
+NEIGHBOURS = {"patrol": 0.0, "witness": 1.0, "witness_error": 0.0, "seen_leaving": 0.0, "lifestyle": 0.0, "proof": 1.0}
+PATROL = {"patrol": 1.0, "patrol_error": 0.0, "witness": 0.0, "seen_leaving": 0.0, "lifestyle": 0.0}
+# Ces tests suivent ce que chacun apprend et juge le soir même : tous les pêcheurs siègent au conseil (voir test_council.py pour les élus)
+EVERYONE = {"scenario__council": "all"}
 # Mathis respecte la règle (agent à règles), Elwen la dépasse en déclarant la règle (taiseux à règles : il ment) ; tous deux
 # pêchent sur la rive d'Ostrel. Inès et Théo (IA) pêchent 3 t et le disent ; le premier à parler propose 2 t, que la vallée adopte.
 VALLEY = [fisher("Mathis", "Ostrel", "ancienne_famille", kind="rule"), fisher("Inès", "Bramois", "nouveau_venu"),
           fisher("Elwen", "Ostrel", "taiseux", kind="rule"), fisher("Théo", "Hennad", "beau_parleur")]
 
 
-def game(tmp_path, run_id, detection, seasons=3, radar=None, confiance=None, sanction="oui", **over):
-    """Une partie de la vallée ci-dessus ; `radar` : la zone où le joueur place le radar dès la première saison ; `confiance` :
-    le jugement que renvoie chaque réplique d'IA ; `sanction` : leur vote sur les exclusions."""
+def game(tmp_path, run_id, detection, seasons=3, patrol=None, confiance=None, sanction="oui", **over):
+    """Une partie de la vallée ci-dessus ; `patrol` : les réglages d'une patrouille installée d'emblée dès la première saison ;
+    `confiance` : le jugement que renvoie chaque réplique d'IA ; `sanction` : leur vote sur les exclusions."""
     rec = Recorder(prise=3.0, propose_first=2.0, confiance=confiance, sanction=sanction)
+    over = {**EVERYONE, **over}
+    if patrol:
+        over["scenario__patrol"] = {"cost": 15, "from_season": 1, **patrol}
     cfg = cfg_for(tmp_path, seasons=seasons, population__custom=VALLEY, population__elder=False, time__mode="sync",
                   scenario__detection=detection, **over)
     cfg["llm"]["providers"]["fake"] = {"base_url": rec.url, "api_key_env": None, "rpm": 0}
     cfg["llm"]["tiers"] = {"grand": {"provider": "fake", "model": "m"}, "petit": {"provider": "fake", "model": "m"}}
-    bus = LocalBus()
-    world = World(cfg, bus, run_id)
-    box = {}
-
-    def on_event(ev):
-        if radar and ev["type"] == "season_start" and ev["season"] == 1:
-            box["loop"].call_soon(world.handle_command, {"type": "place_radar", "value": radar})   # comme depuis Godot
-
-    bus.subscribe("events", on_event)
-
-    async def main():
-        box["loop"] = asyncio.get_running_loop()
-        await world.run()
-
-    asyncio.run(main())
+    world = World(cfg, LocalBus(), run_id)
+    asyncio.run(world.run())
     rec.close()
     return world, read_events(tmp_path, run_id), rec.requests
 
@@ -102,14 +94,24 @@ def test_a_neighbour_who_saw_the_boat_exposes_the_lie_and_the_cheater_keeps_quie
                          for u in later)
 
 
-def test_the_radar_measures_the_boats_of_its_zone(tmp_path):
-    world, events, _ = game(tmp_path, "radar", RADAR, seasons=2, radar="Ostrel")
-    placed = [e["payload"] for e in kinds(events, "radar_placed")]
-    assert placed[-1] == {"zone": "Ostrel", "by": "joueur"}            # le joueur l'a placé, et il garde la main
-    measured = {e["payload"]["subject"]: e["payload"] for e in kinds(events, "clue") if e["payload"]["kind"] == "radar"}
+def test_the_patrol_measures_the_boats_of_the_zone_it_visits(tmp_path, monkeypatch):
+    monkeypatch.setattr(World, "plan_patrol_rule", lambda self, legs: ["Ostrel"])      # l'ancien l'envoie à Ostrel
+    # la patrouille sort dès la 2e saison, la première où Elwen dépasse la règle (adoptée à la veillée de la 1re)
+    world, events, _ = game(tmp_path, "patrouille", PATROL, seasons=2, patrol={"legs": 1, "from_season": 2})
+    [route] = [e["payload"] for e in kinds(events, "patrol_route")]
+    assert route["legs"][0]["zone"] == "Ostrel" and route["season"] == 2
+    measured = {e["payload"]["subject"]: e["payload"] for e in kinds(events, "clue") if e["payload"]["kind"] == "patrouille"}
     assert set(measured) == {a.id for a in world.fishers if a.profile.hamlet == "Ostrel"}      # sa zone, et elle seule
     [found] = [e["payload"] for e in kinds(events, "lie_discovered")]
-    assert found["agent"] == elwen_of(world).id and found["how"] == "radar" and found["estimated"] == found["landed"]
+    assert found["agent"] == elwen_of(world).id and found["how"] == "patrouille" and found["estimated"] == found["landed"]
+
+
+def test_without_a_patrol_nothing_measures_the_boats(tmp_path):
+    """Pas de patrouille tant que le conseil n'en a pas voté une : aucune route, aucune mesure, et les pêcheurs ne s'en croient pas
+    surveillés."""
+    world, events, requests = game(tmp_path, "sans", PATROL, seasons=2)
+    assert not kinds(events, "patrol_route") and not [e for e in kinds(events, "clue") if e["payload"]["kind"] == "patrouille"]
+    assert not any("la patrouille du lac mesure" in r["user"] for r in requests)
 
 
 def test_the_elder_relates_what_the_clues_establish_and_can_be_wrong(tmp_path):
@@ -117,8 +119,8 @@ def test_the_elder_relates_what_the_clues_establish_and_can_be_wrong(tmp_path):
     got = []
     bus.subscribe("events", got.append)
     a, b, c, d = world.fishers[:4]
-    world.trips[1] = [{"agent": x.id, "zone": "large", "landed": landed, "secret": False, "radar": False, "event_id": "t"}
-                      for x, landed in ((a, 6.0), (b, 6.0), (c, 4.0), (d, 4.0))]
+    world.trips[1] = [{"agent": x.id, "zone": "large", "landed": landed, "secret": False, "patrol": False, "day": 5.0,
+                       "event_id": "t"} for x, landed in ((a, 6.0), (b, 6.0), (c, 4.0), (d, 4.0))]
     for x, said, landed in ((a, 3.0, 6.0), (b, 3.0, 6.0), (c, 4.0, 4.0), (d, 4.0, 4.0)):
         x.declared[1], x.catches[1] = said, landed
     world.lies = {f"r{x.id}": {"agent": x.id, "season": 1, "declared": 3.0, "landed": 6.0} for x in (a, b)}
@@ -132,7 +134,7 @@ def test_the_elder_relates_what_the_clues_establish_and_can_be_wrong(tmp_path):
     clue("temoin", b, 6.3, 3.0)                              # deux témoins : le mensonge est établi
     clue("temoin", c, 5.6, 4.0)
     clue("temoin", c, 5.4, 4.0)                              # deux témoins qui surestiment un honnête : erreur de jugement
-    clue("radar", d, 4.2, 4.0)                               # le radar confirme une déclaration honnête
+    clue("patrouille", d, 4.2, 4.0)                          # la patrouille confirme une déclaration honnête
     world.weigh_evidence(1)
     found = {e["payload"]["agent"]: e["payload"] for e in got if e["type"] == "lie_discovered"}
     assert set(found) == {b.id, c.id} and not found[b.id]["wrongful"] and found[c.id]["wrongful"]
@@ -179,12 +181,12 @@ def test_each_character_judges_by_its_own_morals():
 
 def test_a_witness_does_not_denounce_a_friend(tmp_path):
     world, _, _ = make_world(tmp_path, "ami")
-    world.detection.update({"radar": 0.0, "witness": 1.0, "witness_error": 0.0, "seen_leaving": 0.0, "lifestyle": 0.0})
+    world.detection.update({"patrol": 0.0, "witness": 1.0, "witness_error": 0.0, "seen_leaving": 0.0, "lifestyle": 0.0})
     a, b = world.fishers[:2]
     for x in (a, b):
         x.catches[1] = x.declared[1] = 4.0
-    world.trips[1] = [{"agent": x.id, "zone": "large", "landed": 4.0, "secret": False, "radar": False, "event_id": "t"}
-                      for x in (a, b)]
+    world.trips[1] = [{"agent": x.id, "zone": "large", "landed": 4.0, "secret": False, "patrol": False, "day": 5.0,
+                       "event_id": "t"} for x in (a, b)]
     world.trust[b.id][a.id] = 0.9            # b fait toute confiance à a : il ne dira rien de lui devant tous
     world.investigate(1)
     assert {(c["observer"], c["subject"]): c["public"] for c in world.clues} == {(a.id, b.id): True, (b.id, a.id): False}

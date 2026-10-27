@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "season": {
+      "type": "integer"
+    },
+    "hamlet": {
+      "type": "string"
+    },
+    "representative": {
+      "type": "string"
+    },
+    "votes": {
+      "type": "object"
+    },
+    "voters": {
+      "type": "integer"
+    },
+    "incumbent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ballots": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "season",
+    "hamlet",
+    "representative",
+    "votes",
+    "voters"
+  ],
+  "additionalProperties": false
+}

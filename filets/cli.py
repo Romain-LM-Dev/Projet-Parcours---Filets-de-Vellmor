@@ -38,6 +38,8 @@ def build_cfg(args) -> dict:
     over: dict = {}
     if getattr(args, "agents", None):
         set_dotted(over, "population.fishers", args.agents)
+    if getattr(args, "villages", None):
+        set_dotted(over, "population.villages", args.villages)
     if getattr(args, "mode", None):
         set_dotted(over, "time.mode", args.mode)
     if getattr(args, "seasons", None):
@@ -373,6 +375,7 @@ def main(argv=None):
     sv = sub.add_parser("serve", help="salon : la partie est lancée depuis le menu de Godot")
     common(sv)
     sv.add_argument("--agents", type=int, help="nombre de pêcheurs de la composition de base proposée par le menu")
+    sv.add_argument("--villages", type=int, help="nombre de villages de la composition de base proposée par le menu")
     sv.add_argument("--mode", choices=["sync", "async"], help="mode proposé par défaut dans le menu")
     sv.add_argument("--seasons", type=int, help="nombre de saisons proposé par défaut dans le menu")
     sv.add_argument("--seed", type=int)
@@ -386,6 +389,7 @@ def main(argv=None):
     r = sub.add_parser("run")
     common(r)
     r.add_argument("--agents", type=int)
+    r.add_argument("--villages", type=int, help="nombre de villages autour du lac (génération de la vallée)")
     r.add_argument("--mode", choices=["sync", "async"])
     r.add_argument("--seasons", type=int)
     r.add_argument("--seed", type=int)

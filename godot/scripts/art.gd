@@ -29,6 +29,14 @@ const HAMLET := {
 	"Bramois": Color("#f2864a"),
 	"Tilque": Color("#b78fd6"),
 	"Hennad": Color("#3fc4b0"),
+	"Varenne": Color("#e0c04f"),
+	"Corbel": Color("#e06f8f"),
+	"Mirande": Color("#7fb069"),
+	"Sauvet": Color("#c98bb9"),
+	"Lormes": Color("#6fa8b8"),
+	"Quéran": Color("#d9a066"),
+	"Brevelle": Color("#9aa5e0"),
+	"Dunac": Color("#a3c86a"),
 }
 const ELDER := Color("#e2bd6a")
 # --- archétypes (écrits en toutes lettres dans l'inspecteur)
@@ -44,7 +52,16 @@ static var _fonts := {}
 static func agent_color(info: Dictionary) -> Color:
 	if str(info.get("role", "")) == "ancien":
 		return ELDER
-	return HAMLET.get(str(info.get("hamlet", "")), MUTED)
+	return hamlet_color(str(info.get("hamlet", "")))
+
+
+## La couleur d'un village : celle de la table, ou une teinte tirée de son nom (un village inventé garde la même d'une partie à l'autre).
+static func hamlet_color(name: String) -> Color:
+	if HAMLET.has(name):
+		return HAMLET[name]
+	if name == "":
+		return MUTED
+	return Color.from_hsv(float(name.hash() % 360) / 360.0, 0.5, 0.88)
 
 
 static func _load_font(files: Array) -> Font:

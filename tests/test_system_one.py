@@ -200,8 +200,8 @@ def test_routine_catches_go_to_the_decision_model_and_reflection_stays_with_qwen
     assert reflex and all(c["system"] == "S1" and c["model"] == "tev1:0.8b" and c["status"] == "ok" for c in reflex)
     assert all(c["tier"] != "reflexe" for c in calls if c.get("system") == "S2")
     decisions = [e["payload"] for e in events if e["type"] == "decision" and e["payload"].get("system") == "S1"]
-    level3 = prompts.catch_levels(10.0, lo=1.0)[3]                  # l'échelle part de la prise minimale (1 t) : 4 t
-    assert decisions and all(d["tier"] == "reflexe" and not d["fallback"] and d["value"] == level3 == 4.0 for d in decisions)
+    level3 = prompts.catch_levels(7.0, lo=1.0)[3]                   # la cale d'une chaloupe (7 t), de la prise minimale (1 t) : 3 t
+    assert decisions and all(d["tier"] == "reflexe" and not d["fallback"] and d["value"] == level3 == 3.0 for d in decisions)
     assert all(d["justification"].startswith("Réflexe (système 1, tev1:0.8b)") and "Confiance 0.80" in d["justification"]
                for d in decisions)
     assert not [r for r in chat if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["prise"]]

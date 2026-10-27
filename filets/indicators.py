@@ -7,7 +7,8 @@ reproduit les mêmes valeurs (E3).
 Contexte commun observable pour FILETS (B1). Une *norme de prélèvement partagée* existe
 pendant la saison s si :
   1. un quota a été adopté à une veillée (accord déclaré, `norm_agreement` = part de tous
-     les pêcheurs qui ont soutenu la règle qui les concerne : hameau d'abord, vallée sinon) ;
+     les pêcheurs qui ont soutenu la règle qui les concerne : hameau d'abord, vallée sinon ; au
+     conseil des élus, un pêcheur la soutient s'il l'a soutenue ou si l'élu de son village l'a fait) ;
   2. les prises de la saison le respectent (`norm_compliance` = part des pêcheurs soumis à
      une règle dont la prise est ≤ quota + tolérance).
 Les effectifs derrière ces parts (`norm_supporters`, `norm_compliers`, `norm_concerned`,
@@ -165,12 +166,13 @@ class IndicatorEngine:
                 continue
             quota, norm = q
             concerned += 1
-            agree += f in norm["supporters"]
+            rep = (norm.get("delegates") or {}).get(self.fishers[f].get("hamlet"))      # l'élu de son village parle pour lui
+            agree += f in norm["supporters"] or (rep is not None and rep in norm["supporters"])
             comply += c <= quota + self.tol
             if norm["event_id"] not in sources:
                 sources.append(norm["event_id"])
         n = len(catches) or 1
-        agreement = agree / n                       # part de TOUS les pêcheurs qui ont soutenu la règle qui les concerne
+        agreement = agree / n                       # part de TOUS les pêcheurs qui ont soutenu la règle qui les concerne (ou dont l'élu l'a fait)
         compliance = comply / concerned if concerned else 0.0   # part des pêcheurs soumis à une règle qui la respectent
         outcomes = [o for o in self.promise_outcomes if o["season"] == season]
         sources += [o["event_id"] for o in outcomes]

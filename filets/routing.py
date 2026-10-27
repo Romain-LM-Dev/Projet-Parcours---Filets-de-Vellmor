@@ -39,6 +39,8 @@ def reasons_to_think(obs: dict) -> list[str]:
         why.append("le lac baisse")
     if obs.get("rumors"):
         why.append("rumeur")
+    if obs.get("events"):
+        why.append("événement sur le lac")          # tempête, sécheresse… : ce n'est pas une saison comme les autres
     if obs["wealth"] < obs["upkeep"] + obs["debt_payment"]:
         why.append("finances tendues")
     if not obs.get("pinned") and not obs.get("norms"):

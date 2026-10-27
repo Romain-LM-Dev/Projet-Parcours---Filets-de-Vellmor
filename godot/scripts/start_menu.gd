@@ -13,11 +13,13 @@ const MenuMap := preload("res://scripts/menu_map.gd")
 
 signal start_requested(config: Dictionary)
 signal cancelled
+signal generate_requested(params: Dictionary)
 
 const W_IDX := 40
 const W_NAME := 96
 const W_HAMLET := 94
-const W_ARCH := 146
+const W_ARCH := 130
+const W_BOAT := 84
 const W_EXP := 58
 const W_WEALTH := 70
 const W_DEBT := 58
@@ -43,6 +45,7 @@ var busy_since := 0
 
 var _rows: Array = []                 # un dictionnaire de widgets par ligne
 var _updating := false                # évite les boucles quand on règle un widget par code
+var _pending_generation := ""          # la vallée demandée au moteur, qu'on attend de recevoir
 
 var sheet: PanelContainer
 var lbl_engine: Label
@@ -58,6 +61,13 @@ var btn_growth_default: Button
 var chk_stop_empty: CheckButton
 var lbl_cap_hint: Label
 var opt_comm: OptionButton
+var opt_council: OptionButton
+var chk_climate: CheckButton
+var spin_events: SpinBox
+var spin_luck: SpinBox
+var spin_villages: SpinBox
+var spin_fishers: SpinBox
+var btn_generate: Button
 var chk_visible: CheckButton
 var opt_llm: OptionButton
 var lbl_llm_desc: Label
@@ -312,8 +322,11 @@ func _build_left(body: Control) -> void:
 	col.add_child(_section("La vallée"))
 	opt_comm = _option([])
 	_row(col, "Veillées", opt_comm)
+	opt_council = _option([])
+	opt_council.tooltip_text = "Au conseil de la vallée, un élu par village (choisi à chaque saison par ses pêcheurs) parle et vote pour tous ; les autres villageois n'y vont pas. Sans effet pour des veillées par village."
+	_row(col, "Conseil", opt_council)
 	spin_rounds = _spin(1, 3, 1, 2, 70)
-	spin_rounds.tooltip_text = "Combien de fois chacun peut prendre la parole pendant une veillée"
+	spin_rounds.tooltip_text = "Combien de fois chacun prend la parole pendant une veillée, à tour de rôle (synchrone). En asynchrone, chacun s'exprime une seule fois, de son côté."
 	_row(col, "Tours de parole", spin_rounds)
 	chk_visible = CheckButton.new()
 	chk_visible.text = "Les déclarations à l'ancien sont lues à toute la vallée"
@@ -377,6 +390,23 @@ func _build_left(body: Control) -> void:
 	lbl_cap_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl_cap_hint.custom_minimum_size = Vector2(276, 0)
 	col.add_child(lbl_cap_hint)
+	
+	col.add_child(HSeparator.new())
+	col.add_child(_section("Saisons et hasard"))
+	chk_climate = CheckButton.new()
+	chk_climate.text = "Saisons de l'année et événements"
+	chk_climate.button_pressed = true
+	chk_climate.focus_mode = Control.FOCUS_NONE
+	chk_climate.tooltip_text = "Printemps, été, automne, hiver : la pêche rend plus ou moins, le lac se repeuple plus ou moins vite. Des événements s'y ajoutent (sécheresse, tempête, banc de poissons, algues, crue, maladie)."
+	col.add_child(chk_climate)
+	spin_events = _spin(0, 100, 5, 30, 84)
+	spin_events.suffix = "%"
+	spin_events.tooltip_text = "Chance qu'un événement survienne à chaque saison, à partir de la deuxième."
+	_row(col, "Événements", spin_events)
+	spin_luck = _spin(0, 60, 5, 25, 84)
+	spin_luck.suffix = "%"
+	spin_luck.tooltip_text = "La pêche n'est pas toujours bonne : la prise réelle varie autour de la prise visée selon la réussite du jour (0 : toujours la prise visée)."
+	_row(col, "Réussite du jour", spin_luck)
 
 
 ## Un choix d'IA avec son titre au-dessus : moteur, réflexion, vitesse tiennent sur une seule ligne, en haut de la colonne
@@ -462,6 +492,21 @@ func _build_center(body: Control) -> void:
 	base.tooltip_text = "Reprend les pêcheurs que le jeu génère par défaut"
 	base.pressed.connect(reset_population)
 	tools.add_child(base)
+	var gen := HBoxContainer.new()
+	gen.add_theme_constant_override("separation", 8)
+	col.add_child(gen)
+	gen.add_child(_lbl("Villages", 12, "ui", Art.MUTED))
+	spin_villages = _spin(1, 8, 1, 4, 62)
+	gen.add_child(spin_villages)
+	gen.add_child(_lbl("Pêcheurs", 12, "ui", Art.MUTED))
+	spin_fishers = _spin(1, 24, 1, 8, 62)
+	gen.add_child(spin_fishers)
+	btn_generate = Button.new()
+	btn_generate.text = "Générer la vallée"
+	btn_generate.focus_mode = Control.FOCUS_NONE
+	btn_generate.tooltip_text = "Génère les villages, les pêcheurs et leurs bateaux d'après ces nombres et la graine : la même vallée pour les mêmes réglages. Vous pouvez ensuite retoucher chaque pêcheur."
+	btn_generate.pressed.connect(_on_generate)
+	gen.add_child(btn_generate)
 	# titres de colonnes, alignés sur les lignes
 	var titles := HBoxContainer.new()
 	titles.add_theme_constant_override("separation", 6)
@@ -469,7 +514,7 @@ func _build_center(body: Control) -> void:
 	var pad := Control.new()
 	pad.custom_minimum_size = Vector2(8, 0)
 	titles.add_child(pad)
-	for t in [["", W_IDX], ["Prénom", W_NAME], ["Hameau", W_HAMLET], ["Archétype", W_ARCH], ["Expérience", W_EXP],
+	for t in [["", W_IDX], ["Prénom", W_NAME], ["Village", W_HAMLET], ["Archétype", W_ARCH], ["Bateau", W_BOAT], ["Expérience", W_EXP],
 			["Avoir (écus)", W_WEALTH], ["Dette/saison", W_DEBT], ["Cerveau", W_BRAIN]]:
 		var l := _lbl(str(t[0]), 10, "ui_black", Art.MUTED)
 		l.custom_minimum_size = Vector2(int(t[1]), 0)
@@ -489,7 +534,7 @@ func _build_right(body: Control) -> void:
 	col.add_theme_constant_override("separation", 8)
 	body.add_child(col)
 	col.add_child(_section("Disposition dans la vallée"))
-	col.add_child(_lbl("Glissez un pêcheur d'un hameau à l'autre.", 12, "ui", Color(Art.MUTED, 0.9)))
+	col.add_child(_lbl("Glissez un pêcheur d'un village à l'autre.", 12, "ui", Color(Art.MUTED, 0.9)))
 	var frame := AspectRatioContainer.new()
 	frame.ratio = 1.28
 	frame.custom_minimum_size = Vector2(0, 300)
@@ -511,10 +556,29 @@ func _build_right(body: Control) -> void:
 
 
 # ------------------------------------------------------------------ catalogue
+## Le catalogue sans la vallée : ses villages, ses pêcheurs et la demande qui l'a générée.
+func _same_but_valley(a: Dictionary, b: Dictionary) -> bool:
+	var x := a.duplicate()
+	var y := b.duplicate()
+	for k in ["hamlets", "base_population", "generation"]:
+		x.erase(k)
+		y.erase(k)
+	return JSON.stringify(x) == JSON.stringify(y)
+
+
 func set_catalog(cat: Dictionary) -> void:
 	# le moteur renvoie son catalogue avec chaque état : identique, on n'y touche pas (le joueur est peut-être en train
 	# de régler sa partie) ; différent (autre moteur, autres options), on repart de ses valeurs par défaut
 	if not catalog.is_empty() and JSON.stringify(cat) == JSON.stringify(catalog):
+		return
+	# seule la vallée a changé : on ne touche ni aux réglages ni à l'IA
+	if not catalog.is_empty() and _same_but_valley(cat, catalog):
+		var fresh: bool = JSON.stringify(cat.get("generation")) != JSON.stringify(catalog.get("generation"))
+		catalog = cat
+		if fresh and _pending_generation != "" and str(cat.get("generation", {}).get("id", "")) == _pending_generation:
+			_pending_generation = ""
+			btn_generate.disabled = false
+			reset_population()
 		return
 	var first := true
 	catalog = cat
@@ -523,6 +587,10 @@ func set_catalog(cat: Dictionary) -> void:
 	for c in cat.get("communications", []):
 		opt_comm.add_item(str(c["label"]))
 		opt_comm.set_item_metadata(opt_comm.item_count - 1, str(c["id"]))
+	opt_council.clear()
+	for c in cat.get("councils", []):
+		opt_council.add_item(str(c["label"]))
+		opt_council.set_item_metadata(opt_council.item_count - 1, str(c["id"]))
 	opt_llm.clear()
 	for o in cat.get("llm_options", []):
 		opt_llm.add_item(str(o["label"]))
@@ -548,6 +616,12 @@ func set_catalog(cat: Dictionary) -> void:
 	spin_capacity.min_value = caps[0]
 	spin_capacity.max_value = caps[1]
 	var rates: Array = lim.get("growth_rate", [0.1, 2.0])
+	var vill: Array = lim.get("villages", [1, 8])
+	spin_villages.min_value = vill[0]
+	spin_villages.max_value = vill[1]
+	var fish: Array = lim.get("fishers", [1, 24])
+	spin_fishers.min_value = fish[0]
+	spin_fishers.max_value = fish[1]
 	spin_growth.min_value = rates[0]
 	spin_growth.max_value = rates[1]
 	_updating = false
@@ -567,6 +641,12 @@ func reset_all() -> void:
 	spin_seed.value = int(d.get("seed", 42))
 	spin_rounds.value = int(d.get("assembly_rounds", 2))
 	_select_meta(opt_comm, str(d.get("communication", "valley")))
+	_select_meta(opt_council, str(d.get("council", "delegates")))
+	chk_climate.button_pressed = bool(d.get("climate", true))
+	spin_events.value = roundf(float(d.get("event_rate", 0.3)) * 100.0)
+	spin_luck.value = roundf(float(d.get("luck", 0.25)) * 100.0)
+	spin_villages.value = int(d.get("villages", 4))
+	spin_fishers.value = int(d.get("fishers", 8))
 	chk_visible.button_pressed = bool(d.get("catches_visible", true))
 	_select_meta(opt_llm, str(d.get("llm", "scripted")))
 	_select_meta(opt_reflection, str(d.get("reflection", "rapide")))
@@ -719,6 +799,14 @@ func _arch_index(id: String) -> int:
 	return 0
 
 
+func _boat_index(id: String) -> int:
+	var boats: Array = catalog.get("boats", [])
+	for i in boats.size():
+		if str(boats[i]["id"]) == id:
+			return i
+	return 0
+
+
 func _brain_index(f: Dictionary) -> int:
 	for i in BRAINS.size():
 		if BRAINS[i][1] == str(f["kind"]) and (BRAINS[i][1] == "rule" or BRAINS[i][2] == str(f["tier"])):
@@ -751,7 +839,7 @@ func _add_fisher() -> void:
 			first = str(nm)
 			break
 	fishers.append({"first_name": first, "hamlet": hamlet, "archetype": str(a["id"]), "experience": int(a["experience"]),
-		"wealth": float(a["wealth"]), "debt_payment": float(a["debt_payment"]), "kind": "llm", "tier": "auto"})
+		"wealth": float(a["wealth"]), "debt_payment": float(a["debt_payment"]), "kind": "llm", "tier": "auto", "boat": "chaloupe"})
 	_rebuild_rows()
 	_select(fishers.size() - 1)
 	_refresh_all()
@@ -814,6 +902,16 @@ func _rebuild_rows() -> void:
 		opt_a.select(_arch_index(str(f["archetype"])))
 		opt_a.item_selected.connect(func(k: int) -> void: _on_archetype(i, k))
 		h.add_child(opt_a)
+		var boat_labels: Array = []
+		for bt in catalog.get("boats", []):
+			boat_labels.append("%s · %s t" % [str(bt["label"]), _num(float(bt["capacity"]))])
+		var opt_bt := _option(boat_labels, W_BOAT)
+		if opt_bt.item_count > 0:           # (un moteur plus ancien n'envoie pas de bateaux)
+			opt_bt.select(_boat_index(str(f.get("boat", "chaloupe"))))
+		opt_bt.item_selected.connect(func(k: int) -> void:
+			fishers[i]["boat"] = str((catalog.get("boats", []) as Array)[k]["id"])
+			_refresh_all())
+		h.add_child(opt_bt)
 		var sp_e := _spin(float(lim.get("experience", [0, 60])[0]), float(lim.get("experience", [0, 60])[1]), 1,
 			float(f["experience"]), W_EXP)
 		sp_e.value_changed.connect(func(v: float) -> void:
@@ -846,7 +944,7 @@ func _rebuild_rows() -> void:
 		del.pressed.connect(_remove_fisher.bind(i))
 		h.add_child(del)
 		_rows.append({"panel": panel, "name": name_edit, "hamlet": opt_h, "arch": opt_a, "exp": sp_e, "wealth": sp_w,
-			"debt": sp_d, "brain": opt_b, "del": del})
+			"debt": sp_d, "boat": opt_bt, "brain": opt_b, "del": del})
 
 
 func _row_style(sel: bool) -> StyleBoxFlat:
@@ -877,6 +975,8 @@ func _row_sync(i: int) -> void:
 	var r: Dictionary = _rows[i]
 	(r["hamlet"] as OptionButton).select(maxi(0, (catalog.get("hamlets", []) as Array).find(str(f["hamlet"]))))
 	(r["arch"] as OptionButton).select(_arch_index(str(f["archetype"])))
+	if (r["boat"] as OptionButton).item_count > 0:
+		(r["boat"] as OptionButton).select(_boat_index(str(f.get("boat", "chaloupe"))))
 	(r["exp"] as SpinBox).set_value_no_signal(float(f["experience"]))
 	(r["wealth"] as SpinBox).set_value_no_signal(float(f["wealth"]))
 	(r["debt"] as SpinBox).set_value_no_signal(float(f["debt_payment"]))
@@ -906,7 +1006,7 @@ func _refresh_all(_full: bool = true) -> void:
 	var d: Dictionary = catalog.get("defaults", {})
 	var elder_kind := "llm" if opt_elder.selected == 0 else "rule"
 	opt_elder.disabled = not chk_elder.button_pressed
-	map.call("set_data", fishers, chk_elder.button_pressed, elder_kind, selected, int(d.get("large_model_min_experience", 15)))
+	map.call("set_data", fishers, chk_elder.button_pressed, elder_kind, selected, int(d.get("large_model_min_experience", 15)), catalog.get("hamlets", []))
 	var lim: Array = catalog.get("limits", {}).get("fishers", [1, 24])
 	lbl_count.text = "%d" % fishers.size()
 	_refresh_lake()
@@ -918,7 +1018,7 @@ func _refresh_all(_full: bool = true) -> void:
 		var hc := Art.agent_color(f).lightened(0.2).to_html(false)
 		var arch: Dictionary = _archetypes()[_arch_index(str(f["archetype"]))]
 		var s := "[font=res://fonts/alegreya-latin-700-normal.woff2][font_size=20][color=#%s]%s[/color][/font_size][/font]  [color=#6f7896]F%02d[/color]\n" % [hc, str(f["first_name"]), selected + 1]
-		s += "%s · hameau %s\n[color=#9ba1ba]%s[/color]\n\n" % [str(arch["label"]), str(f["hamlet"]), str(arch["summary"])]
+		s += "%s · village %s\n[color=#9ba1ba]%s[/color]\n\n" % [str(arch["label"]), str(f["hamlet"]), str(arch["summary"])]
 		s += "%d ans de pêche · %s écus · dette %s écus/saison\n%s" % [int(f["experience"]), _num(float(f["wealth"])),
 			_num(float(f["debt_payment"])), _tier_text(f)]
 		detail.text = s
@@ -941,6 +1041,17 @@ func _auto_capacity() -> float:
 	return clampf(float(d.get("capacity_per_fisher", 12.5)) * fishers.size(), float(caps[0]), float(caps[1]))
 
 
+## Ce que toutes les cales ensemble peuvent porter (t) : la somme des capacités des bateaux des pêcheurs.
+func _holds() -> float:
+	var cap := {}
+	for b in catalog.get("boats", []):
+		cap[str(b["id"])] = float(b["capacity"])
+	var total := 0.0
+	for f in fishers:
+		total += float(cap.get(str(f.get("boat", "chaloupe")), 7.0))
+	return total
+
+
 func _refresh_lake() -> void:
 	var d: Dictionary = catalog.get("defaults", {})
 	var auto_cap := _auto_capacity()
@@ -953,27 +1064,39 @@ func _refresh_lake() -> void:
 	var rate := spin_growth.value
 	var yield_max := rate * cap / 4.0
 	# une sortie rapporte au plus la capacité du lac / (2 × pêcheurs) : à eux tous, la moitié du lac au plus
-	var reach := minf(float(d.get("boat_capacity", 10.0)) * fishers.size(), cap / 2.0)
+	var reach := minf(_holds(), cap / 2.0)
 	btn_cap_auto.disabled = capacity_auto
 	btn_growth_default.disabled = is_equal_approx(rate, float(d.get("growth_rate", 1.0)))
 	lbl_lake.text = "lac de %s t · rendement durable max %s t par saison" % [_num(cap), _num(yield_max)]
 	var how := "Auto : %s t par pêcheur." % _num(float(d.get("capacity_per_fisher", 12.5))) if capacity_auto \
 		else "Choisi à la main (auto : %s t)." % _num(auto_cap)
 	lbl_cap_hint.text = ("%s Le lac part plein et ne dépasse jamais ce stock. À moitié plein, il regagne au mieux %s t par "
-		+ "saison ; %d barques peuvent en ramener jusqu'à %s t.") % [how, _num(yield_max), fishers.size(), _num(reach)]
+		+ "saison ; %d bateaux peuvent en ramener jusqu'à %s t.") % [how, _num(yield_max), fishers.size(), _num(reach)]
 
 
 # ------------------------------------------------------------------ envoi
+func _on_generate() -> void:
+	if catalog.is_empty() or _pending_generation != "":
+		return
+	_pending_generation = "g%d" % Time.get_ticks_msec()
+	btn_generate.disabled = true
+	lbl_error.text = ""
+	generate_requested.emit({"villages": int(spin_villages.value), "fishers": int(spin_fishers.value),
+		"seed": int(spin_seed.value), "id": _pending_generation})
+
+
 func build_config() -> Dictionary:
 	var list: Array = []
 	for f in fishers:
 		list.append({"first_name": str(f["first_name"]), "hamlet": str(f["hamlet"]), "archetype": str(f["archetype"]),
 			"experience": int(f["experience"]), "wealth": float(f["wealth"]), "debt_payment": float(f["debt_payment"]),
-			"kind": str(f["kind"]), "tier": str(f["tier"])})
+			"kind": str(f["kind"]), "tier": str(f["tier"]), "boat": str(f.get("boat", "chaloupe"))})
 	return {
 		"mode": mode, "seasons": int(spin_seasons.value), "seed": int(spin_seed.value),
 		"communication": str(opt_comm.get_item_metadata(opt_comm.selected)), "catches_visible": chk_visible.button_pressed,
 		"assembly_rounds": int(spin_rounds.value),
+		"council": str(opt_council.get_item_metadata(opt_council.selected)), "climate": chk_climate.button_pressed,
+		"event_rate": float(spin_events.value) / 100.0, "luck": float(spin_luck.value) / 100.0,
 		"llm": str(opt_llm.get_item_metadata(opt_llm.selected)), "speed": opt_speed.get_item_metadata(opt_speed.selected),
 		"reflection": str(opt_reflection.get_item_metadata(opt_reflection.selected)),
 		# `null` : le moteur calcule 12,5 t par pêcheur ; sinon, la limite du stock choisie par le joueur
@@ -1012,6 +1135,8 @@ func close() -> void:
 
 
 func show_error(text: String) -> void:
+	_pending_generation = ""
+	btn_generate.disabled = false
 	lbl_error.text = text
 	busy = false
 	_update_state()

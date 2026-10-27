@@ -70,6 +70,9 @@
     },
     "population": {
       "type": "object"
+    },
+    "boats": {
+      "type": "object"
     }
   },
   "required": [

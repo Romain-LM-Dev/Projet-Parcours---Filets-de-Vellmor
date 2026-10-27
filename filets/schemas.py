@@ -57,9 +57,10 @@ PAYLOADS: dict[str, dict] = {
         "agents": {"type": "array", "items": {"type": "object"}},
         "hamlets": IDS, "scenario": {"type": "object"}, "season_days": NUM, "config_hash": STR,
         "llm_tiers": {"type": "object"},
-    }, {"label": STR, "population": {"type": "object"}}),
+    }, {"label": STR, "population": {"type": "object"}, "boats": {"type": "object"}}),
     "run_end": obj({"reason": STR, "seasons_completed": INT}),
-    "season_start": obj({"stock": NUM}, {"mode": {"enum": ["sync", "async"]}}),
+    # `conditions` : la saison de l'année, ses facteurs (pêche, repeuplement) et les événements en cours (voir `climate.py`)
+    "season_start": obj({"stock": NUM}, {"mode": {"enum": ["sync", "async"]}, "conditions": {"type": "object"}}),
     "phase": obj({"name": {"enum": ["fishing", "assembly", "regrowth"]}, "state": {"enum": ["open", "close"]}}),
     "decision": obj(
         {"agent": STR, "agent_kind": {"enum": ["llm", "rule"]}, "decision_type": {"enum": ["catch", "speak"]},
@@ -73,40 +74,59 @@ PAYLOADS: dict[str, dict] = {
     "catch": obj({"agent": STR, "hamlet": STR, "requested": NUM, "landed": NUM, "stock_observed": NUM,
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
                   "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM},
-                 {"zone": STR, "secret": BOOL}),       # où il a pêché ; en cachette (interdit de pêche)
+                 {"zone": STR, "secret": BOOL,        # où il a pêché ; en cachette (interdit de pêche)
+                  "yield": NUM,        # ce que la sortie a rapporté par rapport à la prise visée (`requested`), tout compris
+                  "luck": NUM,         # dont la réussite du jour
+                  "day": NUM}),        # le jour de la saison où la barque est sortie
     # ce que le pêcheur déclare à l'ancien en rentrant : les autres ne connaissent que `declared` ; la vraie prise (`landed`)
     # n'est connue que de lui et du joueur
     "report": obj({"agent": STR, "hamlet": STR, "declared": NUM, "landed": NUM, "catch_event_id": STR}),
-    # un indice sur la prise de `subject` : relevé du radar, barque vue rentrer (estimation de sa charge), barque d'un interdit vue
+    # un indice sur la prise de `subject` : relevé de la patrouille, barque vue rentrer (estimation de sa charge), barque d'un interdit vue
     # partant, train de vie ; `public` : dit devant tous à la veillée (sinon, gardé par celui qui l'a vu)
-    "clue": obj({"kind": {"enum": ["radar", "temoin", "depart", "train_de_vie"]}, "observer": STR_OR_NULL, "subject": STR,
+    "clue": obj({"kind": {"enum": ["patrouille", "temoin", "depart", "train_de_vie"]}, "observer": STR_OR_NULL, "subject": STR,
                  "zone": STR, "estimate": NUM_OR_NULL, "public": BOOL}, {"declared": NUM_OR_NULL}),
     # les comptes du lac par l'ancien : ce que la pêche lui a fait perdre, ce que les déclarations en expliquent
     "lake_audit": obj({"drop": NUM, "declared": NUM, "gap": NUM, "significant": BOOL}),
     # un mensonge (ou une sortie en cachette) tenu pour établi par l'ancien sur des indices ; `landed` : la vérité (pour le
     # joueur), `estimated` : ce que la vallée en croit ; `wrongful` : il n'avait pas menti (erreur de jugement)
     "lie_discovered": obj({"agent": STR, "lie_season": INT, "declared": NUM, "landed": NUM,
-                           "how": {"enum": ["radar", "temoins", "indices"]}, "secret": BOOL, "wrongful": BOOL},
+                           "how": {"enum": ["patrouille", "temoins", "indices"]}, "secret": BOOL, "wrongful": BOOL},
                           {"estimated": NUM_OR_NULL, "witnesses": IDS, "report_event_id": STR_OR_NULL}),
     # interdit de pêche, ou levée de l'interdiction, par un vote de la vallée (`proposal_id`, ses voix `for` sur `voters`)
     "ban": obj({"agent": STR, "banned": BOOL, "reputation": NUM}, {"proposal_id": STR, "for": IDS, "voters": INT}),
-    # où le radar de la vallée surveille le lac (une zone : un hameau ou « large »), et qui l'y a mis
-    "radar_placed": obj({"zone": STR, "by": {"enum": ["ancien", "vallee", "joueur"]}}),
+    # la patrouille du lac, si le conseil en a voté une : sa route de la saison (étapes : zone = un village ou « large », jours
+    # depuis le début de la saison), décidée par l'ancien ; puis son installation ou son retrait par un vote du conseil
+    "patrol_route": obj({"season": INT, "legs": {"type": "array", "items": obj({"zone": STR, "from_day": NUM, "to_day": NUM})},
+                         "by": STR}),
+    "patrol": obj({"state": {"enum": ["installed", "lifted"]}, "effective_season": INT, "proposal_id": STR, "for": IDS,
+                   "voters": INT, "cost": NUM}),
+    # l'élection de l'élu d'un village pour la saison (`ballots` : électeur → candidat choisi, `votes` : voix par candidat)
+    "election": obj({"season": INT, "hamlet": STR, "representative": STR, "votes": {"type": "object"}, "voters": INT},
+                    {"incumbent": STR_OR_NULL, "ballots": {"type": "object"}}),
+    # un événement du climat (voir `climate.py`) arrivé au début de la saison
+    "world_event": obj({"kind": STR, "label": STR, "text": STR, "season": INT, "until": INT}, {"stock_factor": NUM}),
     # la confiance que les autres (`values` : observateur → 0..1) accordent à `subject` vient de changer ; `reputation` :
     # la moyenne de la confiance de tous les autres envers lui
     "trust": obj({"subject": STR, "cause": STR, "values": {"type": "object"}, "reputation": NUM},
                  {"source_event_id": STR_OR_NULL, "by": STR, "delta": NUM}),     # `by` : celui qui a jugé, de `delta`
-    # une proposition d'interdire de pêche un pêcheur (`exclure`) ou de lever son interdiction (`reautoriser`), les votes, l'issue
+    # une proposition soumise au vote du conseil : interdire de pêche un pêcheur (`exclure`), lever son interdiction (`reautoriser`),
+    # installer (`patrouille`) ou retirer (`fin_patrouille`) la patrouille du lac (`target` vide : elle ne vise personne) ; les
+    # votes, l'issue
     "sanction_proposal": obj({"proposal_id": STR, "author": STR, "target": STR,
-                              "action": {"enum": ["exclure", "reautoriser"]}, "scope": STR, "utterance_id": STR}),
+                              "action": {"enum": ["exclure", "reautoriser", "patrouille", "fin_patrouille"]}, "scope": STR,
+                              "utterance_id": STR}),
     "sanction_vote": obj({"proposal_id": STR, "agent": STR, "vote": BOOL}),
-    "sanction_result": obj({"proposal_id": STR, "target": STR, "action": {"enum": ["exclure", "reautoriser"]},
+    "sanction_result": obj({"proposal_id": STR, "target": STR,
+                            "action": {"enum": ["exclure", "reautoriser", "patrouille", "fin_patrouille"]},
                             "adopted": BOOL, "for": IDS, "against": IDS, "voters": INT}),
     "sale": obj({"agent": STR, "hamlet": STR, "tonnes": NUM, "price": NUM, "income": NUM, "wealth": NUM}),
-    "lake_update": obj({"stock": NUM, "capacity": NUM, "cause": {"enum": ["init", "catch", "regrowth", "injection"]}},
+    "lake_update": obj({"stock": NUM, "capacity": NUM, "cause": {"enum": ["init", "catch", "regrowth", "injection", "event"]}},
                        {"delta": NUM}),
     "lake_collapsed": obj({"stock": NUM, "capacity": NUM}),
-    "assembly_start": obj({"scope": STR, "participants": IDS}),
+    # `delegates` : au conseil de la vallée, l'élu de chaque village ; `mode` : sync (on s'entend, à tour de rôle) ou async
+    # (chacun s'exprime de son côté)
+    "assembly_start": obj({"scope": STR, "participants": IDS},
+                          {"mode": {"enum": ["sync", "async"]}, "delegates": {"type": "object"}}),
     "assembly_end": obj({"scope": STR, "adopted_proposal": STR_OR_NULL, "utterances": INT}),
     "utterance": obj({"speaker": STR, "to": STR, "text": STR, "scope": STR, "round": INT,
                       "info_horizon": NUM, "heard": IDS, "decision_event_id": STR}),
@@ -118,7 +138,8 @@ PAYLOADS: dict[str, dict] = {
                             "season": INT}, {"declared": NUM, "known_kept": BOOL}),
     "accusation": obj({"accuser": STR, "accused": STR, "utterance_id": STR}),
     "norm_adopted": obj({"proposal_id": STR, "quota": NUM, "scope": STR, "effective_season": INT,
-                         "supporters": IDS, "participants": IDS, "author": STR}),
+                         "supporters": IDS, "participants": IDS, "author": STR},
+                        {"delegates": {"type": "object"}}),      # au conseil des élus : l'élu de chaque village à cet instant
     "memory_write": obj({"agent": STR, "memory_id": STR, "text": STR, "kind": STR, "importance": NUM,
                          "pinned": BOOL}, {"source_event_id": STR_OR_NULL}),
     "season_end": obj({"stock": NUM, "catches": {"type": "object"}, "wealth": {"type": "object"},
@@ -142,11 +163,11 @@ PAYLOADS: dict[str, dict] = {
 
 COMMAND_TYPES = [
     # injections dans la partie en cours
-    "drought", "set_communication", "set_visibility", "announcement", "place_radar",
+    "drought", "set_communication", "set_visibility", "announcement",
     # pilotage de la partie en cours
     "pause", "resume", "set_speed", "set_mode", "stop",
-    # salon : lancer une partie configurée dans le menu, ou y revenir
-    "start_game", "new_game",
+    # salon : lancer une partie configurée dans le menu, ou y revenir ; faire générer une vallée (villages, pêcheurs, bateaux)
+    "start_game", "new_game", "generate_world",
 ]
 COMMAND = obj({"type": {"enum": COMMAND_TYPES}},
               {"value": {}, "text": STR, "factor": NUM, "config": {"type": "object"}}, extra=True)

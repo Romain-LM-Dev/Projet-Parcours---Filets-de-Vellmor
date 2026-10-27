@@ -58,6 +58,8 @@ def normalize(cfg: dict) -> dict:
     n = int(pop["fishers"])
     if n < 1:
         raise ValueError("population.fishers doit être >= 1")
+    if not pop.get("custom") and not 1 <= int(pop.get("villages", 4)) <= 8:
+        raise ValueError("population.villages doit être compris entre 1 et 8 (la carte n'en place pas davantage)")
     if lake.get("capacity") in (None, "auto"):
         lake["capacity_resolved"] = float(lake["capacity_per_fisher"]) * n
     else:
@@ -69,6 +71,8 @@ def normalize(cfg: dict) -> dict:
     t["idle_speedup"] = math.inf if str(sp).lower() in ("inf", ".inf", "infinity") else float(sp)
     if cfg["scenario"]["communication"] not in ("valley", "hamlet", "none"):
         raise ValueError("scenario.communication doit valoir valley, hamlet ou none")
+    if cfg["scenario"].get("council", "delegates") not in ("delegates", "all"):
+        raise ValueError("scenario.council doit valoir delegates ou all")
     return cfg
 
 

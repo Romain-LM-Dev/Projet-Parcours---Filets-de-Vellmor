@@ -100,6 +100,10 @@ func _initialize() -> void:
 	var votes := 0
 	var strong := 0
 	var reputations := {}
+	var world_events := 0
+	var councils := 0
+	var routes := 0
+	var elections := 0
 	for ev in events:
 		var p: Dictionary = ev["payload"]
 		if ev["type"] == "report" and float(p["landed"]) - float(p["declared"]) > 0.05:
@@ -110,6 +114,14 @@ func _initialize() -> void:
 			clues += 1
 		elif ev["type"] == "sanction_result":
 			votes += 1
+		elif ev["type"] == "world_event":
+			world_events += 1
+		elif ev["type"] == "assembly_start" and p.has("delegates"):
+			councils += 1
+		elif ev["type"] == "patrol_route":
+			routes += 1
+		elif ev["type"] == "election":
+			elections += 1
 		elif ev["type"] == "trust":
 			reputations[str(p["subject"])] = float(p["reputation"])
 			if absf(float(p.get("delta", 0.0))) >= 0.2:
@@ -120,7 +132,12 @@ func _initialize() -> void:
 	check(established + joined.count("PRIS EN CACHETTE") + joined.count("ACCUSÉ À TORT") == found, "une ligne par mensonge établi par l'ancien (%d)" % found)
 	check(joined.count("MENSONGE") - established == lies, "une ligne « MENSONGE » par déclaration mensongère (%d)" % lies)
 	check(joined.count("INDICE") == clues, "une ligne « INDICE » par indice (%d, trouvé %d)" % [clues, joined.count("INDICE")])
-	check(m.radar_opt.item_count == 6 and str(m.radar_opt.get_item_metadata(0)) == "auto", "le radar se place depuis la barre d'intervention")
+	check(world_events > 0 and joined.count("ÉVÉNEMENT") == world_events, "une ligne « ÉVÉNEMENT » par événement du climat (%d)" % world_events)
+	check(councils > 0 and joined.count("CONSEIL") == councils, "une ligne « CONSEIL » par séance du conseil des élus (%d)" % councils)
+	check(routes > 0 and joined.count("l'ancien l'envoie vers") == routes, "une ligne « PATROUILLE » par route de la patrouille (%d)" % routes)
+	check(elections > 0 and "ÉLU" in joined and m.reps.size() == 4, "les élus des quatre villages sont notés : " + str(m.reps))
+	check(m.lbl_patrol.text.begins_with("Patrouille"), "la barre d'intervention dit où en est la patrouille du lac : " + m.lbl_patrol.text)
+	check(m.world.hamlet_pos.size() == 4, "la carte pose les quatre villages de la vallée de base")
 	check(not reputations.is_empty(), "le run de test fait bouger la confiance")
 	check(m.tabs.get_tab_title(2) == "Confiance", "l'onglet « Confiance » suit le récit : " + m.tabs.get_tab_title(2))
 	m._render_trust()

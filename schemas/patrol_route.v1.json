@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "properties": {
+    "season": {
+      "type": "integer"
+    },
+    "legs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "zone": {
+            "type": "string"
+          },
+          "from_day": {
+            "type": "number"
+          },
+          "to_day": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "zone",
+          "from_day",
+          "to_day"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "by": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "season",
+    "legs",
+    "by"
+  ],
+  "additionalProperties": false
+}

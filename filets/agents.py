@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import logging
 import random
+import unicodedata
 import zlib
 from dataclasses import dataclass, field
 
 from . import prompts, routing
 from .llm import detect_drift, extract_json, to_number
 from .memory import MemoryStore
-from .policies import catch_rule, declare_rule, speak_rule
+from .policies import catch_rule, declare_rule, elect_rule, speak_rule, trust_rule
 from .profiles import Profile
 
 log = logging.getLogger("filets.agents")
@@ -33,6 +34,9 @@ class Agent:
     # donc bruitée) à chaque ouverture de pêche et à chaque veillée ; `event_id` est la décision qui l'a portée (traçabilité F6).
     stock_seen: list[dict] = field(default_factory=list)
     declared: dict[int, float] = field(default_factory=dict)       # ce qu'il a déclaré à l'ancien, par saison
+    aimed: dict[int, float] = field(default_factory=dict)          # la prise qu'il visait, par saison (la réelle dépend du jour)
+    day_factor: dict[int, float] = field(default_factory=dict)     # ce que sa sortie a rapporté par rapport à la prise visée
+    form: float = 0.0                                              # sa forme du moment (la réussite du jour se prolonge)
 
     @property
     def id(self) -> str:
@@ -217,7 +221,8 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
             acts.append(f"promet {to_number(data.get('promesse')):g} t")
         if data.get("accuse"):
             acts.append(f"accuse {data.get('accuse')}")
-        for action, verb in (("exclure", "propose d'exclure"), ("reautoriser", "propose de réautoriser")):
+        for action, verb in (("exclure", "propose d'exclure"), ("reautoriser", "propose de réautoriser"),
+                             ("patrouille", "propose de patrouille :")):
             if data.get(action):
                 acts.append(f"{verb} {data.get(action)}")
         judged = data.get("confiance")
@@ -251,13 +256,7 @@ async def _sanction_ballot(world, agent: Agent, asm, pending: list) -> None:
     """Pour ou contre chaque proposition d'exclure (ou de réautoriser) : quelques lignes (sa confiance envers le pêcheur visé, ce
     qu'il sait de lui, sa propre situation), une réponse « oui » ou « non » par proposition (système 1). Sans réponse lisible,
     il ne vote pas."""
-    row = world.trust[agent.id]
-    items = {}
-    for s in pending:
-        first, trust = world.first_name(s.target), row.get(s.target, 0.5)
-        items[s.id] = (f"{'interdire de pêche' if s.action == 'exclure' else 'laisser pêcher à nouveau'} {world.name(s.target)}, "
-                       f"proposé par {world.name(s.author)}. Ta confiance envers {first} : {prompts.trust_word(trust)} "
-                       f"({100 * trust:.0f} %). Ce que tu sais de lui : {world.sanction_brief(agent, s.target, asm.season)}.")
+    items = {s.id: world.motion_item(agent, s, asm.season) for s in pending}
     situation = (f"Tes finances : {agent.wealth:.0f} écus" + (" ; tu es toi-même interdit de pêche." if agent.id in world.banned
                                                                   else "."))
     data, res, _ = await _ask_llm(world, agent, "vote", prompts.sanction_messages(agent.profile, items, situation),
@@ -274,6 +273,66 @@ async def _sanction_ballot(world, agent: Agent, asm, pending: list) -> None:
             continue
         if not asm.closed:
             world.vote_sanction(agent, s, yes)
+
+
+def _plain(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", s.lower()) if not unicodedata.combining(c)).strip()
+
+
+async def ballot_election(world, voter: Agent, candidates: list[Agent], season: int) -> str | None:
+    """Le bulletin d'un pêcheur pour l'élu de son village : celui des candidats (lui-même compris) qu'il juge le plus apte à
+    parler et voter au conseil au nom du village, d'après sa confiance, sa morale et ses intérêts. Une question de quelques lignes
+    (système 1) ; un agent à règles vote selon sa règle (`policies.elect_rule`). None : pas de bulletin lisible, il s'abstient."""
+    ids = [c.id for c in candidates]
+    row = world.trust[voter.id]
+    if world.policy_voter(voter):
+        return elect_rule({c.id: row.get(c.id, 0.5) for c in candidates if c.id != voter.id},
+                          {c.id: c.profile.experience for c in candidates}, voter.id)
+    items = {c.id: world.candidate_line(voter, c, season) for c in candidates}
+    situation = f"Tes finances : {voter.wealth:.0f} écus" + \
+        (f", une dette de {voter.profile.debt_payment:.0f} écus par saison." if voter.profile.debt_payment else ".")
+    data, _, _ = await _ask_llm(world, voter, "vote", prompts.election_messages(voter.profile, items, situation),
+                                {"round": 97}, "S1", schema=prompts.election_schema(ids),
+                                max_tokens=prompts.ELECTION_MAX_TOKENS,
+                                system_one=prompts.election_system_one(voter.profile, items, situation))
+    vote = str((data or {}).get("vote", "")).strip().upper()
+    return vote if vote in ids else None
+
+
+async def debrief_villager(world, agent: Agent, asm) -> None:
+    """Un villageois qui n'était pas au conseil en apprend la suite par l'ancien, et en juge : sa confiance envers chaque pêcheur
+    bouge (de −3 à +3 dixièmes) selon ce qu'il apprend, sa morale et ses intérêts. Un agent à règles juge selon son caractère
+    (`policies.trust_rule`) ; une IA qui ne répond pas ne juge pas (sa confiance reste ce qu'elle était)."""
+    facts = world.trust_facts(agent, asm.season, world.clock.now(), None)
+    if world.policy_voter(agent):
+        world.judge(agent, trust_rule(agent.archetype, facts))
+        return
+    lines = world.debrief_lines(agent, asm, facts)
+    trust = prompts.trust_line({"trust": [(world.first_name(s), v) for s, v in world.trust[agent.id].items()]})
+    data, _, _ = await _ask_llm(world, agent, "debrief", prompts.debrief_messages(
+        agent.profile, lines, trust, f"Tes finances : {agent.wealth:.0f} écus."), {"round": 96}, "S2",
+        schema=prompts.DEBRIEF_SCHEMA, max_tokens=prompts.DEBRIEF_MAX_TOKENS)
+    if data is not None:
+        world.judge(agent, data.get("confiance"))
+
+
+async def route_decision(world, season: int, legs: int) -> list[str] | None:
+    """L'ancien envoie la patrouille du lac : les zones qu'elle visitera, dans l'ordre, d'après ce qu'il sait des villages, des
+    mensonges et des interdits. None : pas de réponse lisible (la route sera celle d'un ancien à règles)."""
+    elder = world.elder
+    data, _, _ = await _ask_llm(world, elder, "route", prompts.route_messages(
+        elder.profile, world.capacity, world.hamlets, world.route_lines(elder, season), legs), {"round": 95}, "S2",
+        schema=prompts.route_schema(world.zones, legs), max_tokens=prompts.ROUTE_MAX_TOKENS)
+    raw = (data or {}).get("zones")
+    if not isinstance(raw, list):
+        return None
+    known = {_plain(z): z for z in world.zones}
+    chosen: list[str] = []
+    for z in raw:
+        zone = known.get(_plain(str(z)))
+        if zone and zone not in chosen:
+            chosen.append(zone)
+    return chosen[:legs] or None
 
 
 async def _quota_ballot(world, agent: Agent, asm) -> None:

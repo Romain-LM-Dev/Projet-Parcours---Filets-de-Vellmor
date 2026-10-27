@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "state": {
+      "enum": [
+        "installed",
+        "lifted"
+      ]
+    },
+    "effective_season": {
+      "type": "integer"
+    },
+    "proposal_id": {
+      "type": "string"
+    },
+    "for": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "voters": {
+      "type": "integer"
+    },
+    "cost": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "state",
+    "effective_season",
+    "proposal_id",
+    "for",
+    "voters",
+    "cost"
+  ],
+  "additionalProperties": false
+}

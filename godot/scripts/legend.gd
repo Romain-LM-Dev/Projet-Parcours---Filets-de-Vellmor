@@ -2,6 +2,13 @@
 ## ce qu'on voit sur le lac.
 extends Control
 
+var villages: Array = ["Ostrel", "Bramois", "Tilque", "Hennad"]
+
+
+func set_villages(names: Array) -> void:
+	villages = names
+	queue_redraw()
+
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(0, 34)
@@ -11,7 +18,7 @@ func _draw() -> void:
 	var f := Art.font("ui")
 	var x := 10.0
 	var y := size.y / 2.0
-	for h in ["Ostrel", "Bramois", "Tilque", "Hennad", "ancien"]:
+	for h in villages + ["ancien"]:
 		Art.draw_token(self, Vector2(x + 9, y), {"hamlet": h, "role": "ancien" if h == "ancien" else "pecheur",
 			"kind": "llm", "tier": "petit", "name": " "}, 0.7)
 		var lbl: String = "l'ancien" if h == "ancien" else h

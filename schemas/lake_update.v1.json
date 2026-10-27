@@ -12,7 +12,8 @@
         "init",
         "catch",
         "regrowth",
-        "injection"
+        "injection",
+        "event"
       ]
     },
     "delta": {

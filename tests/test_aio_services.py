@@ -71,7 +71,7 @@ def test_the_async_scan_handles_an_empty_topic_and_a_topic_without_run_start(kcf
 
 
 def test_the_async_scan_finds_a_run_start_buried_deep_in_a_long_topic(kcfg, tmp_path):
-    events = play(tmp_path, seasons=3, time__mode="sync")
+    events = play(tmp_path, seasons=5, time__mode="sync")
     tail = [e for e in events if e["type"] != "run_start"]
     bus = KafkaBus(BOOTSTRAP, kcfg["bus"]["topics"], consume_commands=False)
     publish_all(bus, events + tail + tail)
@@ -153,7 +153,7 @@ def test_the_bridge_service_relays_kafka_to_the_websocket_and_commands_back(kcfg
 # ---------------------------------------------------------------- les indicateurs, en asynchrone
 def test_the_async_indicator_service_computes_what_a_local_engine_computes(kcfg, tmp_path):
     events = play(tmp_path, seasons=3, time__mode="sync")
-    ref = IndicatorEngine(0.5)
+    ref = IndicatorEngine(kcfg["scenario"]["quota_tolerance"])      # la tolérance du service, pas une autre
     expected = [o["values"] for o in (ref.ingest(e) for e in events) if o and o["trigger"] == "season_end"]
 
     async def scenario():

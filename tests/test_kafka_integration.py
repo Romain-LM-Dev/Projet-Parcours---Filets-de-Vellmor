@@ -116,7 +116,7 @@ def test_scan_handles_empty_topic_and_topic_without_run_start(kcfg, tmp_path):
 
 
 def test_scan_finds_a_run_start_buried_deep_in_a_long_topic(kcfg, tmp_path):
-    events = play(tmp_path, seasons=3, time__mode="sync")
+    events = play(tmp_path, seasons=5, time__mode="sync")
     tail = [e for e in events if e["type"] != "run_start"]
     bus = KafkaBus(BOOTSTRAP, kcfg["bus"]["topics"], consume_commands=False)
     publish_all(bus, events + tail + tail)                   # run_start à plus de 2 000 messages de la fin : plusieurs blocs

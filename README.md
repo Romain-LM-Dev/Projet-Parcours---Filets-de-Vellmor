@@ -63,14 +63,15 @@ Au lancement, Godot propose le menu **Nouvelle partie** tant que le moteur est e
 
 | Réglage | Détail |
 |---|---|
-| Temps du monde | **Synchrone** (tous agissent ensemble) ou **Asynchrone** (chacun à son rythme, le temps suit le temps réel) |
+| Temps du monde | **Synchrone** (tous agissent ensemble ; à la veillée on parle à tour de rôle et **chacun entend les précédents** : dialogues dépendants) ou **Asynchrone** (chacun à son rythme, le temps suit le temps réel ; à la veillée **chacun s'exprime de son côté sans entendre les autres**, puis tous votent : dialogues indépendants) |
 | Durée et hasard | nombre de saisons, graine (un même réglage et une même graine rejouent la même partie avec le faux LLM) |
-| La vallée | veillées (toute la vallée, par hameau, interdites), **tours de parole** par veillée (1 à 3, 2 par défaut), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
+| La vallée | veillées (**conseil de la vallée**, par village, interdites), conseil (**un élu par village** ou tous les pêcheurs), **tours de parole** par veillée (1 à 3, 2 par défaut ; un seul en asynchrone), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
 | Le lac | **stock max** : la limite du stock, de 10 à 1000 t, ou *Auto* (12,5 t par pêcheur, qui suit alors le nombre de pêcheurs). C'est 100 % de la jauge : le lac part plein et ne la dépasse jamais. **Repeuplement** : le taux `r` du lac, de 0,1 à 2 par saison (1 = normal). Le menu rappelle ce que le lac renouvelle (`r·K/4` par saison) face à ce que les barques peuvent ramener. **Arrêter si le lac est vide** (coché par défaut) |
+| Saisons et hasard | **saisons de l'année et événements** (sécheresse, tempête, banc de poissons…), leur fréquence, et l'amplitude de la **réussite du jour** (0 : toujours la prise visée) |
 | Moteur d'IA | faux LLM de test, **Ollama · rapide** (3B + 1,5B, recommandé), Ollama · qualité (7B + 1,5B) ou Groq ; le moteur vérifie avant de lancer (Ollama joignable, modèles présents, clé d'API) |
 | Réflexion | **Adaptative (système 1 / 2)** : un réflexe d'un nombre pour les prises de routine, la réflexion pour le reste ([détail](docs/architecture.md)). **Rapide** (une phrase courte, contexte allégé, réponse bornée : environ deux fois plus rapide) ou **Complète** (réponses libres, contexte entier : le profil de référence des expériences) |
-| Pêcheurs | de 1 à 24 : prénom, hameau, archétype, expérience, avoir, dette par saison, « cerveau » (IA auto/grand/petit, ou règles) |
-| Disposition | un aperçu de la vallée : on glisse un pêcheur d'un hameau à l'autre ; **Composition de base** rétablit les huit pêcheurs par défaut, tous en « IA auto » |
+| Pêcheurs | de 1 à 24 : prénom, village, archétype, **bateau** (barque, chaloupe, cotre), expérience, avoir, dette par saison, « cerveau » (IA auto/grand/petit, ou règles). **Générer la vallée** : on choisit le nombre de **villages** (1 à 8) et de pêcheurs, le moteur génère la vallée d'après la graine, que l'on retouche ensuite |
+| Disposition | un aperçu de la vallée, villages posés autour du lac : on glisse un pêcheur d'un village à l'autre ; **Composition de base** rétablit la vallée proposée par le moteur, tous en « IA auto » |
 | Vitesse | vitesse au départ (× 1/16 à × 16, ou maximale). En asynchrone avec une vraie IA, le menu propose la vitesse qui lui convient (× ¼ pour Ollama rapide, × 1/8 pour le 7B) et prévient si on choisit plus vite |
 
 **Limite du stock du lac.** Le réglage fixe la capacité `K` du modèle logistique : le stock part de `K` (`lake.initial_ratio = 1`) et
@@ -249,31 +250,79 @@ les données envoyées.
 
 ## Le monde
 
-Une **saison** dure 30 jours simulés :
+Une **saison** dure 30 jours simulés, et c'est une saison de l'année (printemps, été, automne, hiver, dans cet ordre : la partie
+commence au printemps) :
 
 | Moment | Ce qui se passe |
 |---|---|
-| J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %) et décide de sa prise |
+| avant J0 | chaque village choisit son **élu** ; l'ancien envoie la **patrouille du lac** si le conseil en a voté une |
+| J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %) et décide de sa **prise visée** ; ce qu'il rapporte vraiment dépend de la réussite du jour |
 | J20 | fermeture : une décision encore en cours est abandonnée et la sortie est perdue (`missed_window`, « sortie perdue ») |
-| J25 18:00 | veillée chez l'ancien (toute la vallée, par hameau, ou aucune) : 1 à 3 tours de parole (2 par défaut) ; une parole pas prête à la fermeture est une « réplique perdue » |
-| J29 | fin de veillée : une proposition soutenue par **au moins la moitié des pêcheurs présents** devient règle pour la saison suivante |
-| J29 21:36 | repeuplement logistique, bilan, promesses tenues ou trahies |
+| J25 18:00 | veillée chez l'ancien : le **conseil de la vallée** (l'ancien et l'élu de chaque village), des veillées par village, ou aucune ; 1 à 3 tours de parole à tour de rôle (synchrone) ou une parole de chacun, de son côté (asynchrone) ; une parole pas prête à la fermeture est une « réplique perdue » |
+| J29 | fin de veillée : une proposition soutenue par **au moins la moitié des présents au conseil** devient règle pour la saison suivante |
+| J29 21:36 | repeuplement logistique (selon la saison de l'année et les événements), bilan, promesses tenues ou trahies |
 
 Lac : capacité `12,5 t × nombre de pêcheurs` (même stock par tête quand on change d'échelle) ou limite choisie dans le menu,
 croissance logistique de taux `r` (1 par défaut, réglable dans le menu), rendement durable maximal `r·K/4` par saison, atteint quand on
-ramène le lac à la moitié de sa capacité. Économie : 100 écus la tonne, 150 écus de coût de la vie
-par saison, 120 écus de dette pour les nouveaux venus, une sortie rapporte entre 1 t et la capacité du lac divisée par deux fois le nombre de pêcheurs (6,25 t pour 100 t et 8 pêcheurs : à eux tous, la moitié du lac au plus), et jamais plus que la barque (10 t).
+ramène le lac à la moitié de sa capacité.
 
-Population (cycle de quatre archétypes de la fiche, répartis dans les quatre hameaux) :
+**Économie et bateaux.** 100 écus la tonne, 100 écus de coût de la vie par saison, plus l'entretien du bateau, et 120 écus de dette
+pour les nouveaux venus. Trois tailles de bateaux (`economy.boats`) :
+
+| bateau | prise maximale par saison | entretien par saison | total avec la vie |
+|---|---|---|---|
+| barque | 4 t | 20 écus | 120 écus |
+| chaloupe | 7 t | 50 écus | 150 écus |
+| cotre | 11 t | 110 écus | 210 écus |
+
+La prise d'un pêcheur ne dépasse ni la cale de son bateau, ni sa part de la moitié du lac, **proportionnelle à la cale** : à eux tous,
+ils ne peuvent prendre que la moitié du lac en une saison (6,25 t pour une chaloupe quand huit chaloupes se partagent 100 t). Une
+règle vaut par pêcheur, quelle que soit la taille de son bateau : le grand bateau coûte plus et tente plus. Le caractère infléchit le
+bateau (le nouveau venu endetté a emprunté pour une barque, la famille ancienne a le plus gros).
+
+**La pêche n'est pas toujours bonne.** La prise réelle est la **prise visée** × la **réussite du jour** × la saison de l'année et les
+événements × l'expérience du pêcheur (±0,5 % par année d'écart à 15 ans) × la difficulté d'un lac bas (sous 30 % de la capacité, le poisson est
+plus dur à prendre), sans dépasser la cale (événement `catch` : `requested`, `landed`, `yield`, `luck`, `day`). La réussite du jour est
+tirée pour chaque pêcheur et chaque saison (la même quel que soit l'ordre dans lequel les barques rentrent) autour de 1, d'écart-type
+`economy.luck` (0,25), et **se prolonge d'une saison à l'autre** (`economy.luck_streak` : un bon jour en annonce un autre). Un pêcheur
+raconte sa journée dans sa mémoire (« j'en visais 4 t : mauvaise journée »). La déclaration à l'ancien garde la même proportion de la
+prise réelle : qui déclare tout reste honnête, quelle que soit sa journée.
+
+**Saisons de l'année et événements** (`climate.py`, réglage `climate`). Chaque saison porte deux facteurs : ce que rapporte la pêche et
+la vitesse de repeuplement du lac.
+
+| saison | pêche | repeuplement |
+|---|---|---|
+| printemps | × 1,00 | × 1,3 |
+| été | × 1,15 | × 1,1 |
+| automne | × 1,00 | × 0,9 |
+| hiver | × 0,75 | × 0,7 |
+
+Dès la 2e saison, un événement survient avec la probabilité `climate.event_rate` (0,3) : **sécheresse** (2 saisons : repeuplement × 0,6 et le
+stock perd 10 % d'un coup), **tempête** (la pêche rend × 0,65, bien moins aux petites barques : × 0,4 pour une barque, × 0,85 pour un
+cotre), **banc de poissons** (× 1,35), **algues** (2 saisons : repeuplement × 0,5), **crue** (repeuplement × 1,25, pêche × 0,85) et **maladie des
+poissons** (le stock perd 20 %). Ils sont tirés d'un hasard à part (`world_event`, `season_start.conditions`) ; les agents savent la saison
+de l'année et les événements en cours. Moyennées sur l'année, les saisons ne changent pas le repeuplement (× 1,0).
+
+**Une vallée générée** (génération procédurale, `profiles.build_population`). Le moteur tire la vallée de ses paramètres et de la
+graine : `population.villages` (1 à 8), `population.fishers`, `population.boat_mix` (la part de
+barques, de chaloupes et de cotres) ; mêmes paramètres, même vallée. Les villages sont pris dans l'ordre de `profiles.VILLAGE_NAMES`
+(Ostrel, Bramois, Tilque, Hennad, puis Varenne, Corbel, Mirande, Sauvet, Lormes, Quéran, Brevelle, Dunac), les pêcheurs répartis à peu près
+également (jamais plus de villages que de pêcheurs), les archétypes en cycle, l'expérience, l'avoir et les bateaux tirés. Le lac a une zone par
+village (sa rive) et le large. En ligne de commande : `python -m filets run --agents 14 --villages 6`. Dans le menu, **Générer la vallée**
+envoie `generate_world` au moteur, qui répond par un catalogue dont seule la vallée change ; le joueur retouche ensuite chaque fiche.
+La carte de Godot pose les villages autour du lac (les quatre coins pour la vallée de base, puis les flancs).
+
+Population (cycle de quatre archétypes de la fiche, répartis dans les villages) :
 famille ancienne prudente, nouveau venu endetté, taiseux qui relève ses filets en cachette, beau
 parleur qui pêche peu ; plus **l'ancien**, arbitre sans pouvoir. Une part `rule_fraction` des
 pêcheurs (tirée au sort) suit des règles fixes (A6).
 
-Le menu de démarrage propose ces mêmes pêcheurs (mêmes prénoms, hameaux, archétypes, expérience et avoir que la composition
-par défaut du moteur), mais tous réglés sur « IA auto » : c'est au joueur de passer certains en « Règles ». Lancé en ligne de
+Le menu de démarrage propose la vallée générée par le moteur pour ses paramètres par défaut (mêmes prénoms, villages, archétypes,
+expérience, avoir et bateaux), mais tous réglés sur « IA auto » : c'est au joueur de passer certains en « Règles ». Lancé en ligne de
 commande (`run`), le moteur garde ses 25 % d'agents à règles. Le menu permet de modifier la composition :
 la liste choisie est transmise au moteur (`population.custom`, une fiche par
-pêcheur : prénom, hameau, archétype, expérience, avoir, dette, cerveau). Elle remplace alors la génération ;
+pêcheur : prénom, village, archétype, bateau, expérience, avoir, dette, cerveau). Elle remplace alors la génération ;
 le nombre de pêcheurs, la capacité du lac et la part d'agents à règles en sont déduits, et le tout est enregistré dans
 `runs/<id>/config.json` (la partie reste reproductible).
 
@@ -333,14 +382,15 @@ prise (champ `declaration`, aucun token de plus) ; un réflexe déclare la véri
 règle quand il pêche au-delà (sauf si l'un de ses mensonges vient d'éclater). `scenario.catches_visible` dit si les déclarations sont
 lues à toute la vallée ou au seul hameau (menu : « Les déclarations à l'ancien sont lues à toute la vallée »).
 
-**Un mensonge se découvre sur des indices, pas au hasard.** Le lac a cinq zones : la rive de chaque hameau, où ses pêcheurs vont
-d'ordinaire, et le large. Le soir de la veillée, les indices de la saison sont réunis (événements `clue`, réglages
+**Un mensonge se découvre sur des indices, pas au hasard.** Le lac a une zone par village (sa rive, où ses pêcheurs vont
+d'ordinaire) et le large. Le soir de la veillée, les indices de la saison sont réunis (événements `clue`, réglages
 `scenario.detection`) :
 
-* **le radar de la vallée** surveille une zone par saison : il repère les barques qui sortent et mesure leur charge (à ±10 %).
-  L'ancien le place **en secret** à la fin de chaque saison, là où il se méfie le plus (la rive du hameau qu'il croit le moins, ou le
-  large s'il y a des interdits), et une fois sur quatre ailleurs, pour que personne ne puisse compter dessus. Le joueur peut le
-  placer lui-même depuis la barre du bas (« Radar : … ») et le rendre à l'ancien (« l'ancien décide ») ;
+* **la patrouille du lac**, si le conseil en a voté une (voir plus bas) : elle visite `scenario.patrol.legs` zones par saison, l'une après l'autre, et
+  repère les barques qui sortent quand elle passe dans leur zone (80 %) ; elle mesure leur charge (à ±12 %). Chaque pêcheur sort un jour de la
+  fenêtre de pêche, tiré à l'avance (le même dans les deux modes) : une barque est vue si la patrouille était dans sa zone ce jour-là.
+  L'ancien décide de sa route (il réfléchit à ce qu'il sait des villages, des mensonges et des interdits ; un ancien à règles va là où il
+  se méfie le plus), et les pêcheurs savent qu'elle existe, pas où elle passera ;
 * **les voisins** qui pêchent dans la même zone voient une barque rentrer (40 %) et en estiment la charge (à ±30 %) ;
 * **la barque d'un interdit** est vue partant à l'aube par son hameau (30 %) ;
 * **le train de vie** : déclarer moins qu'il ne faut pour vivre, et pourtant vivre comme avant, se remarque (50 %) ;
@@ -349,7 +399,7 @@ d'ordinaire, et le large. Le soir de la veillée, les indices de la saison sont 
 
 Qui n'a rien à se reprocher dit devant tous ce qu'il a vu, sauf contre un ami (confiance de 0,8 et plus) ; **qui a triché se tait**
 (son indice reste à lui, dans son carnet). Dès l'ouverture de la veillée, l'ancien **relate ce que les indices établissent** : il
-pèse ceux qui ont été dits devant tous (radar 3, témoin 1, départ vu 1, train de vie 0,5, comptes 0,5 s'ils ne tombent pas juste).
+pèse ceux qui ont été dits devant tous (patrouille 3, témoin 1, départ vu 1, train de vie 0,5, comptes 0,5 s'ils ne tombent pas juste).
 Le mensonge est **établi** (`lie_discovered`) quand ce poids atteint 2 et que la charge estimée dépasse la déclaration de plus de
 25 % (et d'au moins 0,3 t) ; pour un interdit, toute sortie prouvée est une faute. La vallée retient l'estimation des indices, pas
 la vérité ; et comme seuls les indices comptent, l'ancien peut se tromper : le fil l'écrit `ACCUSÉ À TORT` (vu de vous seul). Il
@@ -381,7 +431,7 @@ confiance qui en résulte et la **réputation**, moyenne de la confiance des aut
 **La confiance oriente les réactions.** Les IA la lisent dans leur **carnet** (« Ta confiance envers les autres : Loïc faible,
 Théo forte ; les autres, moyenne », et leur propre réputation) et devant chaque parole de la veillée. Un témoin ne dénonce pas devant
 tous celui à qui il fait toute confiance (0,8 et plus) ; un agent à règles ne soutient pas la proposition de quelqu'un qu'il ne croit
-plus ; l'ancien place le radar là où il se méfie le plus.
+plus ; l'ancien envoie la patrouille là où il se méfie le plus.
 
 **Exclure de la pêche, ou réautoriser : la vallée vote.** À la veillée, un pêcheur peut proposer d'**interdire un autre de pêche**
 (champ `exclure`) ou de **laisser pêcher à nouveau un exclu** (`reautoriser`), selon sa confiance, ses intérêts et sa morale
@@ -399,11 +449,54 @@ Sur un lac bien rempli, le repère des anciens rappelle qu'au-dessus de la moiti
 pêcher ce surplus sans l'abîmer (la vallée votait 2 t chacun pour 6 t de surplus par pêcheur).
 
 Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), s'il est interdit, sa dernière prise et sa
-déclaration (en rouge si elle ment) et ses mensonges établis ; sur la carte, le radar balaie sa zone et un anneau rouge barré
-marque les interdits ; le fil écrit `MENSONGE` et `EN CACHETTE` (vus de vous seul), `INDICE` (ou `INDICE GARDÉ`), `COMPTES`,
+déclaration (en rouge si elle ment) et ses mensonges établis ; sur la carte, la patrouille navigue de zone en zone, un astre doré marque les élus des villages, un anneau rouge barré marque les
+interdits et les bateaux ont la taille de leur cale ; le fil écrit `MENSONGE` et `EN CACHETTE` (vus de vous seul), `INDICE` (ou `INDICE GARDÉ`), `COMPTES`,
 `MENSONGE ÉTABLI`, `PRIS EN CACHETTE`, `ACCUSÉ À TORT`, `CONFIANCE` (un jugement marqué, d'au moins 0,2), `EXCLUSION` et
-`RÉAUTORISATION` (une proposition), `VOTE`, `INTERDIT DE PÊCHE`, `RÉAUTORISÉ` et `RADAR` ; l'onglet *Agent* liste ses prises
+`RÉAUTORISATION` (une proposition), `VOTE`, `INTERDIT DE PÊCHE`, `RÉAUTORISÉ`, `ÉLU`, `CONSEIL`, `PATROUILLE` et `ÉVÉNEMENT` ; la pêche
+dit quand la journée n'a pas été ordinaire (« visait 4 t : mauvaise journée ») ; l'onglet *Agent* liste ses prises
 (« S2 5.5 t (déclaré 4.0) ») et qui se méfie de lui.
+
+## Le conseil de la vallée
+
+Au conseil de la vallée, **chaque village est représenté par un élu** (`scenario.council: delegates`, par défaut ; `all` rend la
+séance à tous les pêcheurs). Les villageois ordinaires n'y vont plus : seuls les élus et l'ancien parlent et votent. Une règle, une
+exclusion ou la patrouille passent avec au moins la moitié des élus présents (celui qu'une exclusion vise ne vote pas).
+
+**Chacun choisit son élu par sa propre réflexion**, jamais par un seuil du moteur. Avant chaque saison, chaque pêcheur d'un village vote
+pour celui des siens (lui-même compris) qu'il juge le plus apte à parler et à voter pour tous : une IA répond à un **bulletin** de quelques
+lignes (système 1 ; il y voit sa confiance envers chaque candidat, son expérience, ce qu'il en sait, sa situation) ; un agent à règles vote
+selon sa règle (celui des autres en qui il a le plus confiance, à égalité le plus expérimenté). Le moteur compte (`election` : `ballots`,
+`votes`) ; à égalité, la confiance moyenne, l'élu sortant, l'expérience. Un interdit de pêche ne peut pas être élu : un menteur démasqué ne
+garde pas le siège de son village.
+
+**Ceux qui n'y sont pas jugent quand même.** À la reprise suivante, chaque villageois absent reçoit de l'ancien les décisions du conseil
+et ce que la vallée sait de chaque pêcheur, et dit lui-même ce que cela change pour sa confiance (de −3 à +3, comme à la veillée) : une IA par
+un petit appel, un agent à règles selon son caractère. Un élu est présenté à son tour comme celui qui parle aussi pour ses voisins (leurs
+besoins moyens pour vivre figurent dans son contexte). Résultat sur les tokens : la veillée ne fait plus parler que 4 à 9 personnes, au lieu de tous.
+
+## La patrouille du lac
+
+Le radar est remplacé par une **patrouille qui se déplace sur le lac**. Elle n'existe que si le conseil la vote : un élu **propose de
+l'installer** (champ `patrouille: "installer"`) s'il juge qu'il faut démasquer des fraudes ; les élus votent (`sanction_proposal`,
+`sanction_vote`, `sanction_result` avec l'action `patrouille`) ; elle sort dès la saison suivante (`patrol`). Elle coûte à **chaque pêcheur**
+`scenario.patrol.cost` écus par saison (15), ce qui pèse sur le vote : le nouveau venu endetté rechigne, le taiseux n'en veut jamais, la
+famille ancienne et le beau parleur la veulent dès qu'un mensonge a été établi (`policies.PATROL_WANTS`, pour les agents à règles ; une IA
+réfléchit). Un élu peut aussi proposer de la **retirer** (`"retirer"`) quand elle ne sert plus ; elle sort encore la saison du vote.
+
+Chaque saison, l'ancien décide de sa **route** : `scenario.patrol.legs` zones (2), l'une après l'autre, étalées sur la fenêtre de pêche
+(`patrol_route`). Son IA réfléchit à ce qu'il sait de chaque village (sa confiance en ses pêcheurs, les mensonges établis depuis deux
+saisons) et du large (les interdits qui peuvent y sortir en cachette) ; sans réponse lisible, ou pour un ancien à règles, la route va
+là où il se méfie le plus, avec une étape sur quatre au hasard. `scenario.patrol.from_season` installe une patrouille d'emblée, sans vote
+(pour comparer des parties).
+
+## Synchrone et asynchrone : les dialogues
+
+* **Synchrone — dialogues dépendants.** À la veillée, on parle **à tour de rôle** (l'ancien ouvre, puis les élus, en commençant chaque
+  saison par un village différent) et chacun **entend tout ce qui a été dit avant lui** : l'horloge avance d'un tour à l'autre, et la
+  parole de chacun est visible du suivant (`utterance.heard`). On peut répondre, soutenir, contester.
+* **Asynchrone — dialogues indépendants.** Chacun s'exprime **une fois**, à son rythme, **sans rien entendre ni voir** de ce que les autres
+  disent ou déposent (`heard` vide, ni échange, ni propositions sur la table) ; puis tous votent sur tout ce qui a été proposé (bulletins
+  6 h avant la fin de la veillée). Le nombre de tours de parole ne compte qu'en synchrone.
 
 ## Moins de tokens, des agents plus cohérents
 
@@ -501,7 +594,7 @@ godot --headless --path godot -s res://tests/menu_test.gd -- --catalog=/chemin/c
 
 Pour FILETS, le *contexte commun* est une **norme de prélèvement partagée** :
 
-* `norm_agreement` : part de **tous** les pêcheurs qui ont soutenu la règle qui les concerne (hameau d'abord, vallée sinon) ;
+* `norm_agreement` : part de **tous** les pêcheurs qui ont soutenu la règle qui les concerne (village d'abord, vallée sinon) ; au conseil des élus, un pêcheur la soutient si l'élu de son village l'a soutenue (`norm_adopted.delegates`) ;
 * `norm_compliance` : part des pêcheurs soumis à une règle dont la vraie prise la respecte (à 0,05 t près, `scenario.quota_tolerance`) ;
 * `norm_index = accord × conformité` ∈ [0, 1].
 
@@ -533,12 +626,12 @@ Chaque événement porte `sim_time` (moment dans le monde) et `processed_at` (mo
 
 * **Synchrone** : à chaque pas, tous les agents observent le même instantané ; le temps simulé ne
   bouge pas pendant qu'ils réfléchissent ; les actions s'appliquent ensemble (rationnement au
-  prorata si la demande dépasse le stock). À la veillée, chaque tour est un pas : on n'entend que
-  les tours précédents.
+  prorata si la demande dépasse le stock). À la veillée, on parle à tour de rôle et chacun entend ceux
+  qui ont parlé avant lui (dialogues dépendants).
 * **Asynchrone** : le temps simulé suit le temps réel (`sim_hours_per_second`, 3 h/s par défaut).
   Chaque pêcheur a son propre rythme ; sa prise s'applique au lac *tel qu'il est quand il a fini
-  de réfléchir*. À la veillée, chacun parle dès qu'il est prêt et n'entend que ce qui a été dit
-  avant. Quand personne ne réfléchit, l'horloge accélère (`idle_speedup`) : nul n'est désavantagé.
+  de réfléchir*. À la veillée, chacun s'exprime dès qu'il est prêt, sans entendre les autres
+  (dialogues indépendants), puis tous votent. Quand personne ne réfléchit, l'horloge accélère (`idle_speedup`) : nul n'est désavantagé.
 
 `sim_hours_per_second` convertit la latence d'un modèle en durée dans le monde : c'est un
 paramètre du modèle de temps dont l'effet doit être mesuré. Aucun agent ne peut utiliser une

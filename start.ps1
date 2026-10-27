@@ -37,6 +37,7 @@
 .PARAMETER Auto       Lance une partie immédiatement, sans passer par le menu.
 .PARAMETER Mode       sync ou async : mode proposé par défaut dans le menu (ou utilisé avec -Auto).
 .PARAMETER Agents     Nombre de pêcheurs de la composition de base.
+.PARAMETER Villages   Nombre de villages de la composition de base (1 à 8) : la vallée est générée d'après eux, les pêcheurs et la graine.
 .PARAMETER Seasons    Nombre de saisons proposé par défaut.
 .PARAMETER Config     Configuration YAML de base (défaut : config/default.yaml).
 .PARAMETER GodotPath  Chemin de l'exécutable Godot (sinon : GODOT_PATH, ou le fichier godot.path, ou le PATH).
@@ -66,6 +67,7 @@ param(
     [ValidateSet('sync', 'async')][string]$Mode = 'sync',
     [string]$Config,
     [int]$Agents,
+    [int]$Villages,
     [int]$Seasons,
     [string]$GodotPath,
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$Extra
@@ -311,6 +313,7 @@ if ($Auto) {
     if ($Ollama -or $Colibri) { $engineArgs += @('--llm', $OllamaLlm) }
 }
 if ($PSBoundParameters.ContainsKey('Agents'))  { $engineArgs += @('--agents',  $Agents) }
+if ($PSBoundParameters.ContainsKey('Villages')) { $engineArgs += @('--villages', $Villages) }
 if ($PSBoundParameters.ContainsKey('Seasons')) { $engineArgs += @('--seasons', $Seasons) }
 if ($Extra) { $engineArgs += $Extra }
 

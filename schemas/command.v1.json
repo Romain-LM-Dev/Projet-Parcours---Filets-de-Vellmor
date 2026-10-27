@@ -7,14 +7,14 @@
         "set_communication",
         "set_visibility",
         "announcement",
-        "place_radar",
         "pause",
         "resume",
         "set_speed",
         "set_mode",
         "stop",
         "start_game",
-        "new_game"
+        "new_game",
+        "generate_world"
       ]
     },
     "value": {},

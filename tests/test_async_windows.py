@@ -54,7 +54,7 @@ def test_slow_models_lose_their_turn_and_the_season_does_not_wait_for_them(tmp_p
 
 def test_searching_memory_is_thinking_so_the_evening_does_not_rush_past(tmp_path, monkeypatch):
     """Avec la mémoire dans PostgreSQL, un agent cherche ses souvenirs (vecteurs, requête) avant d'appeler l'IA. Ce temps-là est
-    de la réflexion : le monde doit suivre le temps réel, pas sauter (×40) à la fin de la veillée. Avant, les 9 répliques de
+    de la réflexion : le monde doit suivre le temps réel, pas sauter (×40) à la fin de la veillée. Avant, les répliques de
     chaque veillée se perdaient ainsi, et personne ne pouvait s'en souvenir."""
     from filets.world import World
 
@@ -70,8 +70,10 @@ def test_searching_memory_is_thinking_so_the_evening_does_not_rush_past(tmp_path
     play(world)
     events = read_events(tmp_path, "recall")
     assert not [e for e in kinds(events, "incident") if e["payload"]["incident_type"] == "missed_window"]
-    assert len(kinds(events, "utterance")) == 2 * len(world.agents)               # tout le monde parle, aux deux tours
-    assert all(any(m.kind == "parole" for m in a.memory.items) for a in world.agents.values())   # et s'en souvient
+    council = world.council_members(1)               # l'ancien et un élu par village : eux seuls parlent, une fois (asynchrone)
+    assert len(council) < len(world.agents)
+    assert len(kinds(events, "utterance")) == len(council)
+    assert all(any(m.kind == "parole" for m in world.agents[aid].memory.items) for aid in council)   # et s'en souviennent
 
 
 def test_the_loss_is_dated_at_the_closing_of_the_window(tmp_path):
@@ -121,7 +123,7 @@ def test_agents_who_finished_their_rounds_are_not_blamed(tmp_path):
 
 def test_by_default_the_world_waits_for_slow_models_and_loses_nothing(tmp_path):
     """Une IA lente (0,5 à 2 s, soit des mois simulés à ce rythme) ne rate plus rien : la fermeture de la pêche et de la veillée
-    attend sa réponse, et chacun parle à chaque tour où il a une raison de le faire."""
+    attend sa réponse, et chaque membre du conseil s'y exprime."""
     world, bus, _ = make_world(tmp_path, "attend", latency_scale=0.5, seasons=1, time__mode="async", **FAST_WORLD)
     statuses = []
     bus.subscribe("status", statuses.append)
@@ -131,7 +133,7 @@ def test_by_default_the_world_waits_for_slow_models_and_loses_nothing(tmp_path):
     assert not [e for e in kinds(events, "llm_call") if e["payload"]["status"] == "cancelled"]
     assert len(kinds(events, "catch")) == len(world.fishers)                     # personne n'a raté sa sortie
     first_round = {e["payload"]["speaker"] for e in kinds(events, "utterance") if e["payload"]["round"] == 1}
-    assert first_round == set(world.agents)                                      # ni sa première réplique
+    assert first_round == set(world.council_members(1))                          # ni sa réplique
     T = world.cfg["time"]
     assert all(e["sim_time"] <= T["assembly_close_day"] + 1e-6 for e in kinds(events, "utterance"))
     assert any("le monde attend" in str(s.get("detail")) for s in statuses)      # le joueur sait pourquoi le temps s'arrête

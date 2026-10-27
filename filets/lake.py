@@ -22,9 +22,11 @@ class Lake:
         self.stock -= landed
         return landed
 
-    def regrow(self) -> float:
+    def regrow(self, rate_factor: float = 1.0) -> float:
+        """Repeuplement de la saison ; `rate_factor` : la saison de l'année et les événements (voir `climate.py`)."""
         before = self.stock
-        self.stock = min(self.capacity, self.stock + self.r * self.stock * (1 - self.stock / self.capacity))
+        r = self.r * rate_factor
+        self.stock = min(self.capacity, self.stock + r * self.stock * (1 - self.stock / self.capacity))
         return self.stock - before
 
     def shock(self, factor: float) -> float:

@@ -8,6 +8,7 @@ signal token_selected(index: int)
 signal token_moved(index: int, hamlet: String)
 
 var fishers: Array = []
+var hamlets: Array = WV.DEFAULT_HAMLETS         # les villages de la vallée, dans l'ordre de la carte
 var elder_on := true
 var elder_kind := "llm"
 var selected := -1
@@ -26,8 +27,10 @@ func _ready() -> void:
 	custom_minimum_size = Vector2(300, 250)
 
 
-func set_data(list: Array, elder: bool, elder_k: String, sel: int, large: int) -> void:
+func set_data(list: Array, elder: bool, elder_k: String, sel: int, large: int, villages: Array = []) -> void:
 	fishers = list
+	if not villages.is_empty():
+		hamlets = villages
 	elder_on = elder
 	elder_kind = elder_k
 	selected = sel
@@ -76,7 +79,7 @@ func token_positions() -> Array:
 			slot = k - 6
 			count = n - 6
 		var ang := -PI / 2.0 + TAU * float(slot) / float(maxi(count, 1)) + (0.5 if ring == 1.0 else 0.25)
-		out.append(_px(WV.HAMLET_POS[h]) + Vector2(cos(ang), sin(ang)) * base * ring)
+		out.append(_px(_pos()[h]) + Vector2(cos(ang), sin(ang)) * base * ring)
 	return out
 
 
@@ -92,11 +95,15 @@ func _pick(pos: Vector2) -> int:
 	return best
 
 
+func _pos() -> Dictionary:
+	return WV.layout(hamlets)
+
+
 func _nearest_hamlet(pos: Vector2) -> String:
 	var best := ""
 	var bd := INF
-	for h in WV.HAMLET_POS:
-		var d: float = _px(WV.HAMLET_POS[h]).distance_to(pos)
+	for h in _pos():
+		var d: float = _px(_pos()[h]).distance_to(pos)
 		if d < bd:
 			bd = d
 			best = str(h)
@@ -151,8 +158,8 @@ func _draw() -> void:
 	var counts := {}
 	for fi in fishers:
 		counts[str(fi["hamlet"])] = int(counts.get(str(fi["hamlet"]), 0)) + 1
-	for h in WV.HAMLET_POS:
-		var c := _px(WV.HAMLET_POS[h])
+	for h in _pos():
+		var c := _px(_pos()[h])
 		var target := _drag >= 0 and _drag_target == str(h)
 		_ellipse(c, Vector2(size.x * 0.115, size.y * 0.115), Color("#c4a978", 0.9) if not target else Color("#e2c889"))
 		if target:
@@ -161,7 +168,7 @@ func _draw() -> void:
 		var label := "%s · %d" % [str(h), n]
 		var w := f.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 14
 		var r := Rect2(c + Vector2(-w / 2.0, -size.y * 0.115 - 22), Vector2(w, 18))
-		Art.box(Color(0.08, 0.06, 0.04, 0.75), 6, Art.HAMLET.get(str(h), Color("#c4a978")), 2).draw(get_canvas_item(), r)
+		Art.box(Color(0.08, 0.06, 0.04, 0.75), 6, Art.hamlet_color(str(h)), 2).draw(get_canvas_item(), r)
 		draw_string(f, r.position + Vector2(7, 13), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#f3e3bd"))
 	# l'ancien
 	if elder_on:

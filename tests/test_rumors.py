@@ -39,10 +39,15 @@ class Recorder:
 
     def __init__(self, prise: float = 3.0, reject: tuple = (), propose_first: float | None = None,
                  recit: str | None = "Le lac a donné, mais la parole n'a pas tenu.", confiance: dict | None = None,
-                 sanction: str = "oui"):
+                 sanction: str = "oui", elect: dict | None = None, debrief: dict | None = None, route: list | None = None,
+                 speech: dict | None = None):
         self.recit = recit                        # récit de l'ancien ; None : une réponse sans récit
         self.confiance = confiance                # le jugement de confiance renvoyé dans chaque réplique (None : aucun)
         self.sanction = sanction                  # le vote sur chaque proposition d'exclure ou de réautoriser
+        self.elect = elect or {}                  # l'élection : prénom de l'électeur -> prénom du candidat (sinon le premier)
+        self.debrief = debrief or {}              # le jugement d'un villageois absent du conseil
+        self.route = route                        # la route de la patrouille que choisit l'ancien (None : aucune zone lisible)
+        self.speech = speech or {}                # champs ajoutés à chaque réplique (ex. {"patrouille": "installer"})
         self.requests: list[dict] = []
         self.propose_first, self.proposed = propose_first, False
         self.reject = reject                      # formats de réponse refusés par ce fournisseur (HTTP 400), ex. ("json_schema",)
@@ -69,6 +74,16 @@ class Recorder:
                     return
                 if '"prise"' in user:
                     content = json.dumps({"prise": prise, "justification": "Je reste raisonnable."})
+                elif "Pour qui votes-tu" in user:                       # élection de l'élu du village
+                    voter = re.match(r"Tu es (\S+)", body["messages"][0]["content"]).group(1)
+                    cands = re.findall(r"^- (F\d+) : (.*)$", user, re.M)
+                    want = outer.elect.get(voter)
+                    want = "toi-même" if want == voter else want                  # on se reconnaît à « toi-même »
+                    content = json.dumps({"vote": next((c for c, text in cands if want and text.startswith(want)), cands[0][0])})
+                elif "Tu n'étais pas au conseil" in user:               # le bilan d'un villageois absent du conseil
+                    content = json.dumps({"confiance": outer.debrief})
+                elif '{"zones"' in user:                                # la route de la patrouille
+                    content = json.dumps({"zones": outer.route} if outer.route else {"autre": "rien"})
                 elif '"vote"' in user:                                  # bulletin de vote : la première proposition de la liste
                     ids = re.findall(r"^- (P\d+) :", user, re.M)
                     content = json.dumps({"vote": ids[0] if ids else "aucune"})
@@ -84,6 +99,7 @@ class Recorder:
                               "proposition_quota": quota, "soutien": None, "promesse": 3, "accuse": None}
                     if outer.confiance is not None:
                         speech["confiance"] = outer.confiance
+                    speech.update(outer.speech)
                     content = json.dumps(speech)
                 out = json.dumps({"choices": [{"message": {"content": content}}],
                                   "usage": {"prompt_tokens": 100, "completion_tokens": 20}}).encode()

@@ -231,6 +231,53 @@ func _initialize() -> void:
 	check(is_equal_approx(final_cfg["lake"]["growth_rate"], 0.8) and final_cfg["stop_on_extinction"] == true,
 		"demande finale : repeuplement 0,8, arrêt si le lac est vide")
 
+	# --- les bateaux, le conseil, le climat et le hasard font partie de la demande
+	check(final_cfg["population"]["fishers"].all(func(f): return str(f.get("boat", "")) in ["barque", "chaloupe", "cotre"]),
+		"chaque fiche a son bateau")
+	check(final_cfg["council"] == "delegates" and final_cfg["climate"] == true and is_equal_approx(final_cfg["event_rate"], 0.3)
+		and is_equal_approx(final_cfg["luck"], 0.25), "par défaut : un élu par village, climat, 30 % d'événements, 25 % de hasard")
+	m._rows[0]["boat"].item_selected.emit(2)
+	check(m.fishers[0]["boat"] == "cotre", "le bateau se change dans la liste")
+	m.chk_climate.button_pressed = false
+	m.spin_luck.value = 0
+	m._select_meta(m.opt_council, "all")
+	var cfg_b: Dictionary = m.build_config()
+	check(cfg_b["climate"] == false and cfg_b["luck"] == 0.0 and cfg_b["council"] == "all"
+		and cfg_b["population"]["fishers"][0]["boat"] == "cotre", "le climat, le hasard et le conseil se règlent")
+	m.chk_climate.button_pressed = true
+	m.spin_luck.value = 25
+
+	# --- générer la vallée : le menu la demande au moteur, qui répond par un catalogue dont seule la vallée change
+	var asked := []
+	m.generate_requested.connect(func(p: Dictionary) -> void: asked.append(p))
+	m.spin_villages.value = 6
+	m.spin_fishers.value = 12
+	m._on_generate()
+	m._on_generate()                       # un second clic, en attendant, ne redemande rien
+	check(asked.size() == 1 and asked[0]["villages"] == 6 and asked[0]["fishers"] == 12 and asked[0]["seed"] == int(m.spin_seed.value),
+		"la demande de vallée porte les villages, les pêcheurs et la graine")
+	check(m.btn_generate.disabled, "le bouton attend la vallée")
+	var six: Array = cat["village_names"].slice(0, 6)
+	var pop: Array = []
+	for i in 12:
+		pop.append({"first_name": "P%d" % i, "hamlet": six[i % 6], "archetype": "taiseux", "experience": 10, "wealth": 300.0,
+			"debt_payment": 0.0, "kind": "llm", "tier": "auto", "boat": "barque"})
+	var cat2: Dictionary = cat.duplicate(true)
+	cat2["hamlets"] = six
+	cat2["base_population"] = pop
+	cat2["generation"] = {"id": asked[0]["id"], "villages": 6, "fishers": 12, "seed": asked[0]["seed"]}
+	var rounds_before: float = m.spin_rounds.value
+	m.set_catalog(cat2)
+	check(m.fishers.size() == 12 and m._rows.size() == 12, "la vallée générée remplace les pêcheurs")
+	var villages_seen := {}
+	for f in m.fishers:
+		villages_seen[f["hamlet"]] = true
+	check(villages_seen.size() == 6 and m.map.hamlets.size() == 6, "six villages sur la carte du menu")
+	check(m.spin_rounds.value == rounds_before and m.chk_climate.button_pressed and not m.btn_generate.disabled,
+		"les réglages ne sont pas effacés, le bouton est libéré")
+	var opts_h: OptionButton = m._rows[0]["hamlet"]
+	check(opts_h.item_count == 6, "chaque pêcheur peut aller dans l'un des six villages")
+
 	# --- état du moteur : le bouton Démarrer suit
 	m.set_engine("idle", true)
 	m.open(false)

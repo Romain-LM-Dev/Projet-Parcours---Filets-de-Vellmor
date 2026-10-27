@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import random
 
-from .profiles import ARCHETYPES, FIRST_NAMES, HAMLETS, ORDER, archetype_defaults, build_population, profile_to_spec
+from .profiles import (ARCHETYPES, BOAT_NAMES, DEFAULT_BOAT_MIX, FIRST_NAMES, ORDER, VILLAGE_NAMES, archetype_defaults,
+                       build_population, profile_to_spec)
 
 LIMITS = {
+    "villages": [1, 8],              # villages autour du lac (la génération de la vallée)
     "fishers": [1, 24],
     "seasons": [1, 50],
     "experience": [0, 60],
@@ -68,40 +70,72 @@ REFLECTIONS = [
 
 MODES = [
     {"id": "sync", "label": "Synchrone",
-     "detail": "Tous les pêcheurs observent le même instant, décident, puis agissent ensemble. "
-               "La lenteur d'une IA n'a aucun effet sur le temps du monde."},
+     "detail": "Tous les pêcheurs observent le même instant, décident, puis agissent ensemble. À la veillée, on parle à tour "
+               "de rôle et chacun entend ceux qui ont parlé avant lui : les dialogues sont dépendants. La lenteur d'une IA "
+               "n'a aucun effet sur le temps du monde."},
     {"id": "async", "label": "Asynchrone",
      "detail": "Chacun va à son rythme et le temps du monde suit le temps réel : un pêcheur qui réfléchit "
-               "longtemps agit plus tard, sur un lac qui a changé."},
+               "longtemps agit plus tard, sur un lac qui a changé. À la veillée, chacun s'exprime de son côté, sans entendre "
+               "les autres (un seul tour) : les dialogues sont indépendants, puis tous votent."},
 ]
 
 COMMUNICATIONS = [
-    {"id": "valley", "label": "Toute la vallée"},
-    {"id": "hamlet", "label": "Par hameau"},
+    {"id": "valley", "label": "Conseil de la vallée"},
+    {"id": "hamlet", "label": "Par village"},
     {"id": "none", "label": "Interdite"},
 ]
+
+COUNCILS = [
+    {"id": "delegates", "label": "Un élu par village",
+     "detail": "Chaque village choisit à chaque saison un élu, selon la confiance de ses pêcheurs. Seuls les élus (et l'ancien) "
+               "vont au conseil de la vallée ; les autres villageois en apprennent les décisions."},
+    {"id": "all", "label": "Tous les pêcheurs", "detail": "Tous les pêcheurs vont au conseil de la vallée."},
+]
+
+
+def boats_catalog(cfg: dict) -> list[dict]:
+    """Les tailles de bateaux, de la plus petite à la plus grande : capacité (t par saison) et entretien (écus par saison)."""
+    return [{"id": b, "label": b, **{k: v for k, v in cfg["economy"]["boats"][b].items()}} for b in BOAT_NAMES]
 
 
 def base_population(cfg: dict) -> list[dict]:
     """La composition de base du menu : les mêmes pêcheurs que la composition par défaut du moteur (mêmes graines, mêmes
-    tirages : prénoms, hameaux, archétypes, expérience, avoir), mais tous réglés sur « IA auto ». Le moteur lancé en
+    tirages : prénoms, villages, archétypes, expérience, avoir, bateau), mais tous réglés sur « IA auto ». Le moteur lancé en
     ligne de commande, lui, garde sa part d'agents à règles (`population.rule_fraction`, 25 % par défaut, A6) ; dans le
     menu, c'est au joueur de passer un pêcheur en « Règles »."""
     base_cfg = {**cfg, "population": {**cfg["population"], "custom": None, "elder": False}}
     rng = random.Random(int(cfg["run"]["seed"]))
-    specs = [profile_to_spec(p) for p in build_population(base_cfg, rng)]
+    profiles = build_population(base_cfg, rng)
+    specs = [profile_to_spec(p) for p in profiles]
     for spec in specs:
         spec["kind"], spec["tier"] = "llm", "auto"
     return specs
+
+
+def generate_world(cfg: dict, villages: int, fishers: int, seed: int) -> dict:
+    """La vallée que génèrent ces paramètres (génération procédurale, la même pour la même graine) : ses villages et ses pêcheurs.
+    Le menu l'affiche, le joueur la retouche, puis la lance."""
+    over = {"population": {**cfg["population"], "villages": villages, "fishers": fishers},
+            "run": {**cfg["run"], "seed": seed}}
+    specs = base_population({**cfg, **over})
+    return {"villages": villages, "fishers": fishers, "seed": seed, "hamlets": villages_of_specs(specs), "base_population": specs}
+
+
+def villages_of_specs(specs: list[dict]) -> list[str]:
+    return sorted({s["hamlet"] for s in specs}, key=VILLAGE_NAMES.index)
 
 
 def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
     """`llm` : moteur d'IA présélectionné dans le menu."""
     pop, scn = cfg["population"], cfg["scenario"]
     option = next((o for o in LLM_OPTIONS if o["id"] == llm), LLM_OPTIONS[0])
+    base = base_population(cfg)
     return {
         "version": 1,
-        "hamlets": list(HAMLETS),
+        "hamlets": villages_of_specs(base),             # les villages de la composition de base
+        "village_names": list(VILLAGE_NAMES),           # tous ceux que la génération peut poser autour du lac
+        "boats": boats_catalog(cfg),
+        "councils": COUNCILS,
         "first_names": list(FIRST_NAMES),
         "archetypes": [
             {"id": a, "label": ARCHETYPES[a]["label"], "summary": ARCHETYPES[a]["summary"],
@@ -109,10 +143,11 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
              **archetype_defaults(a)}
             for a in ORDER
         ],
-        "base_population": base_population(cfg),
+        "base_population": base,
         "defaults": {
             "mode": cfg["time"]["mode"], "seasons": int(cfg["run"]["seasons"]), "seed": int(cfg["run"]["seed"]),
             "communication": scn["communication"], "catches_visible": bool(scn["catches_visible"]),
+            "council": scn.get("council", "delegates"),
             "speed": 1.0, "llm": option["id"],
             "reflection": option["reflection"], "assembly_rounds": int(scn["assembly_rounds"]), "capacity": None,
             "stop_on_extinction": bool(cfg["run"].get("stop_on_extinction", True)),
@@ -120,7 +155,11 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
             "large_model_min_experience": int(pop["large_model_min_experience"]),
             "capacity_per_fisher": float(cfg["lake"]["capacity_per_fisher"]),
             "growth_rate": float(cfg["lake"]["growth_rate"]),
-            "boat_capacity": float(cfg["economy"]["boat_capacity"]),
+            "villages": len(villages_of_specs(base)), "fishers": len(base),
+            "climate": bool((cfg.get("climate") or {}).get("enabled", True)),
+            "event_rate": float((cfg.get("climate") or {}).get("event_rate", 0.3)),
+            "luck": float(cfg["economy"].get("luck", 0.0)),
+            "boat_mix": {**DEFAULT_BOAT_MIX, **(pop.get("boat_mix") or {})},
         },
         "limits": LIMITS,
         "speeds": SPEEDS,

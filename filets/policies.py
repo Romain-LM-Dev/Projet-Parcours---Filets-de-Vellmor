@@ -75,6 +75,28 @@ VOTE_EXCLUDE_BELOW = {"ancienne_famille": 0.35, "beau_parleur": 0.3, "nouveau_ve
 REAUTHORIZE_FROM = {"ancienne_famille": 0.5, "beau_parleur": 0.45, "nouveau_venu": 0.35, "taiseux": 0.3}
 
 
+# La patrouille du lac : combien de mensonges ou de sorties en cachette établis ces deux dernières saisons il faut à chaque caractère
+# (à règles) pour la vouloir. La famille ancienne et le beau parleur tiennent à la parole donnée ; le nouveau venu, endetté,
+# rechigne à payer ; le taiseux n'en veut jamais (il n'aime pas qu'on regarde dans sa barque).
+PATROL_WANTS = {"ancienne_famille": 1, "beau_parleur": 1, "nouveau_venu": 3}
+
+
+def patrol_vote(archetype: str, lies: int, action: str) -> bool:
+    """Le vote d'un agent à règles sur l'installation (`patrouille`) ou le retrait (`fin_patrouille`) de la patrouille du lac."""
+    wants = PATROL_WANTS.get(archetype)
+    if action == "patrouille":
+        return wants is not None and lies >= wants
+    return wants is None or lies < wants
+
+
+def elect_rule(others: dict[str, float], experience: dict[str, int], me: str) -> str:
+    """Le vote d'un agent à règles pour l'élu de son village : celui des autres en qui il a le plus confiance (à égalité, le plus
+    d'expérience) ; seul dans son village, lui-même."""
+    if not others:
+        return me
+    return max(others, key=lambda c: (others[c], experience.get(c, 0), c))
+
+
 def trust_rule(archetype: str, facts: dict) -> dict[str, int]:
     """Le jugement d'un agent à règles sur ce qu'il vient d'apprendre de chacun (`facts` : identifiant -> faits), en dixièmes de
     confiance, de −3 à +3. Un dépassement avoué coûte toujours moins qu'un mensonge établi."""
@@ -140,7 +162,12 @@ def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
     s = {**s, "stock_estimate": projected(s["stock_estimate"], s["capacity"], s["growth_rate"])}
     judged = trust_rule(archetype, s.get("facts") or {})      # ce qu'il pense de ce qu'il vient d'apprendre de chacun
     out = {"message": "", "destinataire": "tous", "proposition_quota": None, "soutien": None,
-           "promesse": None, "accuse": None, "confiance": judged, "exclure": None, "reautoriser": None}
+           "promesse": None, "accuse": None, "confiance": judged, "exclure": None, "reautoriser": None, "patrouille": None}
+    lies, wants = s.get("lies_recent", 0), PATROL_WANTS.get(archetype)
+    if archetype in ("ancienne_famille", "beau_parleur") and not s.get("has_patrol") and wants is not None and lies >= wants:
+        out["patrouille"] = "installer"
+    elif archetype in ("taiseux", "nouveau_venu") and s.get("has_patrol") and (wants is None or lies < wants):
+        out["patrouille"] = "retirer"
     leading = s.get("leading_proposal")  # (id, quota) ou None
     if leading and s.get("leading_trust", 1.0) < 0.3:
         leading = None                    # on ne soutient pas la proposition de quelqu'un qu'on ne croit plus

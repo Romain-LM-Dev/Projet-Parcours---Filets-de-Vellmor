@@ -25,7 +25,11 @@ def test_catalog_describes_the_new_options():
     assert [r["id"] for r in cat["reflections"]] == ["rapide", "adaptive", "complete"]
     d = cat["defaults"]
     assert d["reflection"] == "rapide" and d["assembly_rounds"] == 2 and d["capacity"] is None
-    assert d["capacity_per_fisher"] == 12.5 and d["boat_capacity"] == 10.0 and d["growth_rate"] == 1.0
+    assert d["capacity_per_fisher"] == 12.5 and d["growth_rate"] == 1.0
+    assert d["villages"] == 4 and d["fishers"] == 8 and d["council"] == "delegates" and d["climate"] and d["luck"] == 0.25
+    assert [b["id"] for b in cat["boats"]] == ["barque", "chaloupe", "cotre"]               # du plus petit au plus grand
+    assert [b["capacity"] for b in cat["boats"]] == sorted(b["capacity"] for b in cat["boats"])
+    assert cat["limits"]["villages"] == [1, 8] and cat["hamlets"] == cat["village_names"][:4]
     ids = [o["id"] for o in cat["llm_options"]]
     assert ids == ["scripted", "ollama_fast", "ollama_open", "ollama", "colibri", "groq"]
     assert all("config" not in o for o in cat["llm_options"])               # un détail d'implémentation, pas pour le menu

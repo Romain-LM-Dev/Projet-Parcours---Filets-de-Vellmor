@@ -18,6 +18,11 @@ def cfg_for(tmp_path, seasons=3, **over):
     cfg["time"]["fast"] = True
     cfg["run"]["seasons"] = seasons
     cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
+    # sans aléa par défaut : la prise est celle qu'on vise, la météo ne change rien (les tests du climat et de la réussite du
+    # jour les rétablissent : `economy__luck=0.25`, `climate__enabled=True`)
+    cfg["economy"]["luck"] = 0.0
+    cfg["climate"]["enabled"] = False
+    cfg["population"]["boat_mix"] = {"chaloupe": 1.0}        # des bateaux tous pareils (6,25 t pour huit pêcheurs sur 100 t)
     for k, v in over.items():
         sec, key = k.split("__")
         cfg[sec][key] = v

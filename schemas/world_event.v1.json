@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string"
+    },
+    "label": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "season": {
+      "type": "integer"
+    },
+    "until": {
+      "type": "integer"
+    },
+    "stock_factor": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "kind",
+    "label",
+    "text",
+    "season",
+    "until"
+  ],
+  "additionalProperties": false
+}

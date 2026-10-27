@@ -10,7 +10,9 @@
     "action": {
       "enum": [
         "exclure",
-        "reautoriser"
+        "reautoriser",
+        "patrouille",
+        "fin_patrouille"
       ]
     },
     "adopted": {

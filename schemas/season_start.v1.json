@@ -9,6 +9,9 @@
         "sync",
         "async"
       ]
+    },
+    "conditions": {
+      "type": "object"
     }
   },
   "required": [

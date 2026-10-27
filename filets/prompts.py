@@ -12,10 +12,10 @@ from __future__ import annotations
 from .lake import EXTINCT_BELOW
 
 WORLD = (
-    "La vallée de Vellmor est fermée. Son lac est la seule réserve de poisson. Quatre hameaux se le partagent : "
-    "Ostrel, Bramois, Tilque et Hennad. Personne ne possède le lac et aucune loi n'encadre la pêche ; "
-    "seuls comptent les accords que les pêcheurs passent entre eux, le soir, chez l'ancien. "
-    "Le poisson se vend au marché de chaque hameau. Le lac se repeuple seul entre deux saisons, "
+    "La vallée de Vellmor est fermée. Son lac est la seule réserve de poisson. {villages} se le partagent. "
+    "Personne ne possède le lac et aucune loi n'encadre la pêche ; "
+    "seuls comptent les accords que les villages passent entre eux, le soir, chez l'ancien. "
+    "Le poisson se vend au marché de chaque village. Le lac se repeuple seul entre deux saisons, "
     "à condition qu'on lui en laisse le temps : les anciens disent qu'il se refait le mieux quand on le laisse autour de "
     "la moitié de sa capacité (environ {half:.0f} tonnes), qu'un lac très bas ne se refait presque plus, et qu'un lac "
     "vide ne se refait jamais. Quand il est plein, il contient environ {capacity:.0f} tonnes."
@@ -49,8 +49,28 @@ REFLEX_SCHEMA = {"type": "object", "properties": {"prise": {"type": "number"}}, 
                  "additionalProperties": False}
 
 
+def villages_text(villages) -> str:
+    """« Quatre villages (Ostrel, Bramois, Tilque et Hennad) » : les villages de la vallée, pour le décor des prompts."""
+    names = list(villages or ())
+    if not names:
+        return "Plusieurs villages"
+    count = ["Zéro", "Un", "Deux", "Trois", "Quatre", "Cinq", "Six", "Sept", "Huit", "Neuf", "Dix", "Onze", "Douze"]
+    head = f"{count[len(names)] if len(names) < len(count) else len(names)} village{'s' if len(names) > 1 else ''}"
+    return head + (f" ({', '.join(names[:-1])} et {names[-1]})" if len(names) > 1 else f" ({names[0]})")
+
+
+def day_line(obs: dict) -> str:
+    """La saison de l'année et les événements en cours (vide : aucun climat dans cette partie)."""
+    return obs.get("conditions") or ""
+
+
 def boat_line(obs: dict) -> str:
     lo, hi = obs.get("min_catch", 0.0), round(obs["boat_capacity"], 2)
+    if obs.get("boat"):
+        # la prise visée n'est pas la prise réelle : la réussite du jour, la saison de l'année et les événements la font varier
+        aim = f"de {lo:g} à {hi:g} t" if lo else f"jusqu'à {hi:g} t"
+        return (f"Ton bateau est une {obs['boat']} : tu peux viser {aim} par saison ; ce que tu prends vraiment dépend de la "
+                "réussite du jour, de la saison de l'année et des événements.")
     if lo:
         return f"Une sortie rapporte au moins {lo:g} t (on ne revient jamais bredouille) et au plus {hi:g} t par saison."
     return f"Une sortie rapporte au plus {hi:g} t par saison."
@@ -67,20 +87,23 @@ def reflex_messages(p, obs: dict) -> list[dict]:
     cap, est = obs["capacity"], obs["stock_estimate"]
     lines = [f"Saison {obs['season']}. Le lac est à {100 * est / cap:.0f} % ({lake_level(est, cap, obs.get('collapse_ratio', 0.05))})"
              f", il n'a pas baissé. {boat_line(obs)}"]
+    if day_line(obs):
+        lines.append(day_line(obs))
     if obs.get("pinned"):
         lines.append("Tes engagements : " + " ".join(obs["pinned"]))
     if obs.get("norms"):
         lines.append("Règles en vigueur : " + " ".join(obs["norms"]))
     lines.append(f"Tes finances : {obs['wealth']:.0f} écus ; dépenses de la saison : {obs['upkeep'] + obs['debt_payment']:.0f} écus.")
     lines.append(f"Combien de tonnes pêches-tu ? Réponds en JSON : {{\"prise\": <tonnes, {catch_range(obs)}>}}")
-    who = f"Tu es {p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
     return [{"role": "system", "content": who}, {"role": "user", "content": "\n".join(lines)}]
 
 
-def persona(p, capacity: float, brief: bool = False) -> str:
-    who = (f"Tu es {p.name}, {p.archetype_label}, du hameau de {p.hamlet}. "
+def persona(p, capacity: float, brief: bool = False, villages=()) -> str:
+    who = (f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. "
            f"{p.experience} an{'s' if p.experience > 1 else ''} de pêche sur le lac. {p.traits} Ta façon de parler : {p.voice}.")
-    return f"{WORLD.format(capacity=capacity, half=capacity / 2)}\n\n{who}\n\n{STYLE}{BRIEF_STYLE if brief else ''}"
+    world = WORLD.format(capacity=capacity, half=capacity / 2, villages=villages_text(villages))
+    return f"{world}\n\n{who}\n\n{STYLE}{BRIEF_STYLE if brief else ''}"
 
 
 def _bullets(items: list[str], empty: str = "rien") -> str:
@@ -176,7 +199,12 @@ def surplus_line(obs: dict) -> str:
     # sans cette phrase, sur un lac plein, la vallée votait 2 t chacun pour 6 t de surplus par pêcheur : du poisson perdu
     full = (" Bien rempli, le lac ne se repeuple presque plus : ce surplus, on peut le pêcher sans l'abîmer."
             if obs["stock_estimate"] >= 0.75 * cap else "")
-    return (f"Repère des anciens : il y a {surplus:.0f} tonnes au-dessus de la moitié du lac ({half:.0f} t){each}.{full} "
+    # ce que le lac rend, d'une saison à l'autre : sans ce chiffre, « laisse le lac à moitié » ne laissait à pêcher que le surplus
+    # (1 t chacun à 60 %) et les règles votées étaient plus dures que ce que le lac supporte
+    r = obs.get("growth")
+    best = f" À la moitié, il se repeuple le plus vite : environ {r * cap / 4:.0f} t par saison" + \
+        (f", soit {r * cap / 4 / n:.1f} t par pêcheur" if n else "") + "." if r else ""
+    return (f"Repère des anciens : il y a {surplus:.0f} tonnes au-dessus de la moitié du lac ({half:.0f} t){each}.{full}{best} "
             "Ce qu'on prend sous la moitié, le lac ne le rend pas vite.\n")
 
 
@@ -234,7 +262,7 @@ def carnet_block(obs: dict) -> str:
 
 
 def clues_block(obs: dict) -> str:
-    """Les indices que l'agent connaît (radar, barques vues rentrer ou partir, train de vie, comptes du lac) et les interdits
+    """Les indices que l'agent connaît (patrouille, barques vues rentrer ou partir, train de vie, comptes du lac) et les interdits
     de pêche : de quoi soupçonner quelqu'un, ou s'inquiéter pour soi. Vide (aucun token) s'il n'y en a pas."""
     lines = list(obs.get("clues") or [])
     if obs.get("banned_others"):
@@ -260,12 +288,15 @@ def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dic
         if fisher:
             props["exclure"] = {"type": ["string", "null"], "maxLength": 8}
             props["reautoriser"] = {"type": ["string", "null"], "maxLength": 8}
+            props["patrouille"] = {"type": ["string", "null"], "maxLength": 10}
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
 def context_block(obs: dict, brief: bool = False) -> str:
     parts = [f"Nous sommes le {obs['label']} (saison {obs['season']})."]
     parts.append(lake_block(obs))
+    if day_line(obs):
+        parts.append(day_line(obs))
     if obs.get("rumors"):
         # Les rumeurs sont dites à tout le monde : elles figurent dans chaque décision, sans dépendre de ce que la
         # mémoire retrouve (une rumeur perdue parmi des dizaines de souvenirs n'aurait aucun effet).
@@ -303,7 +334,8 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         ask = (
             "C'est le moment de décider. La vallée a voté ton exclusion : tant qu'elle ne vote pas de te laisser pêcher à "
             "nouveau, tu n'as pas le droit de sortir. Tu peux rester à quai (0 t), ou pêcher en cachette, loin de ta rive ; mais "
-            "le radar de la vallée surveille une partie du lac (on ne sait pas laquelle) et un voisin peut voir ta barque partir. "
+            "un voisin peut voir ta barque partir" + (", et la patrouille du lac peut te croiser (on ne sait pas où elle passera)"
+                                                      if obs.get("patrol") else "") + ". "
             "Pris, tu perdrais encore la confiance des autres ; à quai, tu peux espérer la regagner.\n"
             + lake_reminder(obs) + rumor
             + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
@@ -317,14 +349,14 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
             + rule_reminder(obs)
             + rumor
             + "En rentrant, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ce chiffre. Tu peux mentir, mais "
-              "les voisins qui pêchent du même côté voient les barques rentrer et le radar de la vallée mesure celles d'une "
-              "partie du lac (on ne sait pas laquelle) : un dépassement avoué se pardonne plus facilement qu'un mensonge "
-              "découvert.\n"
+              "les voisins qui pêchent du même côté voient les barques rentrer"
+            + (" et la patrouille du lac mesure celles qu'elle croise (on ne sait pas où elle passera)" if obs.get("patrol") else "")
+            + " : un dépassement avoué se pardonne plus facilement qu'un mensonge découvert.\n"
             + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
               f"\"prise\": <tonnes, {catch_range(obs)}>, "
               "\"declaration\": <tonnes que tu déclares à l'ancien : ta prise, ou moins si tu la caches>}"
         )
-    return [{"role": "system", "content": persona(p, capacity, brief)},
+    return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()))},
             {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
 
 
@@ -340,12 +372,15 @@ def veillee_block(obs: dict) -> str:
                      f"{lake_level(est, cap, obs.get('collapse_ratio', 0.05))})" + (f" ; {trend}." if trend else "."))
     else:
         parts.append(f"Le lac, tel que tu le vois : environ {est:.0f} t.")
+    if day_line(obs):
+        parts.append(day_line(obs))
     if obs.get("rumors"):
         parts.append("Rumeurs qui courent (vraies ou non, tout le monde les a entendues) : "
                      + " ; ".join(f"« {r} »" for r in obs["rumors"]))
     if obs.get("role") != "ancien":
-        parts.append(f"Tes finances : {obs['wealth']:.0f} écus ; il t'en faut {obs['upkeep'] + obs['debt_payment']:.0f} "
-                     "par saison.")
+        need = obs["upkeep"] + obs["debt_payment"]
+        parts.append(f"Tes finances : {obs['wealth']:.0f} écus ; il t'en faut {need:.0f} par saison"
+                     + (f", soit environ {need / obs['price']:.1f} t de poisson." if obs.get("price") else "."))
     parts.append("Règles en vigueur : " + ("; ".join(obs["norms"]) + "." if obs["norms"] else "aucune règle adoptée."))
     parts.append("Prises déclarées à l'ancien :\n" + _bullets(obs["known_catches"][-3:], "aucune déclaration connue"))
     if obs.get("promises"):
@@ -378,28 +413,47 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
                   f"{obs['season']} : prises, indices, paroles) change ta confiance, selon ta morale et tes intérêts (-3 : tu "
                   "ne le crois plus du tout, +3 : il a gagné ta confiance) ; les saisons d'avant comptent déjà dans ta "
                   "confiance ; {} si rien ne change")
+    # ce qu'on peut proposer dépend de ce qui existe : on ne réautorise que s'il y a des interdits, on ne retire qu'une patrouille
+    # qui sort (un petit modèle parlait de « réautoriser » quand personne n'était interdit)
+    banned = bool(obs.get("banned_others") or obs.get("banned"))
+    patrol = bool(obs.get("patrol"))
     if fisher:
         fields.append("\"exclure\": \"<identifiant d'un pêcheur que tu proposes d'interdire de pêche>\" ou null")
-        fields.append("\"reautoriser\": \"<identifiant d'un pêcheur interdit que tu proposes de laisser pêcher à nouveau>\" "
-                      "ou null")
+        fields.append("\"reautoriser\": \"<identifiant d'un pêcheur interdit que tu proposes de laisser pêcher à nouveau>\" ou null"
+                      if banned else "\"reautoriser\": null (personne n'est interdit de pêche)")
+        fields.append("\"patrouille\": \"retirer\" (tu proposes au conseil de supprimer la patrouille du lac) ou null" if patrol
+                      else "\"patrouille\": \"installer\" (tu proposes au conseil de voter une patrouille du lac) ou null")
     rumor_hint = ("Une rumeur court : tu peux la relayer, la démentir, t'en défendre si elle te vise, ou accuser quelqu'un. "
                   if obs.get("rumors") else "")
     if obs.get("clues"):
         rumor_hint += "Les indices peuvent te faire soupçonner quelqu'un (ou te viser) : à toi de juger qui croire. "
-    sanctions = ("Propositions d'exclure ou de réautoriser sur la table :\n" + _bullets(obs["sanctions"]) + "\n\n"
+    sanctions = ("Propositions d'exclure, de réautoriser ou de patrouille sur la table :\n" + _bullets(obs["sanctions"]) + "\n\n"
                  if obs.get("sanctions") else "")
+    who_line = "".join(f"{x}\n" for x in (obs.get("delegate"), obs.get("patrol_line")) if x)
+    if obs.get("independent"):
+        # asynchrone : chacun s'exprime de son côté ; il n'entend rien, ne voit rien de ce que les autres déposent avant le vote
+        room = ("Chacun s'exprime ce soir de son côté, sans entendre les autres : tu ne sais pas ce qu'ils diront. Tous voteront "
+                "ensuite sur tout ce qui aura été proposé.\n\n")
+        acts = ("À toi de parler. Tu peux proposer une règle, promettre, accuser"
+                + (", proposer d'interdire un pêcheur de pêche" + (" (ou d'en réautoriser un)" if banned else "") + ", "
+                   + ("de retirer la patrouille du lac" if patrol else "d'installer une patrouille du lac") if fisher else ""))
+    else:
+        room = (f"Ce qui a déjà été dit ce soir :\n{transcript}\n\nPropositions de règle sur la table :\n{proposals}\n\n"
+                f"{sanctions}")
+        acts = ("À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser"
+                + (", proposer d'interdire un pêcheur de pêche" + (" (ou d'en réautoriser un)" if banned else "") + ", "
+                   + ("de retirer la patrouille du lac" if patrol else "d'installer une patrouille du lac") if fisher else ""))
+    turn = "" if obs.get("independent") else f", tour de parole {obs['round']}"
     ask = (
-        f"Veillée chez l'ancien ({obs['scope_label']}), tour de parole {obs['round']}. Présents : {people}.\n\n"
-        f"Ce qui a déjà été dit ce soir :\n{transcript}\n\nPropositions de règle sur la table :\n{proposals}\n\n{sanctions}"
-        "À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser"
-        + (", proposer d'interdire un pêcheur de pêche (ou d'en réautoriser un)" if fisher else "")
+        f"Veillée chez l'ancien ({obs['scope_label']}){turn}. Présents : {people}.\n\n"
+        f"{room}{who_line}{acts}"
         + f", ou simplement donner ton avis. {rumor_hint}Rien ne t'oblige à tenir parole.\n"
         + lake_reminder(obs)
         + "Réponds en JSON : {" + ", ".join(fields) + "}"
     )
     # la veillée a son propre contexte, plus court ; en réflexion complète (profil de référence), le contexte reste entier
     ctx = veillee_block(obs) if brief else context_block(obs, brief)
-    return [{"role": "system", "content": persona(p, capacity, brief)},
+    return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()))},
             {"role": "user", "content": ctx + "\n\n" + ask}]
 
 
@@ -412,7 +466,7 @@ def ballot_schema(ids: list[str]) -> dict:
 
 
 def ballot_messages(p, table: list[str], est: float, capacity: float, collapse_ratio: float = 0.05) -> list[dict]:
-    who = f"Tu es {p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
     body = (f"La veillée touche à sa fin. Le lac est à {100 * est / capacity:.0f} % ({lake_level(est, capacity, collapse_ratio)}).\n"
             "Propositions de règle sur la table :\n" + "\n".join(table) +
             "\nPour laquelle votes-tu ? Réponds en JSON : {\"vote\": \"<identifiant d'une proposition, ou aucune>\"}")
@@ -429,7 +483,7 @@ NARRATION_MAX_TOKENS = 260
 NARRATION_TEMPERATURE = 0.3      # un récit fidèle plutôt qu'inventif : à 0,7, un petit modèle enjolive (« le lac à son apogée »)
 
 
-def narration_messages(p, facts: list[str], capacity: float) -> list[dict]:
+def narration_messages(p, facts: list[str], capacity: float, villages=()) -> list[dict]:
     """Le récit de la saison par l'ancien, pour le joueur : quelques phrases avec sa voix, à partir des seuls faits relevés
     dans le journal de la partie (il n'invente rien, il raconte)."""
     ask = ("La saison vient de finir. Voici ce qui s'est passé, tel qu'on l'a vu au marché et à la veillée :\n"
@@ -440,7 +494,7 @@ def narration_messages(p, facts: list[str], capacity: float) -> list[dict]:
              "règle, dis si c'est la première, une règle reconduite, plus stricte ou assouplie, comme la liste le dit. "
              "Des phrases simples et complètes, en bon français. "
              "Réponds en JSON : {\"recit\": \"<ton récit>\"}")
-    return [{"role": "system", "content": persona(p, capacity, True)}, {"role": "user", "content": ask}]
+    return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": ask}]
 
 
 def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:
@@ -472,7 +526,7 @@ def sanction_schema(ids: list[str]) -> dict:
 
 
 def sanction_messages(p, items: dict[str, str], situation: str) -> list[dict]:
-    who = f"Tu es {p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
     body = ("La veillée touche à sa fin. La vallée vote sur ces propositions ; tu votes selon ta confiance, ta morale et tes "
             f"intérêts. {situation}\n" + "\n".join(f"- {i} : {t}" for i, t in items.items())
             + "\nRéponds en JSON : {" + ", ".join(f"\"{i}\": \"oui\" ou \"non\"" for i in items) + "}")
@@ -481,16 +535,79 @@ def sanction_messages(p, items: dict[str, str], situation: str) -> list[dict]:
 
 def sanction_system_one(p, items: dict[str, str], situation: str) -> dict:
     """Le même vote en questions typées : une question oui/non par proposition (la probabilité du oui)."""
-    state = f"{p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits}\n{situation}"
+    state = f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n{situation}"
     return {"state": state, "questions": {i: {"type": "noul", "instructions": f"Ce pêcheur vote-t-il pour : {t}"}
                                           for i, t in list(items.items())[:25]}}
 
 
 def ballot_system_one(p, proposals: dict[str, str], est: float, capacity: float, collapse_ratio: float = 0.05) -> dict:
     """Le bulletin de vote en question typée : `proposals` = identifiant → description (« 1.5 t par pêcheur, proposée par… »)."""
-    state = (f"{p.name}, {p.archetype_label}, du hameau de {p.hamlet}. {p.traits}\n"
+    state = (f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n"
              f"La veillée touche à sa fin. Le lac est à {100 * est / capacity:.0f} % ({lake_level(est, capacity, collapse_ratio)}).")
     criteria = {**dict(list(proposals.items())[:25]), "aucune": "aucune de ces propositions"}   # 26 options au plus
     return {"state": state,
             "questions": {"vote": {"type": "choice", "criteria": criteria,
                                    "instructions": "Pour quelle proposition de règle ce pêcheur vote-t-il ?"}}}
+
+
+# L'élection de l'élu d'un village : chaque pêcheur vote pour celui qui, selon lui, parlera le mieux au conseil pour le village.
+ELECTION_MAX_TOKENS = 10
+
+
+def election_schema(ids: list[str]) -> dict:
+    return {"type": "object", "properties": {"vote": {"enum": list(ids)}}, "required": ["vote"], "additionalProperties": False}
+
+
+def election_messages(p, items: dict[str, str], situation: str) -> list[dict]:
+    who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
+    body = ("Ton village choisit celui qui siégera pour lui au conseil de la vallée, chez l'ancien : il y parlera et y votera au "
+            "nom de tous les pêcheurs du village, toi compris, et ceux-ci subiront ses décisions. Tu votes pour celui que tu "
+            f"juges le plus apte à défendre tes intérêts et ceux du village, selon ta confiance et ta morale. {situation}\n"
+            + "\n".join(f"- {i} : {t}" for i, t in items.items())
+            + "\nPour qui votes-tu ? Réponds en JSON : {\"vote\": \"<identifiant>\"}")
+    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
+
+
+def election_system_one(p, items: dict[str, str], situation: str) -> dict:
+    """La même élection en question typée : un choix parmi les pêcheurs du village."""
+    state = f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n{situation}"
+    return {"state": state, "questions": {"vote": {"type": "choice", "criteria": dict(list(items.items())[:26]),
+                                                   "instructions": "Qui ce pêcheur choisit-il pour siéger au conseil de la "
+                                                                   "vallée au nom de son village ?"}}}
+
+
+# Le bilan d'un villageois qui n'était pas au conseil : ce que l'ancien lui en rapporte, et ce qu'il en pense de chacun.
+DEBRIEF_MAX_TOKENS = 70
+DEBRIEF_SCHEMA = {"type": "object", "properties": {"confiance": {
+    "type": "object", "additionalProperties": {"type": "integer", "minimum": -3, "maximum": 3}}},
+    "required": ["confiance"], "additionalProperties": False}
+
+
+def debrief_messages(p, lines: list[str], trust: str, situation: str) -> list[dict]:
+    who = (f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.experience} ans de pêche sur le lac. {p.traits} "
+           "Réponds uniquement par un objet JSON.")
+    body = ("Tu n'étais pas au conseil de la vallée, chez l'ancien : ton élu y parlait pour ton village. Voici ce que l'ancien "
+            f"t'en rapporte, et ce que tu sais des autres pêcheurs :\n{_bullets(lines, 'rien de particulier')}\n{trust}\n"
+            f"{situation}\nCe que tu apprends change-t-il ta confiance envers l'un d'eux, selon ta morale et tes intérêts ? "
+            "Réponds en JSON : {\"confiance\": {\"<identifiant>\": <de -3 à +3>}} (-3 : tu ne le crois plus du tout, +3 : il a "
+            "gagné ta confiance ; {} si rien ne change).")
+    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
+
+
+# La route de la patrouille du lac, décidée par l'ancien au début de la saison.
+ROUTE_MAX_TOKENS = 50
+
+
+def route_schema(zones: list[str], legs: int) -> dict:
+    return {"type": "object", "properties": {"zones": {"type": "array", "items": {"enum": list(zones)}, "minItems": 1,
+                                                       "maxItems": legs}},
+            "required": ["zones"], "additionalProperties": False}
+
+
+def route_messages(p, capacity: float, villages, lines: list[str], legs: int) -> list[dict]:
+    body = ("La patrouille du lac, que le conseil a votée, prend la mer cette saison. Elle visitera "
+            f"{legs} zone{'s' if legs > 1 else ''} du lac, l'une après l'autre, et mesurera les barques qu'elle croise ; "
+            f"personne ne saura où elle passera. Voici ce que tu sais de chaque zone :\n{_bullets(lines)}\n"
+            f"Où l'envoies-tu, et dans quel ordre ? Réponds en JSON : {{\"zones\": [\"<zone>\", ...]}} "
+            f"({legs} zone{'s différentes' if legs > 1 else ''} au plus).")
+    return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": body}]

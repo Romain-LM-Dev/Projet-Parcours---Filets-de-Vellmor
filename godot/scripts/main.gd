@@ -39,7 +39,10 @@ var rules_view: RichTextLabel
 var tabs: TabContainer
 var comm_opt: OptionButton
 var vis_check: CheckButton
-var radar_opt: OptionButton     # où placer le radar de la vallée (ou laisser l'ancien décider)
+var legend: Control
+var lbl_patrol: Label           # la patrouille du lac : aucune, ou installée (et sa route de la saison)
+var patrol_installed := false
+var reps := {}                  # village -> pêcheur élu au conseil de la vallée
 var rumor_edit: LineEdit
 
 # état reconstruit
@@ -487,7 +490,7 @@ func _build_ui() -> void:
 	lc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	bottom.add_child(lc)
 	comm_opt = OptionButton.new()
-	for item in [["toute la vallée", "valley"], ["par hameau", "hamlet"], ["interdite", "none"]]:
+	for item in [["conseil de la vallée", "valley"], ["par village", "hamlet"], ["interdite", "none"]]:
 		comm_opt.add_item(item[0])
 		comm_opt.set_item_metadata(comm_opt.item_count - 1, item[1])
 	comm_opt.item_selected.connect(func(i: int) -> void:
@@ -499,14 +502,10 @@ func _build_ui() -> void:
 	vis_check.button_pressed = true
 	vis_check.toggled.connect(func(on: bool) -> void: _send({"type": "set_visibility", "value": on}))
 	bottom.add_child(vis_check)
-	radar_opt = OptionButton.new()
-	radar_opt.tooltip_text = "Le radar de la vallée surveille une zone du lac : il repère les barques qui sortent et mesure leur charge. L'ancien le place en secret là où il se méfie ; choisissez une zone pour le placer vous-même."
-	for item in [["Radar : l'ancien décide", "auto"], ["Radar : rive d'Ostrel", "Ostrel"], ["Radar : rive de Bramois", "Bramois"],
-			["Radar : rive de Tilque", "Tilque"], ["Radar : rive d'Hennad", "Hennad"], ["Radar : au large", "large"]]:
-		radar_opt.add_item(item[0])
-		radar_opt.set_item_metadata(radar_opt.item_count - 1, item[1])
-	radar_opt.item_selected.connect(func(i: int) -> void: _send({"type": "place_radar", "value": radar_opt.get_item_metadata(i)}))
-	bottom.add_child(radar_opt)
+	lbl_patrol = _label("Patrouille : aucune", 13, "ui", Art.MUTED)
+	lbl_patrol.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	lbl_patrol.tooltip_text = "Le conseil de la vallée peut voter une patrouille du lac, aux frais de chaque pêcheur : elle visite quelques zones par saison et mesure les barques qu'elle croise. L'ancien l'envoie là où il se méfie ; les pêcheurs ne savent pas où elle passera."
+	bottom.add_child(lbl_patrol)
 	rumor_edit = LineEdit.new()
 	rumor_edit.placeholder_text = "Faire courir une rumeur dans la vallée…"
 	rumor_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -516,12 +515,14 @@ func _build_ui() -> void:
 	rumor_btn.text = "Diffuser"
 	rumor_btn.pressed.connect(_rumor)
 	bottom.add_child(rumor_btn)
-	bar_v.add_child(Legend.new())
+	legend = Legend.new()
+	bar_v.add_child(legend)
 
 	# --- menu de démarrage, par-dessus tout le reste
 	menu = StartMenu.new()
 	add_child(menu)
 	menu.start_requested.connect(_on_menu_start)
+	menu.generate_requested.connect(_on_menu_generate)
 	menu.cancelled.connect(func() -> void: menu.close())
 
 
@@ -560,6 +561,11 @@ func _on_stop_pressed() -> void:
 
 func _on_menu_start(cfg: Dictionary) -> void:
 	if not ws.send({"type": "start_game", "config": cfg}):
+		menu.show_error("Pas de connexion au moteur : lancez-le (python -m filets serve) puis réessayez.")
+
+
+func _on_menu_generate(params: Dictionary) -> void:
+	if not ws.send({"type": "generate_world", "config": params}):
 		menu.show_error("Pas de connexion au moteur : lancez-le (python -m filets serve) puis réessayez.")
 
 
@@ -765,6 +771,9 @@ func _on_event(ev: Dictionary) -> void:
 		"season_start":
 			lost_this_season = 0
 			var md := "" if not p.has("mode") else ("  · asynchrone" if str(p["mode"]) == "async" else "  · synchrone")
+			var cond: Dictionary = p.get("conditions", {})
+			if cond.get("climate") != null:
+				md = "  · %s%s" % [str(cond["climate"]), md]
 			_feed("\n[center][font=res://fonts/alegreya-latin-700-normal.woff2][font_size=17][color=#f3dca8]Saison %d[/color][/font_size][/font]  [color=#8f97b2]· le lac compte %.1f t%s[/color][/center]" % [int(ev.get("season", 0)), float(p.get("stock", 0)), md], [])
 		"catch":
 			var id := str(p.get("agent", ""))
@@ -781,7 +790,11 @@ func _on_event(ev: Dictionary) -> void:
 				_feed(lab + _tag("EN CACHETTE", "#ff8a5c") + " %s, interdit de pêche, sort %s et ramène [b]%.1f t[/b]  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
 					_who(id), "au large" if zone == "large" else "du côté de " + zone, float(p.get("landed", 0))], [id])
 			else:
-				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s" % [_who(id), float(p.get("landed", 0)), gap], [id])
+				var aim := ""
+				if p.has("yield") and absf(float(p.get("yield", 1.0)) - 1.0) >= 0.15 and float(p.get("requested", 0)) > 0.0:
+					var yv := float(p.get("yield", 1.0))
+					aim = "  [color=%s](visait %s t : %s journée)[/color]" % ["#ff8a7e" if yv < 1.0 else "#58d08a", _num(p.get("requested", 0)), _day_word(yv)]
+				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s%s" % [_who(id), float(p.get("landed", 0)), aim, gap], [id])
 		"report":
 			# la déclaration à l'ancien : les autres ne connaissent qu'elle ; un mensonge n'est visible que d'ici
 			var id := str(p.get("agent", ""))
@@ -801,7 +814,7 @@ func _on_event(ev: Dictionary) -> void:
 			if a:
 				a["lies_found"] = int(a["lies_found"]) + 1
 				trust_dirty = true
-			var how: String = {"radar": "le radar l'a mesuré", "temoins": "des voisins l'ont vu", "indices": "les indices concordent"}.get(str(p.get("how", "")), "")
+			var how: String = {"patrouille": "la patrouille l'a mesuré", "temoins": "des voisins l'ont vu", "indices": "les indices concordent"}.get(str(p.get("how", "")), "")
 			var est := ("environ %s t" % _num(p.get("estimated"))) if p.get("estimated") != null else "une quantité inconnue"
 			var wit := PackedStringArray()
 			for w in p.get("witnesses", []):
@@ -817,8 +830,8 @@ func _on_event(ev: Dictionary) -> void:
 			var said := "" if p.get("declared") == null else " (déclaré %s t)" % _num(p.get("declared"))
 			var txt := ""
 			match kind:
-				"radar":
-					txt = "le radar mesure environ [b]%s t[/b] dans la barque de %s%s" % [_num(p.get("estimate", 0)), _who(sub), said]
+				"patrouille":
+					txt = "la patrouille mesure environ [b]%s t[/b] dans la barque de %s%s" % [_num(p.get("estimate", 0)), _who(sub), said]
 				"temoin":
 					txt = "%s a vu la barque de %s rentrer avec environ [b]%s t[/b]%s" % [_who(obs), _who(sub), _num(p.get("estimate", 0)), said]
 				"depart":
@@ -844,25 +857,49 @@ func _on_event(ev: Dictionary) -> void:
 		"sanction_proposal":
 			var target := str(p.get("target", ""))
 			var author := str(p.get("author", ""))
-			var excl := str(p.get("action", "")) == "exclure"
-			_feed(lab + _tag("EXCLUSION" if excl else "RÉAUTORISATION", "#ff8a5c" if excl else "#58d08a") + " %s propose %s %s [b](%s)[/b]" % [
-				_who(author), "d'interdire de pêche" if excl else "de laisser pêcher à nouveau", _who(target), str(p.get("proposal_id", ""))], [author, target])
+			var act := str(p.get("action", ""))
+			if act == "patrouille" or act == "fin_patrouille":
+				_feed(lab + _tag("PATROUILLE", "#7fe0c8") + " %s propose %s la patrouille du lac [b](%s)[/b]" % [
+					_who(author), "d'installer" if act == "patrouille" else "de retirer", str(p.get("proposal_id", ""))], [author])
+			else:
+				var excl := act == "exclure"
+				_feed(lab + _tag("EXCLUSION" if excl else "RÉAUTORISATION", "#ff8a5c" if excl else "#58d08a") + " %s propose %s %s [b](%s)[/b]" % [
+					_who(author), "d'interdire de pêche" if excl else "de laisser pêcher à nouveau", _who(target), str(p.get("proposal_id", ""))], [author, target])
 		"sanction_result":
 			var target := str(p.get("target", ""))
-			var excl := str(p.get("action", "")) == "exclure"
+			var act := str(p.get("action", ""))
 			var ok := bool(p.get("adopted", false))
-			_feed(lab + _tag("VOTE " + str(p.get("proposal_id", "")), "#58d08a" if ok else "#8f97b2") + " %s de %s %s : %d pour, %d contre, sur %d votants" % [
-				"exclusion" if excl else "réautorisation", _who(target), "[b]adoptée[/b]" if ok else "rejetée",
-				p.get("for", []).size(), p.get("against", []).size(), int(p.get("voters", 0))], [target])
-		"radar_placed":
-			var zone := str(p.get("zone", ""))
-			var by: String = {"joueur": "vous", "ancien": "l'ancien", "vallee": "la vallée"}.get(str(p.get("by", "")), "")
-			_feed(lab + _tag("RADAR", "#7fe0c8") + " %s place le radar %s  [color=#6f7896](en secret : les pêcheurs ne savent pas où)[/color]" % [
-				by, "au large" if zone == "large" else "devant la rive de " + zone], [])
-			if str(p.get("by", "")) == "joueur":
-				for i in radar_opt.item_count:
-					if radar_opt.get_item_metadata(i) == zone:
-						radar_opt.select(i)
+			var what: String = {"exclure": "exclusion de %s", "reautoriser": "réautorisation de %s", "patrouille": "installation de la patrouille",
+				"fin_patrouille": "retrait de la patrouille"}.get(act, act)
+			if what.contains("%s"):
+				what = what % _who(target)
+			_feed(lab + _tag("VOTE " + str(p.get("proposal_id", "")), "#58d08a" if ok else "#8f97b2") + " %s %s : %d pour, %d contre, sur %d votants" % [
+				what, "[b]adoptée[/b]" if ok else "rejetée",
+				p.get("for", []).size(), p.get("against", []).size(), int(p.get("voters", 0))], [target] if target != "" else [])
+		"patrol_route":
+			# la route de la patrouille cette saison : le joueur la voit, les pêcheurs ne la connaissent pas
+			var zs := PackedStringArray()
+			for leg in p.get("legs", []):
+				zs.append("le large" if str(leg.get("zone", "")) == "large" else str(leg.get("zone", "")))
+			lbl_patrol.text = "Patrouille : en route vers " + " → ".join(zs)
+			_feed(lab + _tag("PATROUILLE", "#7fe0c8") + " l'ancien l'envoie vers [b]%s[/b]  [color=#6f7896](les pêcheurs ne savent pas où elle passera)[/color]" % " → ".join(zs), [])
+		"patrol":
+			var on := str(p.get("state", "")) == "installed"
+			patrol_installed = on
+			lbl_patrol.text = "Patrouille : dès la saison %d" % int(p.get("effective_season", 0)) if on else "Patrouille : aucune"
+			_feed(lab + _tag("PATROUILLE", "#7fe0c8") + " le conseil [b]%s[/b] la patrouille du lac dès la saison %d  [color=#6f7896](%d écus par pêcheur et par saison)[/color]" % [
+				"installe" if on else "retire", int(p.get("effective_season", 0)), int(p.get("cost", 0))], [])
+		"election":
+			# l'élu d'un village ; on ne le dit que s'il change (ou à la première saison)
+			var rep := str(p.get("representative", ""))
+			var hm := str(p.get("hamlet", ""))
+			reps[hm] = rep
+			if p.get("incumbent") == null or str(p.get("incumbent")) != rep:
+				_feed(lab + _tag("ÉLU", "#e2bd6a") + " %s représente [b]%s[/b] au conseil  [color=#6f7896](%d voix sur %d)[/color]" % [
+					_who(rep), hm, int(p.get("votes", {}).get(rep, 0)), int(p.get("voters", 0))], [rep])
+		"world_event":
+			_feed(lab + _tag("ÉVÉNEMENT", "#f39c4a") + " [b]%s[/b] : %s  [color=#6f7896](jusqu'à la saison %d)[/color]" % [
+				str(p.get("label", "")), _esc(str(p.get("text", ""))), int(p.get("until", 0))], [])
 		"trust":
 			var a = _agent(str(p.get("subject", "")))
 			if a:
@@ -884,7 +921,13 @@ func _on_event(ev: Dictionary) -> void:
 			if a:
 				a["wealth"] = float(p.get("wealth", 0))
 		"assembly_start":
-			_feed("\n" + lab + _tag("VEILLÉE", "#7f95ff") + " [b]%s[/b] se réunit" % _scope(str(p.get("scope", ""))).capitalize(), [])
+			if p.has("delegates"):
+				var who_sits := PackedStringArray()
+				for h in p["delegates"]:
+					who_sits.append("%s (%s)" % [_who(str(p["delegates"][h])), str(h)])
+				_feed("\n" + lab + _tag("CONSEIL", "#7f95ff") + " le conseil de la vallée se réunit : " + ", ".join(who_sits) + "  [color=#6f7896](les autres villageois n'y vont pas)[/color]", [])
+			else:
+				_feed("\n" + lab + _tag("VEILLÉE", "#7f95ff") + " [b]%s[/b] se réunit" % _scope(str(p.get("scope", ""))).capitalize(), [])
 		"narration":
 			var season := int(p.get("season", 0))
 			var how := "" if str(p.get("source", "")) == "ancien" else "  [color=#6f7896][font_size=11](d'après les faits)[/font_size][/color]"
@@ -984,10 +1027,10 @@ func _on_event(ev: Dictionary) -> void:
 				"drought":
 					_feed(lab + _tag("SÉCHERESSE", "#f39c4a") + " le stock du lac est divisé par %s" % _num(1.0 / maxf(float(prm.get("factor", 0.5)), 0.001)), [])
 				"set_communication":
-					var comms := {"valley": "toute la vallée", "hamlet": "par hameau", "none": "interdite"}
+					var comms := {"valley": "conseil de la vallée", "hamlet": "par village", "none": "interdite"}
 					_feed(lab + _tag("COMMUNICATION", "#ffd166") + " les veillées se tiennent désormais : [b]%s[/b]" % comms.get(str(prm.get("value", "")), str(prm.get("value", ""))), [])
 				"set_visibility":
-					_feed(lab + _tag("DÉCLARATIONS", "#ffd166") + " les déclarations à l'ancien sont désormais [b]%s[/b]" % ("lues à toute la vallée" if bool(prm.get("value", true)) else "connues du seul hameau"), [])
+					_feed(lab + _tag("DÉCLARATIONS", "#ffd166") + " les déclarations à l'ancien sont désormais [b]%s[/b]" % ("lues à toute la vallée" if bool(prm.get("value", true)) else "connues du seul village"), [])
 				"pause":
 					_feed(lab + _tag("PAUSE", "#ffd166") + " la partie est en pause", [])
 				"resume":
@@ -1085,7 +1128,8 @@ func _reset(ev: Dictionary) -> void:
 		agents[str(a["id"])] = {"info": a, "catches": {}, "promises": [], "memories": [], "last_decision": {},
 			"last_decision_label": "", "wealth": float(a.get("wealth", 0)), "incidents": 0,
 			"declared": {}, "reputation": 0.5, "trust_from": {}, "lies_found": 0, "banned": false}
-	world.reset_world(p.get("agents", []), float(run["capacity"]), float(p.get("season_days", 30.0)))
+	world.reset_world(p.get("agents", []), float(run["capacity"]), float(p.get("season_days", 30.0)), p.get("hamlets", []))
+	legend.set_villages(p.get("hamlets", []))
 	chart.reset()
 	_reset_kpis()
 	var sc: Dictionary = p.get("scenario", {})
@@ -1095,7 +1139,9 @@ func _reset(ev: Dictionary) -> void:
 		if comm_opt.get_item_metadata(i) == str(sc.get("communication", "valley")):
 			comm_opt.select(i)
 	vis_check.set_pressed_no_signal(bool(sc.get("catches_visible", true)))
-	radar_opt.select(0)                   # une nouvelle partie : l'ancien décide
+	patrol_installed = false              # une nouvelle partie : pas de patrouille tant que le conseil n'en vote pas
+	reps.clear()
+	lbl_patrol.text = "Patrouille : aucune"
 	feed.clear()
 	narration.clear()
 	narration.append_text("[color=#8f97b2]À la fin de chaque saison, l'ancien raconte ici ce que la vallée a vécu.[/color]\n\n")
@@ -1202,8 +1248,10 @@ func _render_inspector() -> void:
 	var hc := Art.agent_color(info).lightened(0.2).to_html(false)
 	var s := "[font=res://fonts/alegreya-latin-700-normal.woff2][font_size=22][color=#%s]%s[/color][/font_size][/font]  [color=#6f7896]%s[/color]\n" % [hc, _esc(str(info.get("name", selected))), selected]
 	var kind := "agent à règles" if str(info.get("kind", "")) == "rule" else "agent LLM · modèle %s" % str(info.get("tier", ""))
-	s += "%s · hameau %s · %s · %d ans de pêche\n" % [str(info.get("archetype_label", "")), str(info.get("hamlet", "")), kind,
-		int(info.get("experience", 0))]
+	var boat := "" if str(info.get("boat", "")) == "" else " · " + str(info.get("boat", ""))
+	var seat := " · [color=#e2bd6a]élu au conseil[/color]" if reps.get(str(info.get("hamlet", ""))) == selected else ""
+	s += "%s · village %s · %s · %d ans de pêche%s%s\n" % [str(info.get("archetype_label", "")), str(info.get("hamlet", "")), kind,
+		int(info.get("experience", 0)), boat, seat]
 	if str(info.get("role", "")) != "ancien":
 		s += "Avoir : [b]%.0f écus[/b] · dette : %.0f écus/saison · incidents : %d\n" % [float(a["wealth"]),
 			float(info.get("debt_payment", 0)), int(a["incidents"])]
@@ -1279,8 +1327,12 @@ func _tag(text: String, hex: String) -> String:
 	return "[bgcolor=%s33][color=%s][font_size=10][b] %s [/b][/font_size][/color][/bgcolor]" % [hex, hex, text]
 
 
+func _day_word(f: float) -> String:
+	return "très mauvaise" if f < 0.6 else ("mauvaise" if f < 0.85 else ("ordinaire" if f < 1.15 else ("bonne" if f < 1.4 else "excellente")))
+
+
 func _scope(s: String) -> String:
-	return "toute la vallée" if s == "valley" else s.replace("hamlet:", "hameau de ")
+	return "toute la vallée" if s == "valley" else s.replace("hamlet:", "village de ")
 
 
 func _num(v: Variant) -> String:

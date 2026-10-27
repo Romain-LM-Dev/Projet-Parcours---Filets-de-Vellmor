@@ -25,7 +25,7 @@ from typing import Callable
 import httpx
 
 from .bus import LocalBus
-from .catalog import COMMUNICATIONS, LIMITS, LLM_OPTIONS, MODES, REFLECTIONS, SPEEDS, build_catalog
+from .catalog import COMMUNICATIONS, COUNCILS, LIMITS, LLM_OPTIONS, MODES, REFLECTIONS, SPEEDS, build_catalog, generate_world
 from .config import deep_merge, load_config, normalize
 from .console import console_printer, print_summary
 from .pipeline import IndicatorPublisher
@@ -55,6 +55,17 @@ def validate_request(req: dict) -> list[str]:
         errs.append("mode de communication inconnu")
     if not isinstance(req.get("catches_visible"), bool):
         errs.append("« prises visibles » doit être vrai ou faux")
+    if req.get("council", "delegates") not in [c["id"] for c in COUNCILS]:
+        errs.append("composition du conseil inconnue (un élu par village, ou tous les pêcheurs)")
+    for key, label in (("climate", "le climat"), ):
+        if not isinstance(req.get(key, True), bool):
+            errs.append(f"{label} doit être vrai ou faux")
+    rate = req.get("event_rate", 0.3)
+    if not (isinstance(rate, (int, float)) and not isinstance(rate, bool) and 0 <= rate <= 1):
+        errs.append("la fréquence des événements doit être un nombre entre 0 et 1")
+    luck = req.get("luck", 0.25)
+    if not (isinstance(luck, (int, float)) and not isinstance(luck, bool) and 0 <= luck <= 0.6):
+        errs.append("l'aléa de la pêche doit être un nombre entre 0 et 0,6")
     if req.get("llm", "scripted") not in [o["id"] for o in LLM_OPTIONS]:
         errs.append("moteur d'IA inconnu")
     speed = req.get("speed", 1.0)
@@ -86,6 +97,10 @@ def validate_request(req: dict) -> list[str]:
         lo, hi = LIMITS["fishers"]
         if isinstance(fishers, list) and fishers and not lo <= len(fishers) <= hi:
             errs.append(f"le nombre de pêcheurs doit être compris entre {lo} et {hi}")
+        vlo, vhi = LIMITS["villages"]
+        if isinstance(fishers, list) and fishers and all(isinstance(f, dict) for f in fishers) and \
+                len({f.get("hamlet") for f in fishers}) > vhi:
+            errs.append(f"la vallée compte au plus {vhi} villages")
         if pop.get("elder_kind", "llm") not in ("llm", "rule"):
             errs.append("type d'ancien inconnu")
     return errs
@@ -102,9 +117,12 @@ def build_game_config(base_cfg: dict, req: dict) -> dict:
         "run": {"seasons": req["seasons"], "seed": req["seed"], "label": f"menu-{llm['id']}"},
         "time": {"mode": req["mode"]},
         "scenario": {"communication": req["communication"], "catches_visible": req["catches_visible"],
+                     "council": req.get("council", base_cfg["scenario"].get("council", "delegates")),
                      "assembly_rounds": req.get("assembly_rounds", base_cfg["scenario"]["assembly_rounds"])},
         "population": {"custom": copy.deepcopy(pop["fishers"]), "elder": bool(pop.get("elder", True)),
                        "elder_kind": pop.get("elder_kind", "llm")},
+        "climate": {"enabled": req.get("climate", True), "event_rate": float(req.get("event_rate", 0.3))},
+        "economy": {"luck": float(req.get("luck", base_cfg["economy"].get("luck", 0.0)))},
     }
     if llm["config"]:
         preset = load_config(llm["config"])["llm"]
@@ -312,10 +330,37 @@ class Engine:
                 if ctype == "new_game" and self.state != "idle":
                     self.error = self.end_reason = None
                     self.publish_status("idle")
+                if ctype == "generate_world" and self.state in ("idle", "ended"):
+                    self.generate(cmd.get("config") or {})
             n += 1
             if n % 20 == 0:
                 self.publish_status()
             await asyncio.sleep(0.1)
+
+    def generate(self, req: dict) -> None:
+        """Le menu demande une vallée : ses villages et ses pêcheurs, générés d'après ces paramètres et la graine (la même
+        vallée pour les mêmes paramètres). Le moteur remplace la composition de base du catalogue, que le menu affiche."""
+        errs = []
+        got = {}
+        for key, label in (("villages", "villages"), ("fishers", "pêcheurs"), ("seed", "graine")):
+            lo, hi = LIMITS[key]
+            v = req.get(key)
+            if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
+                errs.append(f"le nombre de {label} doit être un entier entre {lo} et {hi}" if key != "seed"
+                            else f"la graine doit être un entier entre {lo} et {hi}")
+            got[key] = v
+        if not errs and got["villages"] > got["fishers"]:
+            errs.append("il faut au moins un pêcheur par village")
+        if errs:
+            self.error = " · ".join(errs)
+            self.publish_status()
+            return
+        self.error = None
+        world = generate_world(self.base_cfg, got["villages"], got["fishers"], got["seed"])
+        self.catalog = {**self.catalog, "hamlets": world["hamlets"], "base_population": world["base_population"],
+                        "generation": {"id": req.get("id"), "villages": got["villages"], "fishers": got["fishers"],
+                                       "seed": got["seed"]}}
+        self.publish_status()
 
     async def _prepare(self, cfg: dict) -> None:
         """Vérifie et charge les IA demandées. Charger un modèle local peut prendre une minute : pendant ce temps le moteur

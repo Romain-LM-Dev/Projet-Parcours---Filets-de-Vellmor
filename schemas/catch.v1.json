@@ -42,6 +42,15 @@
     },
     "secret": {
       "type": "boolean"
+    },
+    "yield": {
+      "type": "number"
+    },
+    "luck": {
+      "type": "number"
+    },
+    "day": {
+      "type": "number"
     }
   },
   "required": [

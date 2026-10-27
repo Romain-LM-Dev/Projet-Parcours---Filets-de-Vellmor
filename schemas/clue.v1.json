@@ -3,7 +3,7 @@
   "properties": {
     "kind": {
       "enum": [
-        "radar",
+        "patrouille",
         "temoin",
         "depart",
         "train_de_vie"
