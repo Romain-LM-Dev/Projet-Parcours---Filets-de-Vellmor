@@ -34,6 +34,8 @@ func _initialize() -> void:
 	for line in FileAccess.get_file_as_string(path).split("\n"):
 		if line.strip_edges() != "":
 			events.append(JSON.parse_string(line))
+	var absent_checked := 0
+	var bad_absent := 0
 	var lost_reply := 0
 	var lost_exit := 0
 	var other_incidents := 0
@@ -68,6 +70,11 @@ func _initialize() -> void:
 			"narration":
 				narrations.append(p)
 		m._on_message("events", ev)
+		if ev["type"] == "assembly_start" and p.has("delegates") and str(p.get("scope", "")) == "valley":
+			absent_checked += 1
+			for aid in m.world.agents:             # au conseil des élus, les autres villageois ne sont pas dans la salle
+				if bool(m.world.agents[aid].get("absent", false)) == p["participants"].has(aid):
+					bad_absent += 1
 
 	var texts: Array = []
 	for l in m.feed_lines:
@@ -150,6 +157,7 @@ func _initialize() -> void:
 	check(m.lbl_patrol.text.begins_with("Patrouille"), "la barre d'intervention dit où en est la patrouille du lac : " + m.lbl_patrol.text)
 	check(m.world.hamlet_pos.size() == 4, "la carte pose les quatre villages de la vallée de base")
 	check(not reputations.is_empty(), "le run de test fait bouger la confiance")
+	check(absent_checked > 0 and bad_absent == 0, "au conseil, les absents sont les seuls à ne pas siéger (%d séances, %d erreurs)" % [absent_checked, bad_absent])
 	check(m.tabs.get_tab_title(2) == "Confiance", "l'onglet « Confiance » suit le récit : " + m.tabs.get_tab_title(2))
 	m._render_trust()
 	var gauges: String = m.trust_view.get_parsed_text()

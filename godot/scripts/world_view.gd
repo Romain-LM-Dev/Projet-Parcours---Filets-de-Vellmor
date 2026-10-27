@@ -572,6 +572,8 @@ func on_event(ev: Dictionary) -> void:
 						ids.push_front(sx)
 					else:
 						ids.append(sx)
+				for aid in agents:                   # les villageois qui n'y siègent pas restent chez eux : on ne les montre pas dans la salle
+					agents[aid]["absent"] = not ids.has(str(aid))
 				seats = ids.size()
 				for i in ids.size():
 					var ang := -PI / 2.0 + TAU * float(i) / float(max(ids.size(), 1))
@@ -600,6 +602,7 @@ func on_event(ev: Dictionary) -> void:
 					assembly_scope = ""
 			badges.clear()
 			for id in agents:
+				agents[id]["absent"] = false
 				_move(id, agents[id]["home"])
 			bubbles.clear()
 			effects = effects.filter(func(e): return e["kind"] != "link" and e["kind"] != "wave")
@@ -1009,6 +1012,13 @@ func _draw_room(ci: CanvasItem) -> void:
 		var sp := _px(LAKE_C + Vector2(cos(ang), sin(ang)) * RING_R)
 		_ellipse(ci, sp + Vector2(0, 3), Vector2(19, 15), Color(Color("#2a1a12"), 0.55 * a))
 		_ellipse(ci, sp, Vector2(18, 14), Color(Color("#b0823f"), 0.9 * a))
+	var away := 0
+	for aid in agents:
+		if bool(agents[aid].get("absent", false)) and str(agents[aid]["info"].get("role", "")) != "ancien":
+			away += 1
+	if away > 0:
+		ci.draw_string(Art.font("ui"), Vector2(r.position.x + 26, r.end.y - 18), "%d villageois attendent chez eux" % away,
+			HORIZONTAL_ALIGNMENT_LEFT, 250, 13, Color(Color("#d8bf8c"), 0.85 * a))
 	var title := "Veillée chez Maître Oswin"
 	var tf := Art.font("title")
 	ci.draw_string(tf, Vector2(r.position.x, r.position.y + 40), title, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 24,
@@ -1101,6 +1111,8 @@ func _draw_tokens(ci: CanvasItem) -> void:
 		var a: Dictionary = agents[id]
 		var p := _px(a["pos"])
 		var info: Dictionary = a["info"]
+		if assembly_scope == "valley" and bool(a.get("absent", false)):
+			continue
 		var on_water := lake_rn(a["pos"]) < 0.97 and assembly_scope != "valley"
 		if on_water:
 			_draw_boat(ci, p, float(a["heading"]), Art.agent_color(info), float(a["fishing"]),
