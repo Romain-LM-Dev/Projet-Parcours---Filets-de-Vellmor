@@ -40,6 +40,8 @@ func _initialize() -> void:
 	check(cfg0["lake"]["capacity"] == null and cfg0["reflection"] == "rapide" and cfg0["assembly_rounds"] == 2,
 		"par défaut : stock du lac automatique, réflexion rapide, deux tours de parole")
 
+	check(m.opt_fleet.item_count == 3 and str(m.opt_fleet.get_item_metadata(m.opt_fleet.selected)) == "mixte", "trois flottes, « mixte » par défaut")
+
 	# --- vitesse conseillée : en asynchrone avec une vraie IA, le monde doit ralentir pour lui laisser le temps de répondre
 	var speed_is := func(v: float) -> bool:
 		var s: Variant = m.opt_speed.get_item_metadata(m.opt_speed.selected)
@@ -235,7 +237,7 @@ func _initialize() -> void:
 	check(final_cfg["population"]["fishers"].all(func(f): return str(f.get("boat", "")) in ["barque", "chaloupe", "cotre"]),
 		"chaque fiche a son bateau")
 	check(final_cfg["council"] == "delegates" and final_cfg["climate"] == true and is_equal_approx(final_cfg["event_rate"], 0.3)
-		and is_equal_approx(final_cfg["luck"], 0.25), "par défaut : un élu par village, climat, 30 % d'événements, 25 % de hasard")
+		and is_equal_approx(final_cfg["luck"], 0.4), "par défaut : un élu par village, climat, 30 % d'événements, 40 % de hasard")
 	m._rows[0]["boat"].item_selected.emit(2)
 	check(m.fishers[0]["boat"] == "cotre", "le bateau se change dans la liste")
 	m.chk_climate.button_pressed = false
@@ -250,10 +252,14 @@ func _initialize() -> void:
 	# --- générer la vallée : le menu la demande au moteur, qui répond par un catalogue dont seule la vallée change
 	var asked := []
 	m.generate_requested.connect(func(p: Dictionary) -> void: asked.append(p))
+	m._gen_timer.stop()                    # (la graine changée plus haut a lancé une régénération : on la laisse de côté)
+	m._refresh_all()
+	check(m.spin_villages.value == 4 and m.spin_fishers.value == m.fishers.size(), "les nombres disent ce que contient la liste")
 	m.spin_villages.value = 6
 	m.spin_fishers.value = 12
-	m._on_generate()
-	m._on_generate()                       # un second clic, en attendant, ne redemande rien
+	check(asked.is_empty() and not m._gen_timer.is_stopped(), "changer les nombres lance la demande, un instant après")
+	await create_timer(0.8).timeout
+	m._on_generate()                       # un clic de plus, en attendant, ne redemande rien
 	check(asked.size() == 1 and asked[0]["villages"] == 6 and asked[0]["fishers"] == 12 and asked[0]["seed"] == int(m.spin_seed.value),
 		"la demande de vallée porte les villages, les pêcheurs et la graine")
 	check(m.btn_generate.disabled, "le bouton attend la vallée")

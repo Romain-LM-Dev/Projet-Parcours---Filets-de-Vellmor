@@ -34,9 +34,8 @@ class Agent:
     # donc bruitée) à chaque ouverture de pêche et à chaque veillée ; `event_id` est la décision qui l'a portée (traçabilité F6).
     stock_seen: list[dict] = field(default_factory=list)
     declared: dict[int, float] = field(default_factory=dict)       # ce qu'il a déclaré à l'ancien, par saison
-    aimed: dict[int, float] = field(default_factory=dict)          # la prise qu'il visait, par saison (la réelle dépend du jour)
-    day_factor: dict[int, float] = field(default_factory=dict)     # ce que sa sortie a rapporté par rapport à la prise visée
-    form: float = 0.0                                              # sa forme du moment (la réussite du jour se prolonge)
+    outings: dict[int, list[dict]] = field(default_factory=dict)   # ses sorties de chaque saison (voir `World.outings`)
+    form: float = 0.0                                              # sa chance de la saison (elle se prolonge d'une saison à l'autre)
 
     @property
     def id(self) -> str:

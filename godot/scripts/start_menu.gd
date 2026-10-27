@@ -46,6 +46,10 @@ var busy_since := 0
 var _rows: Array = []                 # un dictionnaire de widgets par ligne
 var _updating := false                # évite les boucles quand on règle un widget par code
 var _pending_generation := ""          # la vallée demandée au moteur, qu'on attend de recevoir
+var _pending_since := 0                # l'instant (ms) où cette demande est partie
+var _pending_params := {}              # villages, pêcheurs et graine de cette demande
+var _regenerate := false               # les nombres ont encore changé pendant l'attente : on redemande dès qu'elle est servie
+var _gen_timer: Timer                  # laisse finir de régler les nombres avant de demander la vallée
 
 var sheet: PanelContainer
 var lbl_engine: Label
@@ -67,6 +71,7 @@ var spin_events: SpinBox
 var spin_luck: SpinBox
 var spin_villages: SpinBox
 var spin_fishers: SpinBox
+var opt_fleet: OptionButton
 var btn_generate: Button
 var chk_visible: CheckButton
 var opt_llm: OptionButton
@@ -310,6 +315,7 @@ func _build_left(body: Control) -> void:
 	var seed_box := HBoxContainer.new()
 	seed_box.add_theme_constant_override("separation", 6)
 	spin_seed = _spin(0, 999999, 1, 42, 100)
+	spin_seed.tooltip_text = "Graine du hasard : la même graine et les mêmes réglages rejouent la même partie. Elle décide aussi de la vallée générée (la changer régénère les villages et les pêcheurs)."
 	seed_box.add_child(spin_seed)
 	var dice := Button.new()
 	dice.text = "Au hasard"
@@ -403,10 +409,10 @@ func _build_left(body: Control) -> void:
 	spin_events.suffix = "%"
 	spin_events.tooltip_text = "Chance qu'un événement survienne à chaque saison, à partir de la deuxième."
 	_row(col, "Événements", spin_events)
-	spin_luck = _spin(0, 60, 5, 25, 84)
+	spin_luck = _spin(0, 60, 5, 40, 84)
 	spin_luck.suffix = "%"
-	spin_luck.tooltip_text = "La pêche n'est pas toujours bonne : la prise réelle varie autour de la prise visée selon la réussite du jour (0 : toujours la prise visée)."
-	_row(col, "Réussite du jour", spin_luck)
+	spin_luck.tooltip_text = "La pêche n'est pas toujours bonne : chaque pêcheur a sa chance, qui change d'une sortie à l'autre et d'une saison à l'autre, en plus du temps et de la saison de l'année (0 : ni chance ni malchance, seul le temps compte)."
+	_row(col, "Chance à la pêche", spin_luck)
 
 
 ## Un choix d'IA avec son titre au-dessus : moteur, réflexion, vitesse tiennent sur une seule ligne, en haut de la colonne
@@ -497,16 +503,32 @@ func _build_center(body: Control) -> void:
 	col.add_child(gen)
 	gen.add_child(_lbl("Villages", 12, "ui", Art.MUTED))
 	spin_villages = _spin(1, 8, 1, 4, 62)
+	spin_villages.tooltip_text = "Nombre de villages autour du lac : la vallée est régénérée dès que vous le changez (au moins un pêcheur par village)."
 	gen.add_child(spin_villages)
 	gen.add_child(_lbl("Pêcheurs", 12, "ui", Art.MUTED))
 	spin_fishers = _spin(1, 24, 1, 8, 62)
+	spin_fishers.tooltip_text = "Nombre de pêcheurs : la vallée est régénérée dès que vous le changez."
 	gen.add_child(spin_fishers)
+	gen.add_child(_lbl("Flotte", 12, "ui", Art.MUTED))
+	opt_fleet = _option([], 128)
+	opt_fleet.tooltip_text = "Tailles des bateaux de la vallée générée : surtout des barques, un mélange, ou surtout des cotres. Chaque pêcheur reste réglable."
+	gen.add_child(opt_fleet)
 	btn_generate = Button.new()
 	btn_generate.text = "Générer la vallée"
 	btn_generate.focus_mode = Control.FOCUS_NONE
-	btn_generate.tooltip_text = "Génère les villages, les pêcheurs et leurs bateaux d'après ces nombres et la graine : la même vallée pour les mêmes réglages. Vous pouvez ensuite retoucher chaque pêcheur."
+	btn_generate.tooltip_text = "Régénère les villages, les pêcheurs et leurs bateaux d'après ces nombres, la flotte et la graine : la même vallée pour les mêmes réglages. C'est fait aussi dès qu'on change l'un d'eux ; vous pouvez ensuite retoucher chaque pêcheur."
 	btn_generate.pressed.connect(_on_generate)
 	gen.add_child(btn_generate)
+	# changer le nombre de villages ou de pêcheurs régénère la vallée, un instant après la dernière touche
+	_gen_timer = Timer.new()
+	_gen_timer.one_shot = true
+	_gen_timer.wait_time = 0.5
+	_gen_timer.timeout.connect(_on_generate)
+	add_child(_gen_timer)
+	spin_villages.value_changed.connect(_on_gen_spin.bind(true))
+	spin_fishers.value_changed.connect(_on_gen_spin.bind(false))
+	spin_seed.value_changed.connect(_on_gen_spin.bind(false))
+	opt_fleet.item_selected.connect(func(_i: int) -> void: _on_gen_spin(0.0, false))
 	# titres de colonnes, alignés sur les lignes
 	var titles := HBoxContainer.new()
 	titles.add_theme_constant_override("separation", 6)
@@ -578,7 +600,10 @@ func set_catalog(cat: Dictionary) -> void:
 		if fresh and _pending_generation != "" and str(cat.get("generation", {}).get("id", "")) == _pending_generation:
 			_pending_generation = ""
 			btn_generate.disabled = false
+			lbl_error.text = ""
 			reset_population()
+			if _regenerate:
+				_on_generate.call_deferred()
 		return
 	var first := true
 	catalog = cat
@@ -591,6 +616,10 @@ func set_catalog(cat: Dictionary) -> void:
 	for c in cat.get("councils", []):
 		opt_council.add_item(str(c["label"]))
 		opt_council.set_item_metadata(opt_council.item_count - 1, str(c["id"]))
+	opt_fleet.clear()
+	for f in cat.get("fleets", []):
+		opt_fleet.add_item(str(f["label"]))
+		opt_fleet.set_item_metadata(opt_fleet.item_count - 1, str(f["id"]))
 	opt_llm.clear()
 	for o in cat.get("llm_options", []):
 		opt_llm.add_item(str(o["label"]))
@@ -642,9 +671,10 @@ func reset_all() -> void:
 	spin_rounds.value = int(d.get("assembly_rounds", 2))
 	_select_meta(opt_comm, str(d.get("communication", "valley")))
 	_select_meta(opt_council, str(d.get("council", "delegates")))
+	_select_meta(opt_fleet, str(d.get("fleet", "mixte")))
 	chk_climate.button_pressed = bool(d.get("climate", true))
 	spin_events.value = roundf(float(d.get("event_rate", 0.3)) * 100.0)
-	spin_luck.value = roundf(float(d.get("luck", 0.25)) * 100.0)
+	spin_luck.value = roundf(float(d.get("luck", 0.4)) * 100.0)
 	spin_villages.value = int(d.get("villages", 4))
 	spin_fishers.value = int(d.get("fishers", 8))
 	chk_visible.button_pressed = bool(d.get("catches_visible", true))
@@ -1009,6 +1039,7 @@ func _refresh_all(_full: bool = true) -> void:
 	map.call("set_data", fishers, chk_elder.button_pressed, elder_kind, selected, int(d.get("large_model_min_experience", 15)), catalog.get("hamlets", []))
 	var lim: Array = catalog.get("limits", {}).get("fishers", [1, 24])
 	lbl_count.text = "%d" % fishers.size()
+	_sync_generation()
 	_refresh_lake()
 	btn_add.disabled = fishers.size() >= int(lim[1])
 	for r in _rows:
@@ -1075,14 +1106,46 @@ func _refresh_lake() -> void:
 
 
 # ------------------------------------------------------------------ envoi
-func _on_generate() -> void:
-	if catalog.is_empty() or _pending_generation != "":
+## Le nombre de villages ou de pêcheurs a changé : un pêcheur au moins par village (le nombre qu'on vient de toucher l'emporte
+## sur l'autre), puis la vallée est régénérée.
+func _on_gen_spin(_v: float, villages_touched: bool) -> void:
+	if _updating or catalog.is_empty():
 		return
-	_pending_generation = "g%d" % Time.get_ticks_msec()
+	if spin_villages.value > spin_fishers.value:
+		if villages_touched:
+			spin_fishers.set_value_no_signal(spin_villages.value)
+		else:
+			spin_villages.set_value_no_signal(spin_fishers.value)
+	_gen_timer.start()
+
+
+## Les nombres « Villages » et « Pêcheurs » disent toujours ce que la liste contient (sauf pendant qu'on les règle).
+func _sync_generation() -> void:
+	if _pending_generation != "" or _regenerate or not _gen_timer.is_stopped():
+		return
+	spin_fishers.set_value_no_signal(fishers.size())
+	spin_villages.set_value_no_signal(catalog.get("hamlets", []).size())
+
+
+func _fleet_id() -> String:
+	return str(opt_fleet.get_item_metadata(opt_fleet.selected)) if opt_fleet.item_count > 0 else "mixte"
+
+
+func _on_generate() -> void:
+	if catalog.is_empty():
+		return
+	var params := {"villages": int(spin_villages.value), "fishers": int(spin_fishers.value), "seed": int(spin_seed.value),
+		"fleet": _fleet_id()}
+	if _pending_generation != "" and Time.get_ticks_msec() - _pending_since < 5000:
+		_regenerate = params != _pending_params       # une demande est en route : si les nombres ont changé, on y revient (au-delà de 5 s, on la croit perdue)
+		return
+	_regenerate = false
+	_pending_params = params
+	_pending_since = Time.get_ticks_msec()
+	_pending_generation = "g%d" % _pending_since
 	btn_generate.disabled = true
 	lbl_error.text = ""
-	generate_requested.emit({"villages": int(spin_villages.value), "fishers": int(spin_fishers.value),
-		"seed": int(spin_seed.value), "id": _pending_generation})
+	generate_requested.emit(params.merged({"id": _pending_generation}))
 
 
 func build_config() -> Dictionary:
@@ -1136,6 +1199,7 @@ func close() -> void:
 
 func show_error(text: String) -> void:
 	_pending_generation = ""
+	_regenerate = false
 	btn_generate.disabled = false
 	lbl_error.text = text
 	busy = false

@@ -40,6 +40,9 @@ var tabs: TabContainer
 var comm_opt: OptionButton
 var vis_check: CheckButton
 var legend: Control
+var lbl_weather: Label          # le temps du jour sur le lac (voir `weather_days`)
+var weather_days: Array = []    # le temps de chaque jour de pêche de la saison en cours (`season_start`)
+var weather_season := 0
 var lbl_patrol: Label           # la patrouille du lac : aucune, ou installée (et sa route de la saison)
 var patrol_installed := false
 var reps := {}                  # village -> pêcheur élu au conseil de la vallée
@@ -506,6 +509,10 @@ func _build_ui() -> void:
 	lbl_patrol.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	lbl_patrol.tooltip_text = "Le conseil de la vallée peut voter une patrouille du lac, aux frais de chaque pêcheur : elle visite quelques zones par saison et mesure les barques qu'elle croise. L'ancien l'envoie là où il se méfie ; les pêcheurs ne savent pas où elle passera."
 	bottom.add_child(lbl_patrol)
+	lbl_weather = _label("", 13, "ui", Art.MUTED)
+	lbl_weather.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	lbl_weather.tooltip_text = "Le temps sur le lac, le même pour tous les pêcheurs : un jour agité ou de tempête rapporte bien moins, surtout aux petits bateaux. Chaque pêcheur sort plusieurs fois par saison."
+	bottom.add_child(lbl_weather)
 	rumor_edit = LineEdit.new()
 	rumor_edit.placeholder_text = "Faire courir une rumeur dans la vallée…"
 	rumor_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -597,6 +604,8 @@ func _on_status(s: Dictionary) -> void:
 			"ended":
 				menu.close()       # un client arrivé après la fin : la partie d'abord, le menu sur demande
 				_show_end(s)
+	if err != "" and err != last_error and menu.visible:
+		menu.show_error(err)       # un refus du moteur (une vallée impossible…) qui ne change pas son état
 	last_error = err
 	_update_transport()
 
@@ -772,9 +781,13 @@ func _on_event(ev: Dictionary) -> void:
 			lost_this_season = 0
 			var md := "" if not p.has("mode") else ("  · asynchrone" if str(p["mode"]) == "async" else "  · synchrone")
 			var cond: Dictionary = p.get("conditions", {})
+			weather_days = cond.get("days", []) if cond.get("climate") != null else []
+			weather_season = int(ev.get("season", 0))
 			if cond.get("climate") != null:
 				md = "  · %s%s" % [str(cond["climate"]), md]
 			_feed("\n[center][font=res://fonts/alegreya-latin-700-normal.woff2][font_size=17][color=#f3dca8]Saison %d[/color][/font_size][/font]  [color=#8f97b2]· le lac compte %.1f t%s[/color][/center]" % [int(ev.get("season", 0)), float(p.get("stock", 0)), md], [])
+			if not weather_days.is_empty():
+				_feed("[center][color=#6f7896][font_size=12]%s[/font_size][/color][/center]" % _sky_text(weather_days), [])
 		"catch":
 			var id := str(p.get("agent", ""))
 			var a = _agent(id)
@@ -793,7 +806,8 @@ func _on_event(ev: Dictionary) -> void:
 				var aim := ""
 				if p.has("yield") and absf(float(p.get("yield", 1.0)) - 1.0) >= 0.15 and float(p.get("requested", 0)) > 0.0:
 					var yv := float(p.get("yield", 1.0))
-					aim = "  [color=%s](visait %s t : %s journée)[/color]" % ["#ff8a7e" if yv < 1.0 else "#58d08a", _num(p.get("requested", 0)), _day_word(yv)]
+					aim = "  [color=%s](visait %s t : %s pêche%s)[/color]" % ["#ff8a7e" if yv < 1.0 else "#58d08a", _num(p.get("requested", 0)), _day_word(yv),
+						_weather_note(p.get("outings", []))]
 				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s%s" % [_who(id), float(p.get("landed", 0)), aim, gap], [id])
 		"report":
 			# la déclaration à l'ancien : les autres ne connaissent qu'elle ; un mensonge n'est visible que d'ici
@@ -1142,6 +1156,8 @@ func _reset(ev: Dictionary) -> void:
 	patrol_installed = false              # une nouvelle partie : pas de patrouille tant que le conseil n'en vote pas
 	reps.clear()
 	lbl_patrol.text = "Patrouille : aucune"
+	weather_days = []
+	lbl_weather.text = ""
 	feed.clear()
 	narration.clear()
 	narration.append_text("[color=#8f97b2]À la fin de chaque saison, l'ancien raconte ici ce que la vallée a vécu.[/color]\n\n")
@@ -1327,6 +1343,49 @@ func _tag(text: String, hex: String) -> String:
 	return "[bgcolor=%s33][color=%s][font_size=10][b] %s [/b][/font_size][/color][/bgcolor]" % [hex, hex, text]
 
 
+## Le temps d'aujourd'hui sur le lac (tant que la pêche est ouverte), à côté de la patrouille.
+func _show_weather() -> void:
+	var day := int(floor(world.sim_time - float(weather_season - 1) * world.season_days))
+	var txt := ""
+	var col := Art.MUTED
+	if weather_season > 0 and day >= 0 and day < weather_days.size():
+		var w := str(weather_days[day])
+		txt = "Temps : " + w
+		col = Art.ACCUSE if w == "tempête" else (Art.PROPOSAL if w == "agité" else Art.MUTED)
+	if lbl_weather.text != txt:
+		lbl_weather.text = txt
+		lbl_weather.add_theme_color_override("font_color", col)
+
+
+## Le temps de la saison, jour par jour : « Temps de la pêche : 7 calmes · 9 ordinaires · 3 agités · 1 de tempête ».
+func _sky_text(days: Array) -> String:
+	var n := {}
+	for w in days:
+		n[str(w)] = int(n.get(str(w), 0)) + 1
+	var parts := PackedStringArray()
+	for w in [["calme", "calmes"], ["ordinaire", "ordinaires"], ["agité", "agités"], ["tempête", "de tempête"]]:
+		if n.has(w[0]):
+			parts.append("%d %s" % [n[w[0]], w[1]])
+	return "Temps de la pêche : " + " · ".join(parts)
+
+
+## Le mauvais temps qu'ont essuyé ses sorties : « ; 2 sorties dans la tempête » (rien si le temps était clément).
+func _weather_note(outings: Array) -> String:
+	var storm := 0
+	var rough := 0
+	for o in outings:
+		match str(o.get("weather", "")):
+			"tempête":
+				storm += 1
+			"agité":
+				rough += 1
+	if storm > 0:
+		return " ; %d sortie%s dans la tempête" % [storm, "s" if storm > 1 else ""]
+	if rough > 0:
+		return " ; %d par temps agité" % rough
+	return ""
+
+
 func _day_word(f: float) -> String:
 	return "très mauvaise" if f < 0.6 else ("mauvaise" if f < 0.85 else ("ordinaire" if f < 1.15 else ("bonne" if f < 1.4 else "excellente")))
 
@@ -1349,6 +1408,7 @@ var _acc := 0.0
 
 func _process(delta: float) -> void:
 	lbl_clock.text = last_sim_label
+	_show_weather()
 	_acc += delta
 	if _acc >= 0.2:
 		_acc = 0.0

@@ -128,7 +128,8 @@ def test_the_lobby_reports_the_extinction_in_the_final_status(tmp_path):
         eng = Engine(cfg_for(tmp_path), bus, quiet=True)
         task = asyncio.create_task(eng.serve())
         await until(lambda: statuses and statuses[-1]["state"] == "idle")
-        bus.send_command({"type": "start_game", "config": request(speed="max", seasons=5, lake={"capacity": 12.0})})
+        bus.send_command({"type": "start_game", "config": request(speed="max", seasons=5, lake={"capacity": 12.0},
+                                                           climate=False, luck=0.0)})      # (ni temps ni chance : seule la pêche vide le lac)
         await until(lambda: statuses[-1]["state"] == "ended")
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)

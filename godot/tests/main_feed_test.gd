@@ -136,6 +136,17 @@ func _initialize() -> void:
 	check(councils > 0 and joined.count("CONSEIL") == councils, "une ligne « CONSEIL » par séance du conseil des élus (%d)" % councils)
 	check(routes > 0 and joined.count("l'ancien l'envoie vers") == routes, "une ligne « PATROUILLE » par route de la patrouille (%d)" % routes)
 	check(elections > 0 and "ÉLU" in joined and m.reps.size() == 4, "les élus des quatre villages sont notés : " + str(m.reps))
+	# le temps de la saison : dit dans le fil au début de chaque saison, jour par jour dans la barre du bas
+	var skies := 0
+	for ev in events:
+		if ev["type"] == "season_start" and ev["payload"].get("conditions", {}).get("climate") != null:
+			skies += 1
+	check(skies > 0 and joined.count("Temps de la pêche") == skies, "une ligne « Temps de la pêche » par saison (%d)" % skies)
+	check(m.weather_days.size() == 20, "le temps de chaque jour de pêche est connu de l'interface (%d)" % m.weather_days.size())
+	m.world.sim_time = float(m.weather_season - 1) * m.world.season_days + 3.0
+	m._show_weather()
+	check(m.lbl_weather.text == "Temps : " + str(m.weather_days[3]), "la barre du bas dit le temps du jour : " + m.lbl_weather.text)
+	check(joined.count("(visait") > 0, "une prise loin de la prise visée le dit dans le fil")
 	check(m.lbl_patrol.text.begins_with("Patrouille"), "la barre d'intervention dit où en est la patrouille du lac : " + m.lbl_patrol.text)
 	check(m.world.hamlet_pos.size() == 4, "la carte pose les quatre villages de la vallée de base")
 	check(not reputations.is_empty(), "le run de test fait bouger la confiance")

@@ -18,6 +18,7 @@ import logging
 import math
 import re
 import unicodedata
+import zlib
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,14 +103,43 @@ def render(text: str, values: dict) -> str:
     return re.sub(r"\{\{\s*(\w+)\s*\}\}", lambda m: str(values.get(m.group(1), m.group(0))), text)
 
 
+# Le registre d'un village de la vallée générée qui n'a pas de registre écrit à la main (`corpus/comptes-marche-<village>.md`) : le même
+# texte, avec l'une de ces trois phrases selon son nom.
+REGISTER_VARIANTS = [
+    "Le marché de {v} est petit : on y vend surtout le matin, entre voisins, et le registre n'est pas toujours tenu avec soin.",
+    "À {v}, chaque vente est consignée devant témoin ; le registre est tenu avec soin, mais les ventes faites hors du hameau n'y figurent pas.",
+    "Les pêcheurs de {v} vendent une part de leur prise au marché de {market} ; le registre de {v} ne compte que ce qui se vend sur place.",
+]
+
+
+def register_body(village: str, market: str) -> str:
+    variant = REGISTER_VARIANTS[zlib.crc32(village.encode()) % len(REGISTER_VARIANTS)].format(v=village, market=market or village)
+    return "\n\n".join([
+        f"# Registre du marché de {village}",
+        f"Le registre du marché de {village} consigne, saison après saison, ce que chaque pêcheur du hameau a vendu. Ces dernières "
+        "années, le poisson s'y vend autour de {{price}} écus la tonne. Une famille a besoin de quelque {{upkeep}} écus par saison "
+        "pour vivre.",
+        variant,
+        "Le registre ne mentionne que les ventes du hameau : ce que les pêcheurs des autres hameaux ramènent reste inconnu, sauf quand "
+        f"on décide de tout afficher sur la place de {market or village}."])
+
+
 class Retriever:
-    def __init__(self, corpus_dir: Path, values: dict):
+    def __init__(self, corpus_dir: Path, values: dict, villages: tuple = (), market: str = ""):
         self.passages: list[Passage] = []
         self.files: dict[str, Path] = {}          # document → fichier source
+        docs = []
         for path in sorted(Path(corpus_dir).glob("*.md")):
             meta, body = _front_matter(path.read_text(encoding="utf-8"))
-            doc_id = meta.get("id", path.stem)
-            self.files[doc_id] = path
+            self.files[meta.get("id", path.stem)] = path
+            docs.append((meta, body, path.stem))
+        for v in villages:                         # les villages de la vallée sans registre écrit en reçoivent un
+            doc_id = f"comptes-marche-{normalize(v)}"
+            if doc_id not in self.files:
+                docs.append(({"id": doc_id, "title": f"Registre du marché de {v}", "visible_to": v, "sim_time": "-180"},
+                             register_body(v, market), doc_id))
+        for meta, body, stem in docs:
+            doc_id = meta.get("id", stem)
             title = meta.get("title", doc_id)
             vis = [v.strip() for v in meta.get("visible_to", "all").split(",")]
             t = float(meta.get("sim_time", 0))
@@ -151,8 +181,9 @@ class VectorRetriever:
     sources vont au stockage objet, et chaque passage garde la clé de son document. Si la base ne répond plus en cours de
     partie, la recherche se rabat sur BM25, en mémoire : une décision n'est jamais privée de contexte pour autant."""
 
-    def __init__(self, corpus_dir: Path, values: dict, store, embedder, objects=None, min_score: float = 0.0):
-        self.local = Retriever(corpus_dir, values)
+    def __init__(self, corpus_dir: Path, values: dict, store, embedder, objects=None, min_score: float = 0.0,
+                 villages: tuple = (), market: str = ""):
+        self.local = Retriever(corpus_dir, values, villages, market)
         self.passages = self.local.passages
         self.by_id = {p.id: p for p in self.passages}
         self.store, self.embedder, self.objects, self.min_score = store, embedder, objects, min_score

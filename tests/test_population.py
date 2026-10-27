@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import json
-import random
 
 import pytest
 
 from filets.catalog import build_catalog
-from filets.config import ROOT, load_config, normalize
+from filets.config import load_config, normalize
 from filets.profiles import (ARCHETYPES, HAMLETS, archetype_defaults, build_population, custom_to_profiles,
                              validate_custom)
 from helpers import cfg_for, play
@@ -19,29 +18,13 @@ def spec(**kw):
     return {**base, **kw}
 
 
-def test_base_population_is_unchanged():
-    """La composition de base reste celle que le moteur générait avant le menu (run d'exemple fourni)."""
-    run = ROOT / "runs" / "exemple-async-scripted"
-    cfg_old = json.loads((run / "config.json").read_text(encoding="utf-8"))
-    start = json.loads((run / "events.jsonl").read_text(encoding="utf-8").splitlines()[0])["payload"]
-    cfg = load_config(None, {"population": {"fishers": cfg_old["population"]["fishers"]},
-                             "run": {"seed": cfg_old["run"]["seed"]}})
-    now = {p.id: p.public() for p in build_population(cfg, random.Random(cfg["run"]["seed"]))}
-    assert len(now) == len(start["agents"]) == 9
-    for a in start["agents"]:
-        for key, value in a.items():
-            if key in ("offset_days",):
-                continue
-            assert now[a["id"]][key] == value, (a["id"], key)
-
-
 def test_catalog_offers_the_default_fishers_all_set_to_ai_auto():
     cfg = load_config(None)
     cat = build_catalog(cfg)
     json.dumps(cat)                                   # sérialisable tel quel
     assert cat["hamlets"] == HAMLETS and len(cat["archetypes"]) == 4
     base = cat["base_population"]
-    generated = [p for p in build_population(cfg, random.Random(cfg["run"]["seed"])) if p.role == "pecheur"]
+    generated = [p for p in build_population(cfg) if p.role == "pecheur"]
     assert len(base) == len(generated) == 8
     # les mêmes personnages que le moteur génère par défaut...
     for s, p in zip(base, generated):

@@ -25,7 +25,8 @@ from typing import Callable
 import httpx
 
 from .bus import LocalBus
-from .catalog import COMMUNICATIONS, COUNCILS, LIMITS, LLM_OPTIONS, MODES, REFLECTIONS, SPEEDS, build_catalog, generate_world
+from .catalog import (COMMUNICATIONS, COUNCILS, FLEETS, LIMITS, LLM_OPTIONS, MODES, REFLECTIONS, SPEEDS, build_catalog,
+                      generate_world)
 from .config import deep_merge, load_config, normalize
 from .console import console_printer, print_summary
 from .pipeline import IndicatorPublisher
@@ -63,7 +64,7 @@ def validate_request(req: dict) -> list[str]:
     rate = req.get("event_rate", 0.3)
     if not (isinstance(rate, (int, float)) and not isinstance(rate, bool) and 0 <= rate <= 1):
         errs.append("la fréquence des événements doit être un nombre entre 0 et 1")
-    luck = req.get("luck", 0.25)
+    luck = req.get("luck", 0.4)
     if not (isinstance(luck, (int, float)) and not isinstance(luck, bool) and 0 <= luck <= 0.6):
         errs.append("l'aléa de la pêche doit être un nombre entre 0 et 0,6")
     if req.get("llm", "scripted") not in [o["id"] for o in LLM_OPTIONS]:
@@ -142,11 +143,9 @@ def build_game_config(base_cfg: dict, req: dict) -> dict:
 def used_models(cfg: dict) -> dict[str, set[str]]:
     """Fournisseur → modèles dont CETTE partie a réellement besoin : seuls les niveaux portés par un pêcheur (ou l'ancien)
     à IA comptent. Une partie où tous les pêcheurs ont le petit modèle n'exige pas le grand."""
-    from random import Random
-
     from .profiles import build_population
 
-    tiers = {p.tier for p in build_population(cfg, Random(int(cfg["run"]["seed"]))) if p.kind == "llm" and p.tier}
+    tiers = {p.tier for p in build_population(cfg) if p.kind == "llm" and p.tier}
     if tiers and "reflexe" in cfg["llm"]["tiers"]:
         tiers.add("reflexe")                      # le modèle de décision des réflexes (système 1) et des bulletins de vote
     wanted: dict[str, set[str]] = {}
@@ -342,6 +341,9 @@ class Engine:
         vallée pour les mêmes paramètres). Le moteur remplace la composition de base du catalogue, que le menu affiche."""
         errs = []
         got = {}
+        fleet = req.get("fleet", "mixte")
+        if fleet not in [f["id"] for f in FLEETS]:
+            errs.append("la flotte doit être l'une de : " + ", ".join(f["id"] for f in FLEETS))
         for key, label in (("villages", "villages"), ("fishers", "pêcheurs"), ("seed", "graine")):
             lo, hi = LIMITS[key]
             v = req.get(key)
@@ -354,12 +356,13 @@ class Engine:
         if errs:
             self.error = " · ".join(errs)
             self.publish_status()
+            self.error = None            # un refus se dit une fois : redemandé, le même refus doit se lire de nouveau
             return
         self.error = None
-        world = generate_world(self.base_cfg, got["villages"], got["fishers"], got["seed"])
+        world = generate_world(self.base_cfg, got["villages"], got["fishers"], got["seed"], fleet)
         self.catalog = {**self.catalog, "hamlets": world["hamlets"], "base_population": world["base_population"],
                         "generation": {"id": req.get("id"), "villages": got["villages"], "fishers": got["fishers"],
-                                       "seed": got["seed"]}}
+                                       "seed": got["seed"], "fleet": fleet}}
         self.publish_status()
 
     async def _prepare(self, cfg: dict) -> None:

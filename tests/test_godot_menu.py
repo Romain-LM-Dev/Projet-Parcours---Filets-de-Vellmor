@@ -8,7 +8,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
+import sys
+import time
 
 import pytest
 
@@ -71,3 +74,32 @@ def test_the_request_built_by_the_menu_is_played_by_the_engine(tmp_path):
     assert cfg["llm"]["reflection"] == "complete"
     assert max(e["payload"]["stock"] for e in events if e["type"] == "lake_update") <= 140.0 + 1e-6
     assert sum(1 for e in events if e["type"] == "season_end") == 2
+
+
+def test_setting_the_number_of_villages_regenerates_the_valley_on_a_real_engine(tmp_path):
+    """Le joueur règle « Villages » ou « Pêcheurs » : l'interface demande la vallée à un vrai moteur et affiche la nouvelle carte
+    (c'était le bouton « Générer la vallée » seul qui le faisait, et un refus du moteur restait invisible)."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    engine = subprocess.Popen([sys.executable, "-m", "filets", "serve", "--ws-port", str(port),
+                               "--set", f"output.runs_dir={tmp_path / 'runs'}"],
+                              cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
+    try:
+        t0 = time.monotonic()
+        while True:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                break
+            except OSError:
+                assert time.monotonic() - t0 < 30 and engine.poll() is None, "le moteur ne démarre pas"
+                time.sleep(0.2)
+        proc = subprocess.run([GODOT, "--headless", "--path", str(ROOT / "godot"), "-s", "res://tests/generate_test.gd", "--",
+                               f"--url=ws://127.0.0.1:{port}"], capture_output=True, text=True, timeout=120, encoding="utf-8")
+    finally:
+        engine.terminate()
+        engine.wait(15)
+    out = proc.stdout
+    assert "SCRIPT ERROR" not in out and "SCRIPT ERROR" not in proc.stderr, out + proc.stderr
+    assert "GENERATETEST fails=0" in out, out
+    assert proc.returncode == 0

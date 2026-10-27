@@ -67,10 +67,10 @@ Au lancement, Godot propose le menu **Nouvelle partie** tant que le moteur est e
 | Durée et hasard | nombre de saisons, graine (un même réglage et une même graine rejouent la même partie avec le faux LLM) |
 | La vallée | veillées (**conseil de la vallée**, par village, interdites), conseil (**un élu par village** ou tous les pêcheurs), **tours de parole** par veillée (1 à 3, 2 par défaut ; un seul en asynchrone), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
 | Le lac | **stock max** : la limite du stock, de 10 à 1000 t, ou *Auto* (12,5 t par pêcheur, qui suit alors le nombre de pêcheurs). C'est 100 % de la jauge : le lac part plein et ne la dépasse jamais. **Repeuplement** : le taux `r` du lac, de 0,1 à 2 par saison (1 = normal). Le menu rappelle ce que le lac renouvelle (`r·K/4` par saison) face à ce que les barques peuvent ramener. **Arrêter si le lac est vide** (coché par défaut) |
-| Saisons et hasard | **saisons de l'année et événements** (sécheresse, tempête, banc de poissons…), leur fréquence, et l'amplitude de la **réussite du jour** (0 : toujours la prise visée) |
+| Saisons et hasard | **saisons de l'année et événements** (sécheresse, tempête, banc de poissons…), leur fréquence, et l'amplitude de la **chance à la pêche** (0 : ni chance ni malchance, seul le temps compte) |
 | Moteur d'IA | faux LLM de test, **Ollama · rapide** (3B + 1,5B, recommandé), Ollama · qualité (7B + 1,5B) ou Groq ; le moteur vérifie avant de lancer (Ollama joignable, modèles présents, clé d'API) |
 | Réflexion | **Adaptative (système 1 / 2)** : un réflexe d'un nombre pour les prises de routine, la réflexion pour le reste ([détail](docs/architecture.md)). **Rapide** (une phrase courte, contexte allégé, réponse bornée : environ deux fois plus rapide) ou **Complète** (réponses libres, contexte entier : le profil de référence des expériences) |
-| Pêcheurs | de 1 à 24 : prénom, village, archétype, **bateau** (barque, chaloupe, cotre), expérience, avoir, dette par saison, « cerveau » (IA auto/grand/petit, ou règles). **Générer la vallée** : on choisit le nombre de **villages** (1 à 8) et de pêcheurs, le moteur génère la vallée d'après la graine, que l'on retouche ensuite |
+| Pêcheurs | de 1 à 24 : prénom, village, archétype, **bateau** (barque, chaloupe, cotre), expérience, avoir, dette par saison, « cerveau » (IA auto/grand/petit, ou règles). **Générer la vallée** : on choisit le nombre de **villages** (1 à 8), de pêcheurs et la **flotte** (petits bateaux, mixte, gros bateaux), le moteur génère la vallée d'après la graine, que l'on retouche ensuite ; elle se régénère dès qu'on change l'un de ces réglages ou la graine |
 | Disposition | un aperçu de la vallée, villages posés autour du lac : on glisse un pêcheur d'un village à l'autre ; **Composition de base** rétablit la vallée proposée par le moteur, tous en « IA auto » |
 | Vitesse | vitesse au départ (× 1/16 à × 16, ou maximale). En asynchrone avec une vraie IA, le menu propose la vitesse qui lui convient (× ¼ pour Ollama rapide, × 1/8 pour le 7B) et prévient si on choisit plus vite |
 
@@ -256,7 +256,7 @@ commence au printemps) :
 | Moment | Ce qui se passe |
 |---|---|
 | avant J0 | chaque village choisit son **élu** ; l'ancien envoie la **patrouille du lac** si le conseil en a voté une |
-| J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %) et décide de sa **prise visée** ; ce qu'il rapporte vraiment dépend de la réussite du jour |
+| J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %) et décide de sa **prise visée** ; ce qu'il rapporte vraiment dépend du temps de chaque jour, de sa chance, de la saison et des événements |
 | J20 | fermeture : une décision encore en cours est abandonnée et la sortie est perdue (`missed_window`, « sortie perdue ») |
 | J25 18:00 | veillée chez l'ancien : le **conseil de la vallée** (l'ancien et l'élu de chaque village), des veillées par village, ou aucune ; 1 à 3 tours de parole à tour de rôle (synchrone) ou une parole de chacun, de son côté (asynchrone) ; une parole pas prête à la fermeture est une « réplique perdue » |
 | J29 | fin de veillée : une proposition soutenue par **au moins la moitié des présents au conseil** devient règle pour la saison suivante |
@@ -280,13 +280,27 @@ ils ne peuvent prendre que la moitié du lac en une saison (6,25 t pour une chal
 règle vaut par pêcheur, quelle que soit la taille de son bateau : le grand bateau coûte plus et tente plus. Le caractère infléchit le
 bateau (le nouveau venu endetté a emprunté pour une barque, la famille ancienne a le plus gros).
 
-**La pêche n'est pas toujours bonne.** La prise réelle est la **prise visée** × la **réussite du jour** × la saison de l'année et les
-événements × l'expérience du pêcheur (±0,5 % par année d'écart à 15 ans) × la difficulté d'un lac bas (sous 30 % de la capacité, le poisson est
-plus dur à prendre), sans dépasser la cale (événement `catch` : `requested`, `landed`, `yield`, `luck`, `day`). La réussite du jour est
-tirée pour chaque pêcheur et chaque saison (la même quel que soit l'ordre dans lequel les barques rentrent) autour de 1, d'écart-type
-`economy.luck` (0,25), et **se prolonge d'une saison à l'autre** (`economy.luck_streak` : un bon jour en annonce un autre). Un pêcheur
-raconte sa journée dans sa mémoire (« j'en visais 4 t : mauvaise journée »). La déclaration à l'ancien garde la même proportion de la
-prise réelle : qui déclare tout reste honnête, quelle que soit sa journée.
+**La pêche n'est pas toujours bonne.** Le pêcheur décide d'une **prise visée** pour la saison ; elle est étalée sur
+`economy.outings` sorties (6), réparties sur la fenêtre de pêche (la première part un jour propre à chacun), et **chaque sortie rapporte
+selon sa journée** : le **temps du jour**, la **chance du pêcheur**, la saison de l'année et les événements, son expérience (±0,5 % par
+année d'écart à 15 ans) et la difficulté d'un lac bas (sous 30 % de la capacité, le poisson est plus dur à prendre). Une sortie ne dépasse
+pas sa part de la cale, de sorte qu'une saison de bons jours ne rattrape pas tout à fait une saison de tempêtes.
+
+* **Le temps** (`Climate.calendar`, `World.weather`) est tiré pour chaque saison, jour par jour, et **le même pour tout le lac** : calme,
+  ordinaire, agité ou tempête, avec une probabilité qui dépend de la saison de l'année (l'hiver est la saison des gros temps) et une
+  inertie (le temps d'hier se prolonge près d'une fois sur deux). Un mauvais jour pèse plus sur une barque que sur un cotre
+  (`BAD_DAY_BOATS`) ; un bon jour profite à tous. L'interface l'affiche (barre du bas, fil au début de chaque saison).
+* **La chance** est propre à chaque pêcheur : sa forme de la saison (`economy.luck_streak` : elle **se prolonge d'une saison à l'autre**,
+  un bon passage en annonce un autre) et sa forme du jour (qui se prolonge d'une sortie à l'autre) font varier chaque sortie autour de 1, d'un
+  écart-type `economy.luck` (0,4). Deux pêcheurs sous le même ciel ne font donc pas la même pêche. Le tout est tiré pour ce pêcheur et cette
+  saison : le résultat ne dépend pas de l'ordre dans lequel les barques rentrent.
+* Dans l'événement `catch` : `requested`, `landed`, `yield` et `luck` (moyennes de la saison) et `outings` (pour chaque sortie : `day`,
+  `weather`, `luck`, `yield`, `tonnes`). `economy.luck: 0` supprime la chance, l'expérience et la difficulté du lac bas : il ne reste que le temps.
+
+Un pêcheur raconte sa saison dans sa mémoire (« Sur 6 sorties : 2 par temps calme, 3 par temps ordinaire, 1 dans la tempête. J'en visais
+4 t : une mauvaise pêche »). La déclaration à l'ancien garde la même proportion de la prise réelle : qui déclare tout reste honnête, quelle
+que soit sa saison. La patrouille du lac mesure un pêcheur avec une probabilité proportionnelle à la part de ses sorties où elle était
+dans sa zone.
 
 **Saisons de l'année et événements** (`climate.py`, réglage `climate`). Chaque saison porte deux facteurs : ce que rapporte la pêche et
 la vitesse de repeuplement du lac.
@@ -306,11 +320,16 @@ de l'année et les événements en cours. Moyennées sur l'année, les saisons n
 
 **Une vallée générée** (génération procédurale, `profiles.build_population`). Le moteur tire la vallée de ses paramètres et de la
 graine : `population.villages` (1 à 8), `population.fishers`, `population.boat_mix` (la part de
-barques, de chaloupes et de cotres) ; mêmes paramètres, même vallée. Les villages sont pris dans l'ordre de `profiles.VILLAGE_NAMES`
-(Ostrel, Bramois, Tilque, Hennad, puis Varenne, Corbel, Mirande, Sauvet, Lormes, Quéran, Brevelle, Dunac), les pêcheurs répartis à peu près
-également (jamais plus de villages que de pêcheurs), les archétypes en cycle, l'expérience, l'avoir et les bateaux tirés. Le lac a une zone par
-village (sa rive) et le large. En ligne de commande : `python -m filets run --agents 14 --villages 6`. Dans le menu, **Générer la vallée**
-envoie `generate_world` au moteur, qui répond par un catalogue dont seule la vallée change ; le joueur retouche ensuite chaque fiche.
+barques, de chaloupes et de cotres ; le menu en propose trois, `catalog.FLEETS`) ; mêmes paramètres, même vallée. Les villages sont pris dans
+l'ordre de `profiles.VILLAGE_NAMES` (Ostrel, Bramois, Tilque, Hennad, puis Varenne, Corbel, Mirande, Sauvet, Lormes, Quéran, Brevelle, Dunac),
+les pêcheurs répartis à un près (jamais plus de villages que de pêcheurs), les caractères en cycle, l'expérience, l'avoir et les bateaux tirés,
+les prénoms pris parmi 48. **Chaque pêcheur a sa propre suite de tirages** (`<graine>|fisher|<i>`) : ajouter un pêcheur ne change aucune autre
+fiche, et changer le nombre de villages ne déplace que les gens. **La graine décide de la mise en place** : dans quel ordre les villages
+reçoivent leurs pêcheurs et dans quel ordre se succèdent les caractères, donc qui vit où change d'une graine à l'autre. Le lac a une zone par
+village (sa rive) et le large. En ligne de commande : `python -m filets run --agents 14 --villages 6`. Dans le menu, **régler le nombre de
+villages ou de pêcheurs, la flotte ou la graine** (ou cliquer sur **Générer la vallée**) envoie `generate_world` au moteur, qui répond par un catalogue dont seule la
+vallée change ; le joueur retouche ensuite chaque fiche. Les deux nombres suivent la liste (ajouter ou retirer un pêcheur les met à jour), il y a
+toujours un pêcheur au moins par village, et un refus du moteur s'affiche dans le menu.
 La carte de Godot pose les villages autour du lac (les quatre coins pour la vallée de base, puis les flancs).
 
 Population (cycle de quatre archétypes de la fiche, répartis dans les villages) :

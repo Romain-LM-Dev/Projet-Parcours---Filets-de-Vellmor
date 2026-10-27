@@ -28,7 +28,7 @@ def kinds(events, kind):
 def generated(**pop):
     cfg = load_config(None)
     cfg["population"].update(pop)
-    return [p for p in build_population(cfg, random.Random(int(cfg["run"]["seed"]))) if p.role == "pecheur"]
+    return [p for p in build_population(cfg) if p.role == "pecheur"]
 
 
 # ============================================================ la génération procédurale
@@ -47,7 +47,7 @@ def test_the_same_parameters_make_the_same_valley_and_another_seed_another_one()
     assert [(p.name, p.archetype, p.experience, p.wealth, p.boat) for p in again] == \
         [(p.name, p.archetype, p.experience, p.wealth, p.boat) for p in generated(villages=5, fishers=10)]
     cfg = load_config(None, {"run": {"seed": 7}, "population": {"villages": 5, "fishers": 10}})
-    other = [p for p in build_population(cfg, random.Random(7)) if p.role == "pecheur"]
+    other = [p for p in build_population(cfg) if p.role == "pecheur"]
     assert [p.experience for p in other] != [p.experience for p in again]
 
 
@@ -72,8 +72,13 @@ def test_a_valley_has_at_most_eight_villages(tmp_path):
 def test_the_boat_mix_chooses_the_boats_and_the_character_leans_it():
     big = generated(fishers=24, villages=4, boat_mix={"cotre": 1.0})
     assert {p.boat for p in big} == {"cotre"}
-    mixed = generated(fishers=24, villages=4, boat_mix={"barque": 1.0, "chaloupe": 1.0, "cotre": 1.0})
-    by = {a: [p.boat for p in mixed if p.archetype == a] for a in ("nouveau_venu", "ancienne_famille")}
+    by = {"nouveau_venu": [], "ancienne_famille": []}
+    for seed in range(1, 9):                                   # (assez de pêcheurs pour que le penchant se voie)
+        cfg = load_config(None, {"run": {"seed": seed}, "population": {"fishers": 24, "villages": 4,
+                                                                      "boat_mix": {"barque": 1.0, "chaloupe": 1.0, "cotre": 1.0}}})
+        for p in build_population(cfg):
+            if p.archetype in by:
+                by[p.archetype].append(p.boat)
     assert by["nouveau_venu"].count("barque") > by["nouveau_venu"].count("cotre")             # l'endetté a emprunté pour une barque
     assert by["ancienne_famille"].count("cotre") > by["ancienne_famille"].count("barque")
 
@@ -83,14 +88,21 @@ def test_the_menu_can_ask_for_a_valley(tmp_path):
     world = generate_world(cfg, 6, 14, 3)
     assert len(world["hamlets"]) == 6 and len(world["base_population"]) == 14
     assert all(s["kind"] == "llm" and s["boat"] in BOAT_NAMES for s in world["base_population"])
-    engine = Engine(cfg, LocalBus(), quiet=True)
+    bus, statuses = LocalBus(), []
+    bus.subscribe("status", statuses.append)
+    engine = Engine(cfg, bus, quiet=True)
     engine.generate({"villages": 6, "fishers": 14, "seed": 3, "id": "g1"})
     assert engine.catalog["generation"]["id"] == "g1" and len(engine.catalog["hamlets"]) == 6
     assert len(engine.catalog["base_population"]) == 14 and engine.status()["catalog"]["hamlets"] == world["hamlets"]
+    assert statuses[-1]["error"] is None and statuses[-1]["catalog"]["generation"]["id"] == "g1"
     engine.generate({"villages": 9, "fishers": 14, "seed": 3})                      # trop de villages : refusé, rien ne change
-    assert engine.error and len(engine.catalog["hamlets"]) == 6
+    assert "villages" in statuses[-1]["error"] and len(engine.catalog["hamlets"]) == 6
     engine.generate({"villages": 5, "fishers": 3, "seed": 3})
-    assert "au moins un pêcheur par village" in engine.error
+    refusal = statuses[-1]["error"]
+    assert "au moins un pêcheur par village" in refusal
+    seen = len(statuses)
+    engine.generate({"villages": 5, "fishers": 3, "seed": 3})            # le même refus, redemandé, se dit de nouveau
+    assert len(statuses) == seen + 1 and statuses[-1]["error"] == refusal and engine.error is None
 
 
 def test_a_game_can_be_started_from_a_generated_valley(tmp_path):
@@ -136,57 +148,102 @@ def test_no_catch_ever_exceeds_the_hold_of_the_boat(tmp_path):
         assert e["payload"]["landed"] <= world.hold[e["payload"]["agent"]] + 5e-4          # (la prise est arrondie au kilo près)
 
 
-# ============================================================ la réussite du jour
+# ============================================================ la pêche : le temps, la chance, les sorties
+def mean(outs, key):
+    return sum(o[key] for o in outs) / len(outs)
+
+
 def test_the_catch_is_not_always_the_target(tmp_path):
-    world, bus, _ = make_world(tmp_path, "chance", seasons=5, time__mode="sync", economy__luck=0.25, population__fishers=8)
+    world, bus, _ = make_world(tmp_path, "chance", seasons=5, time__mode="sync", economy__luck=0.4, climate__enabled=True,
+                               population__fishers=8)
     asyncio.run(world.run())
     catches = [e["payload"] for e in kinds(read_events(tmp_path, "chance"), "catch")]
     ratios = [c["yield"] for c in catches]
-    assert statistics.pstdev(ratios) > 0.08 and min(ratios) < 0.9 and max(ratios) > 1.1       # il y a de bons et de mauvais jours
-    for c in catches:                       # sauf si la cale ou le rationnement la limite, la prise est la prise visée × le rendement
-        capped = c["rationed"] or c["landed"] >= world.hold[c["agent"]] - 1e-6
-        assert capped or c["landed"] == pytest.approx(c["requested"] * c["yield"], abs=0.01)
+    assert statistics.pstdev(ratios) > 0.15 and min(ratios) < 0.8 and max(ratios) > 1.2         # il y a de bonnes et de mauvaises pêches
+    for c in catches:
+        outs = c["outings"]
+        assert len(outs) == world.econ["outings"] and sum(o["tonnes"] for o in outs) == pytest.approx(c["landed"], abs=0.005)
+        assert c["yield"] == pytest.approx(mean(outs, "yield"), abs=0.002) and c["luck"] == pytest.approx(mean(outs, "luck"), abs=0.002)
+        if not c["rationed"] and c["stock_after"] > 0.01:      # chaque sortie rapporte sa part de la prise visée, dans la limite de la cale
+            expected = sum(min(c["requested"] * o["yield"], world.hold[c["agent"]]) for o in outs) / len(outs)
+            assert c["landed"] == pytest.approx(expected, abs=0.01)
+
+
+def test_each_fisher_has_his_own_luck(tmp_path):
+    """Au même lac, sous le même ciel, tous n'ont pas la même chance : certains ont une mauvaise saison, d'autres une très bonne."""
+    world = make_world(tmp_path, "chacun", economy__luck=0.4, population__fishers=8)[0]
+    means = [mean(world.outings(f, s), "luck") for f in world.fishers for s in (1, 2, 3)]
+    assert statistics.pstdev(means) > 0.15 and min(means) < 0.8 and max(means) > 1.2
+    for s in (1, 2, 3):                                         # et la chance de chacun change d'une sortie à l'autre
+        assert all(len({o["luck"] for o in world.outings(f, s)}) > 1 for f in world.fishers)
+
+
+def test_the_weather_is_the_same_for_the_whole_lake(tmp_path):
+    world = make_world(tmp_path, "ciel", economy__luck=0.4, climate__enabled=True, population__fishers=8)[0]
+    for season in (1, 2, 3, 4):
+        sky = world.weather(season)
+        assert len(sky) == 20 and set(sky) <= {"calme", "ordinaire", "agité", "tempête"}
+        assert sky == world.weather(season)                                          # tirée une fois pour la saison
+        for f in world.fishers:
+            assert all(o["weather"] == sky[int(o["day"])] for o in world.outings(f, season))
+    assert world.weather(1) != world.weather(2) or world.weather(2) != world.weather(3)
+    winters = sum(x in ("agité", "tempête") for s in range(4, 80, 4) for x in world.weather(s))
+    summers = sum(x in ("agité", "tempête") for s in range(2, 80, 4) for x in world.weather(s))
+    assert winters > 2 * summers                                                      # l'hiver est la saison des gros temps
+
+
+def test_a_rough_day_hurts_the_small_boats_most_and_a_calm_one_helps_everyone():
+    c = Climate({"climate": {"enabled": True}}, 1)
+    for season in (1, 2, 3, 4):
+        storm = [c.day_factor("tempête", season, b) for b in ("barque", "chaloupe", "cotre")]
+        assert storm[0] < storm[1] < storm[2] < 0.5
+        assert all(c.day_factor("calme", season, b) > 1.0 for b in ("barque", "chaloupe", "cotre"))
+    off = Climate({"climate": {"enabled": False}}, 1)
+    assert off.calendar(1, 20) == ["ordinaire"] * 20 and off.day_factor("tempête", 1, "barque") == 1.0
+
+
+def test_the_calendar_is_seeded_and_the_weather_lingers():
+    a, b = Climate({"climate": {"enabled": True}}, 7), Climate({"climate": {"enabled": True}}, 8)
+    assert a.calendar(3, 20) == Climate({"climate": {"enabled": True}}, 7).calendar(3, 20) and a.calendar(3, 20) != b.calendar(3, 20)
+    days = [x for s in range(1, 60) for x in a.calendar(s, 20)]
+    same = sum(x == y for x, y in zip(days, days[1:])) / (len(days) - 1)
+    assert same > 0.4                                      # le temps d'hier se prolonge plus souvent que le hasard seul
 
 
 def test_the_day_is_the_same_whatever_the_order_the_boats_come_home(tmp_path):
-    a = make_world(tmp_path, "ordre-a", economy__luck=0.3)[0]
-    b = make_world(tmp_path, "ordre-b", economy__luck=0.3)[0]
-    first = [a.outing_yield(x, 1) for x in a.fishers]
-    second = [b.outing_yield(x, 1) for x in reversed(b.fishers)][::-1]
+    a = make_world(tmp_path, "ordre-a", economy__luck=0.3, climate__enabled=True)[0]
+    b = make_world(tmp_path, "ordre-b", economy__luck=0.3, climate__enabled=True)[0]
+    first = [a.outings(x, 1) for x in a.fishers]
+    second = [b.outings(x, 1) for x in reversed(b.fishers)][::-1]
     assert first == second
 
 
 def test_a_good_day_follows_a_good_day(tmp_path):
-    """La réussite se prolonge d'une saison à l'autre (`luck_streak`) : la forme du pêcheur est mémorisée."""
-    world = make_world(tmp_path, "forme", economy__luck=0.3, economy__luck_streak=0.9)[0]
-    forms = []
-    for season in range(1, 41):
-        world.outing_yield(world.fishers[0], season)
-        forms.append(world.fishers[0].form)
-    pairs = list(zip(forms, forms[1:]))
-    same_sign = sum(1 for x, y in pairs if x * y > 0)
-    assert same_sign > 0.7 * len(pairs)
-    flat = make_world(tmp_path, "forme2", economy__luck=0.3, economy__luck_streak=0.0)[0]
-    flat_forms = []
-    for season in range(1, 41):
-        flat.outing_yield(flat.fishers[0], season)
-        flat_forms.append(flat.fishers[0].form)
-    assert sum(1 for x, y in zip(flat_forms, flat_forms[1:]) if x * y > 0) < same_sign
+    """La chance se prolonge d'une saison à l'autre, et d'une sortie à l'autre (`luck_streak`)."""
+    def probe(streak):
+        world = make_world(tmp_path, f"forme{streak}", economy__luck=0.3, economy__luck_streak=streak)[0]
+        forms, jumps = [], []
+        for season in range(1, 41):
+            outs = world.outings(world.fishers[0], season)
+            forms.append(world.fishers[0].form)
+            jumps += [abs(x["luck"] - y["luck"]) for x, y in zip(outs, outs[1:])]
+        same_sign = sum(1 for x, y in zip(forms, forms[1:]) if x * y > 0)
+        return same_sign, statistics.mean(jumps)
+
+    steady, flat = probe(0.9), probe(0.0)
+    assert steady[0] > 0.7 * 39 and steady[0] > flat[0]                               # la forme de la saison se prolonge
+    assert steady[1] < flat[1]                                                        # un bon jour en annonce un autre
 
 
 def test_a_low_lake_is_harder_to_fish_and_experience_helps(tmp_path):
     world = make_world(tmp_path, "bas", economy__luck=0.001, economy__luck_streak=0.0)[0]
     a = world.fishers[0]
-    full, _ = world.outing_yield(a, 1)
-    a.form = 0.0
-    world.lake.stock = 0.1 * world.capacity
-    low, _ = world.outing_yield(a, 1)
+    full = mean(world.outings(a, 1), "yield")
+    low = mean(world.outings(a, 2, stock=0.1 * world.capacity), "yield")
     assert low < 0.8 * full
     veteran, novice = world.fishers[0], world.fishers[1]
     veteran.profile.experience, novice.profile.experience = 40, 2
-    world.lake.stock = world.capacity
-    veteran.form = novice.form = 0.0
-    assert world.outing_yield(veteran, 1)[0] > world.outing_yield(novice, 1)[0]
+    assert mean(world.outings(veteran, 3), "yield") > mean(world.outings(novice, 3), "yield")
 
 
 def test_no_luck_means_the_target_is_the_catch(tmp_path):
@@ -194,8 +251,24 @@ def test_no_luck_means_the_target_is_the_catch(tmp_path):
     asyncio.run(world.run())
     for e in kinds(read_events(tmp_path, "sans-chance"), "catch"):
         p = e["payload"]
-        assert p["yield"] == 1.0 and p["luck"] == 1.0
+        assert p["yield"] == 1.0 and p["luck"] == 1.0 and {o["weather"] for o in p["outings"]} == {"ordinaire"}
         assert p["rationed"] or p["landed"] == pytest.approx(p["requested"], abs=0.01)
+
+
+def test_the_patrol_measures_a_boat_in_proportion_to_the_outings_it_met(tmp_path):
+    world = make_world(tmp_path, "ronde", population__elder=False)[0]
+    world.patrol_legs[1] = [{"zone": "Ostrel", "from_day": 0.25, "to_day": 10.0}, {"zone": "large", "from_day": 10.0, "to_day": 20.0}]
+    assert world.patrolled(1, "Ostrel", [1.0, 5.0, 12.0, 15.0]) == 0.5 and world.patrolled(1, "Ostrel", [12.0, 15.0]) == 0.0
+    assert world.patrolled(1, "Tilque", [1.0, 12.0]) == 0.0 and world.patrolled(2, "Ostrel", [1.0]) == 0.0
+    assert world.patrolled(1, "large", [3.0, 11.0, 19.9]) == pytest.approx(2 / 3)
+
+
+def test_a_season_of_fishing_is_remembered_with_its_weather(tmp_path):
+    world, bus, _ = make_world(tmp_path, "carnet", seasons=2, time__mode="sync", economy__luck=0.4, climate__enabled=True)
+    asyncio.run(world.run())
+    for a in world.fishers:
+        notes = [m.text for m in a.memory.items if m.kind == "peche"]
+        assert any(f"Sur {world.econ['outings']} sorties : " in t for t in notes) and len(a.outings) == 2
 
 
 # ============================================================ saisons de l'année et événements

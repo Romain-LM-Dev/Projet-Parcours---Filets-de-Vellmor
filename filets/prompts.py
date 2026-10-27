@@ -67,10 +67,11 @@ def day_line(obs: dict) -> str:
 def boat_line(obs: dict) -> str:
     lo, hi = obs.get("min_catch", 0.0), round(obs["boat_capacity"], 2)
     if obs.get("boat"):
-        # la prise visée n'est pas la prise réelle : la réussite du jour, la saison de l'année et les événements la font varier
+        # la prise visée n'est pas la prise réelle : le temps de chaque sortie, la chance, la saison de l'année et les événements la font varier
         aim = f"de {lo:g} à {hi:g} t" if lo else f"jusqu'à {hi:g} t"
-        return (f"Ton bateau est une {obs['boat']} : tu peux viser {aim} par saison ; ce que tu prends vraiment dépend de la "
-                "réussite du jour, de la saison de l'année et des événements.")
+        return (f"Ton bateau est une {obs['boat']} : tu peux viser {aim} par saison, en plusieurs sorties ; ce que tu prends vraiment "
+                "dépend du temps de chaque jour (les petits bateaux souffrent le plus par gros temps), de ta chance du moment, "
+                "de la saison de l'année et des événements.")
     if lo:
         return f"Une sortie rapporte au moins {lo:g} t (on ne revient jamais bredouille) et au plus {hi:g} t par saison."
     return f"Une sortie rapporte au plus {hi:g} t par saison."

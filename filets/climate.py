@@ -37,11 +37,25 @@ EVENTS = {
 }
 
 
+# La météo de chaque jour de pêche, la même pour tout le lac : son effet (avant normalisation) et sa fréquence selon la saison de
+# l'année. Un jour agité ou de tempête rapporte bien moins, surtout aux petites barques (`BAD_DAY_BOATS`).
+DAYS = {"calme": 1.25, "ordinaire": 1.0, "agité": 0.6, "tempête": 0.15}
+DAY_WEIGHTS = {
+    "printemps": {"calme": 0.25, "ordinaire": 0.50, "agité": 0.20, "tempête": 0.05},
+    "été": {"calme": 0.35, "ordinaire": 0.50, "agité": 0.13, "tempête": 0.02},
+    "automne": {"calme": 0.20, "ordinaire": 0.45, "agité": 0.25, "tempête": 0.10},
+    "hiver": {"calme": 0.10, "ordinaire": 0.35, "agité": 0.30, "tempête": 0.25},
+}
+STAY = 0.45                                         # chance que le temps d'hier se prolonge aujourd'hui
+BAD_DAY_BOATS = {"barque": 1.4, "chaloupe": 1.0, "cotre": 0.7}      # combien un mauvais jour pèse sur chaque bateau
+
+
 class Climate:
     """La saison de l'année et les événements en cours, d'une saison de jeu à l'autre."""
 
     def __init__(self, cfg: dict, seed: int):
         c = cfg.get("climate") or {}
+        self.seed = seed
         self.enabled = bool(c.get("enabled", True))
         self.rate = float(c.get("event_rate", 0.3))
         self.off = set(c.get("disabled_events") or ())
@@ -81,6 +95,32 @@ class Climate:
             ev = EVENTS[e["kind"]]
             out *= ev.get("boats", {}).get(boat, ev.get("yield", 1.0))
         return out
+
+    def calendar(self, season: int, n_days: int) -> list[str]:
+        """La météo de chacun des `n_days` jours de pêche de la saison : le temps d'hier se prolonge (`STAY`), sinon il est tiré selon la
+        saison de l'année. Tirée d'un hasard propre à la saison : la même pour tout le lac, quel que soit l'ordre des barques."""
+        if not self.enabled:
+            return ["ordinaire"] * n_days
+        weights = DAY_WEIGHTS[CYCLE[(season - 1) % len(CYCLE)]["name"]]
+        labels = list(weights)
+        rng = random.Random(f"{self.seed}|days|{season}")
+        today = rng.choices(labels, [weights[k] for k in labels])[0]
+        out = []
+        for _ in range(n_days):
+            out.append(today)
+            if rng.random() >= STAY:
+                today = rng.choices(labels, [weights[k] for k in labels])[0]
+        return out
+
+    def day_factor(self, label: str, season: int, boat: str) -> float:
+        """Ce que rapporte un jour de cette météo à ce bateau (en moyenne 1 sur la saison : l'effet de la saison de l'année est dans
+        `yield_for`). Un mauvais jour pèse plus sur une barque que sur un cotre ; un bon jour profite à tous."""
+        if not self.enabled:
+            return 1.0
+        weights = DAY_WEIGHTS[CYCLE[(season - 1) % len(CYCLE)]["name"]]
+        f = DAYS[label] / sum(weights[k] * DAYS[k] for k in weights)
+        bad = 1.0 - f
+        return f if bad <= 0 else max(0.0, 1.0 - bad * BAD_DAY_BOATS.get(boat, 1.0))
 
     def conditions(self) -> dict:
         return {"enabled": self.enabled, "climate": self.cycle["name"] if self.enabled else None,

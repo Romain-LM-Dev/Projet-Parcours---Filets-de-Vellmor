@@ -40,10 +40,13 @@ economy:
     chaloupe: {capacity: 7.0, upkeep: 50}
     cotre: {capacity: 11.0, upkeep: 110}
   min_catch: 1                # prise minimale visée d'une sortie (tonnes) : on ne part pas pour rien
-  # La pêche n'est pas toujours bonne : la prise réelle est la prise visée × la réussite du jour × la saison de l'année et les
-  # événements (voir `climate`) × l'expérience du pêcheur, plus dure quand le lac est bas. La réussite du jour varie de ±`luck`
-  # (écart-type) autour de 1 et se prolonge d'une saison à l'autre (`luck_streak` : un bon jour en annonce un autre). 0 : aucun aléa.
-  luck: 0.25
+  # La pêche n'est pas toujours bonne : la prise visée est étalée sur `outings` sorties, et chacune rapporte selon le temps du jour
+  # (le même pour tout le lac, plus rude pour les petits bateaux), la saison de l'année et les événements (voir `climate`),
+  # l'expérience du pêcheur (plus dure quand le lac est bas) et sa chance. La chance varie de ±`luck` (écart-type) autour de 1 :
+  # moitié forme de la saison, qui se prolonge d'une saison à l'autre, moitié forme du jour (`luck_streak` : un bon jour en
+  # annonce un autre). 0 : ni chance ni malchance (seul le temps compte).
+  outings: 6
+  luck: 0.4
   luck_streak: 0.5
 
 scenario:

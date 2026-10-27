@@ -86,9 +86,20 @@ SKILL_STEP = 0.005             # rendement gagné par année d'expérience au-de
 
 
 def day_word(factor: float) -> str:
-    """Ce que rapporte une sortie par rapport à la prise visée, dit comme un pêcheur : « une bonne journée »."""
+    """Ce que rapporte la pêche par rapport à la prise visée, dit comme un pêcheur : « une bonne pêche »."""
     return ("très mauvaise" if factor < 0.6 else "mauvaise" if factor < 0.85 else "ordinaire" if factor < 1.15
             else "bonne" if factor < 1.4 else "excellente")
+
+
+WEATHER_WORD = {"calme": "par temps calme", "ordinaire": "par temps ordinaire", "agité": "par temps agité",
+                "tempête": "dans la tempête"}
+
+
+def outings_text(outs: list[dict]) -> str:
+    """Les sorties d'une saison, dites par le pêcheur : le temps qu'il a fait à chacune."""
+    seen = {w: sum(o["weather"] == w for o in outs) for w in WEATHER_WORD}
+    return f"Sur {len(outs)} sortie{'s' if len(outs) > 1 else ''} : " + ", ".join(
+        f"{k} {WEATHER_WORD[w]}" for w, k in seen.items() if k) + "."
 
 
 @dataclass
@@ -164,7 +175,6 @@ class World:
         self.advised_speed = advised_speed   # vitesse conseillée en asynchrone avec ce moteur d'IA (voir `catalog.LLM_OPTIONS`)
         self.ended = False
         seed = int(cfg["run"]["seed"])
-        self.rng = random.Random(seed)
         t = cfg["time"]
         self.T = t
         self.clock = SimClock(t["season_days"], t["sim_hours_per_second"], t["idle_speedup"], t["fast"])
@@ -199,7 +209,7 @@ class World:
 
         self.agents: dict[str, Agent] = {}
         lo, hi = t["async_offset_days"]
-        for i, p in enumerate(build_population(cfg, self.rng)):
+        for i, p in enumerate(build_population(cfg)):
             arng = random.Random(seed * 1000 + i)
             self.agents[p.id] = Agent(p, memory_of(p.id), arng, p.wealth, offset_days=round(arng.uniform(lo, hi), 3))
         self.fishers = [a for a in self.agents.values() if a.is_fisher]
@@ -222,11 +232,12 @@ class World:
         values = {"capacity": f"{self.capacity:.0f}", "half_capacity": f"{self.capacity / 2:.0f}",
                   "n_fishers": len(self.fishers), "price": self.econ["price_per_tonne"],
                   "upkeep": self.econ["upkeep_per_season"]}
+        places = (tuple(self.hamlets), self.elder.profile.hamlet if self.elder else "")     # (registres des villages sans registre écrit)
         if self.vectors is not None:
             self.retriever = VectorRetriever(ROOT / cfg["rag"]["corpus_dir"], values, self.vectors, self.vectors.embedder,
-                                             self.objects, float(cfg["rag"].get("min_score", 0.0)))
+                                             self.objects, float(cfg["rag"].get("min_score", 0.0)), *places)
         else:
-            self.retriever = Retriever(ROOT / cfg["rag"]["corpus_dir"], values)
+            self.retriever = Retriever(ROOT / cfg["rag"]["corpus_dir"], values, *places)
         self.router = LLMRouter(cfg, self.clock, self.events, seed, self.ctl)
         self.norms: list[Norm] = []          # historique complet, dans l'ordre d'adoption
         self.promises: dict[tuple[str, int], tuple[float, str]] = {}
@@ -236,7 +247,7 @@ class World:
         self.reports: dict[tuple[str, int], dict] = {}
         self.lies: dict[str, dict] = {}
         self.trust = {o: {s.id: TRUST_START for s in self.fishers if s.id != o} for o in self.agents}
-        # la détection : sorties de chaque saison ({agent, zone, landed, secret, patrol, day, event_id}), indices (payload de `clue`
+        # la détection : sorties de chaque saison ({agent, zone, landed, secret, patrol, event_id}), indices (payload de `clue`
         # + saison, instant), comptes du lac, accusations ((instant, accusé, accusateur)), et ce que la vallée tient pour établi
         # ((agent, saison) -> {value, t, how, secret}) ; ses propres tirages, pour ne pas déplacer les autres hasards
         self.detection = {**DETECTION, **(self.scn.get("detection") or {})}
@@ -434,7 +445,7 @@ class World:
             return v * (1 + rng.uniform(-err, err))
 
         for t in trips:
-            if t["patrol"] and rng.random() < det["patrol"]:
+            if t["patrol"] and rng.random() < det["patrol"] * t["patrol"]:
                 clue("patrouille", elder, t, noisy(t["landed"], det["patrol_error"]))
             for o in self.fishers:                 # les barques qui pêchaient dans la même zone
                 mine = by_agent.get(o.id)
@@ -543,34 +554,47 @@ class World:
         self.events.emit("patrol", {"state": "installed" if installed else "lifted", "effective_season": season + 1,
                                     "proposal_id": s.id, "for": yes, "voters": voters, "cost": self.patrol_cfg["cost"]})
 
-    def patrolled(self, season: int, zone: str, day: float) -> bool:
-        """La patrouille se trouvait-elle dans cette zone ce jour-là (jours depuis le début de la saison) ?"""
-        return any(leg["zone"] == zone and leg["from_day"] <= day < leg["to_day"] for leg in self.patrol_legs.get(season, []))
+    def patrolled(self, season: int, zone: str, days: list[float]) -> float:
+        """La part de ces jours (depuis le début de la saison) où la patrouille se trouvait dans cette zone."""
+        legs = [leg for leg in self.patrol_legs.get(season, []) if leg["zone"] == zone]
+        return sum(any(leg["from_day"] <= d < leg["to_day"] for leg in legs) for d in days) / len(days)
 
-    def outing_day(self, agent: Agent, season: int) -> float:
-        """Le jour de la fenêtre de pêche où part la barque : tiré à l'avance et étalé sur la fenêtre, le même dans les deux modes
-        (la prise s'applique à l'instant où l'agent a fini de réfléchir ; la patrouille, elle, suit le calendrier de la saison)."""
-        u = (zlib.crc32(f"{self.cfg['run']['seed']}|day|{agent.id}|{season}".encode()) % 10000) / 10000
-        lo, hi = self.T["fishing_open_day"], self.T["fishing_close_day"]
-        return round(lo + u * (hi - lo - 0.01), 2)
+    def weather(self, season: int) -> list[str]:
+        """Le temps de chaque jour de la fenêtre de pêche de la saison, le même pour tout le lac (voir `Climate.calendar`)."""
+        return self.climate.calendar(season, int(self.T["fishing_close_day"]))
 
-    def outing_yield(self, agent: Agent, season: int) -> tuple[float, float]:
-        """(rendement de la sortie, réussite du jour) : ce que la sortie rapporte par rapport à la prise visée. La réussite du jour
-        est tirée pour ce pêcheur et cette saison (la même quel que soit l'ordre dans lequel les barques rentrent) ; elle se
-        prolonge d'une saison à l'autre (`economy.luck_streak`). S'y ajoutent son expérience, le lac bas (le poisson est plus dur
-        à prendre sous `LOW_LAKE`), la saison de l'année et les événements. `economy.luck: 0` : toujours la prise visée."""
-        amp = float(self.econ.get("luck", 0.0))
-        weather = self.climate.yield_for(agent.profile.boat)
-        if amp <= 0:
-            return weather, 1.0
-        rng = random.Random(f"{self.cfg['run']['seed']}|luck|{agent.id}|{season}")
-        keep = float(self.econ.get("luck_streak", 0.5))
-        agent.form = max(-2.5, min(2.5, keep * agent.form + math.sqrt(max(0.0, 1 - keep * keep)) * rng.gauss(0, 1)))
-        luck = max(0.3, 1 + amp * agent.form)
-        skill = 1 + SKILL_STEP * (min(max(agent.profile.experience, 0), 40) - 15)
-        ratio = self.lake.stock / self.capacity
-        density = 1.0 if ratio >= LOW_LAKE else 0.55 + 1.5 * ratio
-        return luck * skill * weather * density, luck
+    def outings(self, agent: Agent, season: int, stock: float | None = None) -> list[dict]:
+        """Les sorties de ce pêcheur cette saison, étalées sur la fenêtre de pêche (la première part un jour propre à chacun) : pour
+        chacune, le jour, le temps qu'il faisait (le même pour tout le lac, voir `weather`), la chance du pêcheur et ce que la
+        sortie rapporte par rapport à ce qu'il visait. Sa chance mêle sa forme de la saison (elle se prolonge d'une saison à l'autre,
+        `economy.luck_streak`) et sa forme du jour (de sortie en sortie) ; s'y ajoutent la saison de l'année, les événements, la
+        tenue de son bateau par gros temps, son expérience et le lac bas (le poisson est plus dur à prendre sous `LOW_LAKE`).
+        Tout est tiré pour ce pêcheur et cette saison : les mêmes quel que soit l'ordre dans lequel les barques rentrent.
+        `economy.luck: 0` : ni chance ni malchance, ni expérience ni lac bas, seulement le temps."""
+        if season in agent.outings:
+            return agent.outings[season]
+        seed, boat = self.cfg["run"]["seed"], agent.profile.boat
+        amp, keep = float(self.econ.get("luck", 0.0)), float(self.econ.get("luck_streak", 0.5))
+        n, (lo, hi) = max(1, int(self.econ.get("outings", 6))), (self.T["fishing_open_day"], self.T["fishing_close_day"])
+        first = (zlib.crc32(f"{seed}|day|{agent.id}|{season}".encode()) % 10000) / 10000
+        base, weather = self.climate.yield_for(boat), self.weather(season)
+        if amp > 0:
+            ratio = (self.lake.stock if stock is None else stock) / self.capacity
+            base *= (1 + SKILL_STEP * (min(max(agent.profile.experience, 0), 40) - 15)) * \
+                (1.0 if ratio >= LOW_LAKE else 0.55 + 1.5 * ratio)
+        rng, fresh = random.Random(f"{seed}|luck|{agent.id}|{season}"), math.sqrt(max(0.0, 1 - keep * keep))
+        agent.form = max(-2.5, min(2.5, keep * agent.form + fresh * rng.gauss(0, 1)))
+        mood = rng.gauss(0, 1)
+        outs = []
+        for k in range(n):
+            day = round(lo + (k + first) / n * (hi - lo - 0.01), 2)
+            label = weather[min(int(day), len(weather) - 1)]
+            mood = max(-2.5, min(2.5, keep * mood + fresh * rng.gauss(0, 1)))
+            luck = max(0.1, 1 + amp * (0.6 * agent.form + 0.8 * mood))
+            outs.append({"day": day, "weather": label, "luck": round(luck, 3),
+                         "yield": round(luck * base * self.climate.day_factor(label, season, boat), 3)})
+        agent.outings[season] = outs
+        return outs
 
     def secret_zone(self, agent: Agent) -> str:
         """Où un interdit va pêcher en cachette : loin de sa rive (ses voisins le connaissent), plutôt au large."""
@@ -933,26 +957,29 @@ class World:
         before = self.lake.stock
         obs = decision["payload"]["observed"]
         stock_observed = obs["stock_estimate"]
-        # la pêche n'est pas toujours bonne : la prise visée × la réussite du jour × la saison de l'année et les événements, sans
-        # jamais dépasser la cale du bateau ; puis, en synchrone, le rationnement si la flotte demande plus que le lac
-        factor, luck = self.outing_yield(agent, season)
-        landed = round(self.lake.take(min(requested * factor, self.hold[agent.id]) * ration), 3)
-        day = self.outing_day(agent, season)
+        # la pêche n'est pas toujours bonne : la prise visée est étalée sur les sorties, et chacune rapporte selon sa journée (le
+        # temps, la chance, la saison de l'année, les événements) sans jamais dépasser sa part de la cale ; puis, en synchrone, le
+        # rationnement si la flotte demande plus que le lac
+        outs = self.outings(agent, season, stock_at_action)
+        wanted = [min(requested * o["yield"], self.hold[agent.id]) / len(outs) * ration for o in outs]
+        landed = round(self.lake.take(sum(wanted)), 3)
+        tonnes = [round(landed * w / sum(wanted), 3) if landed else 0.0 for w in wanted]
+        tonnes[-1] = round(landed - sum(tonnes[:-1]), 3)
+        factor, luck = (sum(o[k] for o in outs) / len(outs) for k in ("yield", "luck"))
         ev = self.events.emit("catch", {
             "agent": agent.id, "hamlet": agent.profile.hamlet, "requested": requested, "landed": landed,
             "stock_observed": stock_observed, "stock_before": round(before, 3), "stock_after": round(self.lake.stock, 3),
             "decision_event_id": decision["event_id"], "info_horizon": round(horizon, 6), "rationed": ration < 1.0,
             "stock_at_horizon": obs["stock_true"],
             "stock_at_action": round(before if stock_at_action is None else stock_at_action, 3),
-            "zone": zone, "secret": secret, "yield": round(factor, 3), "luck": round(luck, 3), "day": day,
+            "zone": zone, "secret": secret, "yield": round(factor, 3), "luck": round(luck, 3),
+            "outings": [{**o, "tonnes": t} for o, t in zip(outs, tonnes)],
         }, actor=agent.id)
-        # la sortie : où, combien, quel jour, et si la patrouille du lac était dans cette zone ce jour-là (lu le soir de la veillée)
+        # la saison de pêche : où, combien, et la part des sorties où la patrouille du lac était dans cette zone (lu le soir de la veillée)
         self.trips.setdefault(season, []).append({"agent": agent.id, "zone": zone, "landed": landed, "secret": secret,
-                                                  "patrol": self.patrolled(season, zone, day), "day": day,
+                                                  "patrol": self.patrolled(season, zone, [o["day"] for o in outs]),
                                                   "event_id": ev["event_id"]})
         agent.catches[season] = agent.catches.get(season, 0.0) + landed
-        agent.aimed[season] = agent.aimed.get(season, 0.0) + requested
-        agent.day_factor[season] = factor
         self.lake_update("catch", -landed)
         income = landed * self.econ["price_per_tonne"]
         agent.wealth += income
@@ -973,9 +1000,9 @@ class World:
         if landed - said > 0.05:
             self.lies[rep["event_id"]] = {"agent": agent.id, "season": season, "declared": said, "landed": landed,
                                           "found_t": None, "report_event_id": rep["event_id"]}
-        note = f"J'ai pêché {landed:g} t cette saison ; le lac m'a semblé contenir environ {stock_observed:.0f} t."
+        note = f"J'ai pêché {landed:g} t cette saison ; le lac m'a semblé contenir environ {stock_observed:.0f} t. {outings_text(outs)}"
         if abs(factor - 1.0) >= 0.15 and requested > 0:
-            note += f" J'en visais {requested:g} : {day_word(factor)} journée."
+            note += f" J'en visais {requested:g} : {day_word(factor)} pêche."
         elif landed + 1e-6 < requested * ration or ration < 1:
             note += f" J'en voulais {requested:g}, je n'ai pas pu tout prendre."
         if landed - said > 0.05:
@@ -1862,6 +1889,7 @@ class World:
         """Début de saison, commun aux deux orchestrations."""
         self.season = season
         self.conditions = cond = self.climate.begin(season)
+        cond["days"] = self.weather(season)                    # le temps de chaque jour de pêche, connu de l'interface
         self.events.emit("season_start", {"stock": round(self.lake.stock, 3), "mode": mode, "conditions": cond})
         if self.climate.new:
             ev = self.climate.new

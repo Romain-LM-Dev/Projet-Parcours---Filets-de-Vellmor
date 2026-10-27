@@ -8,7 +8,8 @@ profils, pour ne pas confondre l'effet « agent à règles » avec l'effet « pr
 Deux façons de former la population :
 
 * la composition de base, générée à partir des paramètres de la vallée (`population.villages`, `population.fishers`,
-  `population.boat_mix`) et de la graine du run : mêmes paramètres, même vallée ;
+  `population.boat_mix`) et de la graine du run : mêmes paramètres, même vallée, et chaque pêcheur garde sa fiche quand on
+  ajoute un pêcheur ou un village (voir `build_population`) ;
 * une composition choisie par le joueur : `population.custom`, une liste de fiches
   (voir `custom_to_profiles`) qui remplace entièrement la génération.
 
@@ -30,9 +31,13 @@ DEFAULT_BOAT_MIX = {"barque": 0.3, "chaloupe": 0.5, "cotre": 0.2}
 # le caractère pèse sur le bateau : le nouveau venu a emprunté pour une barque, la famille ancienne a le plus gros
 BOAT_TILT = {"nouveau_venu": {"barque": 2.0, "cotre": 0.3}, "ancienne_famille": {"barque": 0.5, "cotre": 1.6}}
 
+# Quarante-huit prénoms, tous différents : une vallée de 24 pêcheurs en tire la moitié, et la graine décide lesquels.
 FIRST_NAMES = ["Aldric", "Maëlle", "Corentin", "Ysaline", "Gaspard", "Odile", "Tanguy", "Solène",
                "Baptiste", "Elwen", "Rémi", "Bérénice", "Loïc", "Albane", "Hugo", "Clémence",
-               "Mathis", "Gwenaëlle", "Arnaud", "Inès", "Théo", "Margaux", "Yves", "Léonie"]
+               "Mathis", "Gwenaëlle", "Arnaud", "Inès", "Théo", "Margaux", "Yves", "Léonie",
+               "Aubin", "Capucine", "Dorian", "Eulalie", "Florian", "Garance", "Hélier", "Isaure",
+               "Lucien", "Morgane", "Noé", "Océane", "Pierrick", "Roxane", "Sylvain", "Tiphaine",
+               "Ulysse", "Valentin", "Yannick", "Zoé", "Brieuc", "Nolwenn", "Gildas", "Perrine"]
 
 ARCHETYPES = {
     "ancienne_famille": {
@@ -187,7 +192,11 @@ def draw_boat(arch: str, mix: dict, rng: random.Random) -> str:
     return rng.choices(names, [mix.get(b, 1.0) * tilt.get(b, 1.0) for b in names])[0]
 
 
-def build_population(cfg: dict, rng: random.Random) -> list[Profile]:
+def build_population(cfg: dict) -> list[Profile]:
+    """Les pêcheurs de la vallée, puis l'ancien. Générés, ils ne dépendent que des paramètres de la vallée et de la graine du run :
+    mêmes paramètres, même vallée. Chaque pêcheur a sa propre suite de tirages (`<graine>|fisher|<i>`), donc ajouter un pêcheur ou un
+    village ne change aucune autre fiche ; la graine décide aussi de la mise en place (dans quel ordre les villages reçoivent leurs
+    pêcheurs, dans quel ordre se succèdent les caractères), villages et caractères restant équilibrés à un près."""
     pop = cfg["population"]
     large_min = pop["large_model_min_experience"]
     custom = pop.get("custom")
@@ -196,26 +205,29 @@ def build_population(cfg: dict, rng: random.Random) -> list[Profile]:
         elder_kind = pop.get("elder_kind", "llm")
     else:
         n = int(pop["fishers"])
+        seed = cfg["run"]["seed"]
         villages = VILLAGE_NAMES[:max(1, min(int(pop.get("villages", 4)), len(VILLAGE_NAMES), n))]
         mix = pop.get("boat_mix") or DEFAULT_BOAT_MIX
-        boats = random.Random(f"{cfg['run']['seed']}|boats")        # à part : ne déplace aucun autre tirage de la vallée
-        n_rule = round(n * float(pop["rule_fraction"]))
-        rule_idx = set(rng.sample(range(n), n_rule))
-        names = FIRST_NAMES[:]
-        rng.shuffle(names)
+        slots, order, names = villages[:], ORDER[:], FIRST_NAMES[:]
+        random.Random(f"{seed}|villages").shuffle(slots)           # une suite par choix : changer le nombre de villages
+        random.Random(f"{seed}|characters").shuffle(order)         # ne déplace ni les caractères ni les prénoms
+        random.Random(f"{seed}|names").shuffle(names)
+        n_rule = round(n * float(pop["rule_fraction"]))            # les agents à règles : tirés au sort parmi tous les profils (A6)
+        rule_idx = set(sorted(range(n), key=lambda i: random.Random(f"{seed}|kind|{i}").random())[:n_rule])
         out = []
         for i in range(n):
-            arch = ORDER[(i + i // len(ORDER)) % len(ORDER)]
+            r = random.Random(f"{seed}|fisher|{i}")
+            arch = order[(i + i // len(order)) % len(order)]
             a = ARCHETYPES[arch]
-            hamlet = villages[i % len(villages)]
-            exp = rng.randint(*a["experience"])
+            hamlet = slots[i % len(slots)]
+            exp = r.randint(*a["experience"])
             kind = "rule" if i in rule_idx else "llm"
             base = names[i % len(names)] + ("" if i < len(names) else f" {i // len(names) + 1}")
             out.append(Profile(
                 id=f"F{i + 1:02d}", name=full_name(base, hamlet), hamlet=hamlet, archetype=arch,
                 archetype_label=a["label"], experience=exp, debt_payment=a["debt_payment"],
-                wealth=float(rng.randint(*a["wealth"])), traits=a["traits"], voice=a["voice"], kind=kind,
-                tier=tier_for(kind, exp, "auto", large_min), first_name=base, boat=draw_boat(arch, mix, boats),
+                wealth=float(r.randint(*a["wealth"])), traits=a["traits"], voice=a["voice"], kind=kind,
+                tier=tier_for(kind, exp, "auto", large_min), first_name=base, boat=draw_boat(arch, mix, r),
             ))
         elder_kind = pop.get("elder_kind", "llm") if pop["rule_fraction"] < 1 else "rule"
     homes = villages_of(out) or ["Bramois"]

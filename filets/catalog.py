@@ -5,8 +5,6 @@ Il est envoyé par le pont à chaque connexion (voir `api.ApiServer`).
 """
 from __future__ import annotations
 
-import random
-
 from .profiles import (ARCHETYPES, BOAT_NAMES, DEFAULT_BOAT_MIX, FIRST_NAMES, ORDER, VILLAGE_NAMES, archetype_defaults,
                        build_population, profile_to_spec)
 
@@ -93,6 +91,20 @@ COUNCILS = [
 ]
 
 
+# La flotte de la vallée générée : la répartition des tailles de bateaux (le caractère l'infléchit encore, voir
+# `profiles.BOAT_TILT`). La flotte « mixte » est celle de la configuration (`population.boat_mix`).
+FLEETS = [
+    {"id": "petits", "label": "Petits bateaux", "mix": {"barque": 0.6, "chaloupe": 0.3, "cotre": 0.1}},
+    {"id": "mixte", "label": "Flotte mixte", "mix": None},
+    {"id": "gros", "label": "Gros bateaux", "mix": {"barque": 0.1, "chaloupe": 0.3, "cotre": 0.6}},
+]
+
+
+def fleet_mix(cfg: dict, fleet: str) -> dict:
+    mix = next((f["mix"] for f in FLEETS if f["id"] == fleet), None)
+    return mix or cfg["population"].get("boat_mix") or DEFAULT_BOAT_MIX
+
+
 def boats_catalog(cfg: dict) -> list[dict]:
     """Les tailles de bateaux, de la plus petite à la plus grande : capacité (t par saison) et entretien (écus par saison)."""
     return [{"id": b, "label": b, **{k: v for k, v in cfg["economy"]["boats"][b].items()}} for b in BOAT_NAMES]
@@ -104,21 +116,21 @@ def base_population(cfg: dict) -> list[dict]:
     ligne de commande, lui, garde sa part d'agents à règles (`population.rule_fraction`, 25 % par défaut, A6) ; dans le
     menu, c'est au joueur de passer un pêcheur en « Règles »."""
     base_cfg = {**cfg, "population": {**cfg["population"], "custom": None, "elder": False}}
-    rng = random.Random(int(cfg["run"]["seed"]))
-    profiles = build_population(base_cfg, rng)
+    profiles = build_population(base_cfg)
     specs = [profile_to_spec(p) for p in profiles]
     for spec in specs:
         spec["kind"], spec["tier"] = "llm", "auto"
     return specs
 
 
-def generate_world(cfg: dict, villages: int, fishers: int, seed: int) -> dict:
-    """La vallée que génèrent ces paramètres (génération procédurale, la même pour la même graine) : ses villages et ses pêcheurs.
-    Le menu l'affiche, le joueur la retouche, puis la lance."""
-    over = {"population": {**cfg["population"], "villages": villages, "fishers": fishers},
+def generate_world(cfg: dict, villages: int, fishers: int, seed: int, fleet: str = "mixte") -> dict:
+    """La vallée que génèrent ces paramètres (génération procédurale, la même pour la même graine) : ses villages et ses pêcheurs,
+    avec la flotte demandée (`FLEETS`). Le menu l'affiche, le joueur la retouche, puis la lance."""
+    over = {"population": {**cfg["population"], "villages": villages, "fishers": fishers, "boat_mix": fleet_mix(cfg, fleet)},
             "run": {**cfg["run"], "seed": seed}}
     specs = base_population({**cfg, **over})
-    return {"villages": villages, "fishers": fishers, "seed": seed, "hamlets": villages_of_specs(specs), "base_population": specs}
+    return {"villages": villages, "fishers": fishers, "seed": seed, "fleet": fleet, "hamlets": villages_of_specs(specs),
+            "base_population": specs}
 
 
 def villages_of_specs(specs: list[dict]) -> list[str]:
@@ -135,6 +147,7 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
         "hamlets": villages_of_specs(base),             # les villages de la composition de base
         "village_names": list(VILLAGE_NAMES),           # tous ceux que la génération peut poser autour du lac
         "boats": boats_catalog(cfg),
+        "fleets": [{"id": f["id"], "label": f["label"], "mix": fleet_mix(cfg, f["id"])} for f in FLEETS],
         "councils": COUNCILS,
         "first_names": list(FIRST_NAMES),
         "archetypes": [
@@ -159,7 +172,7 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
             "climate": bool((cfg.get("climate") or {}).get("enabled", True)),
             "event_rate": float((cfg.get("climate") or {}).get("event_rate", 0.3)),
             "luck": float(cfg["economy"].get("luck", 0.0)),
-            "boat_mix": {**DEFAULT_BOAT_MIX, **(pop.get("boat_mix") or {})},
+            "boat_mix": {**DEFAULT_BOAT_MIX, **(pop.get("boat_mix") or {})}, "fleet": "mixte",
         },
         "limits": LIMITS,
         "speeds": SPEEDS,

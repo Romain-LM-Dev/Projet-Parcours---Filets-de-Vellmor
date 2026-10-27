@@ -152,6 +152,15 @@ def test_engine_lobby_over_kafka_waits_for_its_partition_then_plays(kcfg, tmp_pa
 
         await until(lambda: statuses and statuses[-1]["state"] == "idle")      # annoncé une fois la partition reçue
         client = KafkaBus(BOOTSTRAP, kcfg["bus"]["topics"], consume_commands=False)
+        # le menu demande une vallée de six villages (le catalogue revient avec le nouvel état), puis une vallée impossible
+        client.send_command({"type": "generate_world", "config": {"villages": 6, "fishers": 9, "seed": 3, "id": "g1"}})
+        client.flush()
+        await until(lambda: (statuses[-1].get("catalog") or {}).get("generation", {}).get("id") == "g1")
+        assert len(statuses[-1]["catalog"]["hamlets"]) == 6 and len(statuses[-1]["catalog"]["base_population"]) == 9
+        client.send_command({"type": "generate_world", "config": {"villages": 9, "fishers": 12, "seed": 3, "id": "g2"}})
+        client.flush()
+        await until(lambda: any(s.get("error") for s in statuses))              # (un refus se dit une fois, dans un seul état)
+        assert "villages" in next(s["error"] for s in statuses if s.get("error"))
         req = {"mode": "sync", "seasons": 2, "seed": 3, "communication": "valley", "catches_visible": True,
                "llm": "scripted", "speed": "max",
                "population": {"elder": True, "elder_kind": "rule", "fishers": [

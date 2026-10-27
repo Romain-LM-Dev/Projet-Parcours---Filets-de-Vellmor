@@ -75,9 +75,10 @@ PAYLOADS: dict[str, dict] = {
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
                   "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM},
                  {"zone": STR, "secret": BOOL,        # où il a pêché ; en cachette (interdit de pêche)
-                  "yield": NUM,        # ce que la sortie a rapporté par rapport à la prise visée (`requested`), tout compris
-                  "luck": NUM,         # dont la réussite du jour
-                  "day": NUM}),        # le jour de la saison où la barque est sortie
+                  "yield": NUM,        # ce que la pêche a rapporté par rapport à la prise visée (`requested`), tout compris
+                  "luck": NUM,         # dont la chance du pêcheur (moyenne de ses sorties)
+                  # ses sorties : le jour, le temps (calme, ordinaire, agité, tempête), la chance, le rendement et les tonnes rapportées
+                  "outings": {"type": "array", "items": {"type": "object"}}}),
     # ce que le pêcheur déclare à l'ancien en rentrant : les autres ne connaissent que `declared` ; la vraie prise (`landed`)
     # n'est connue que de lui et du joueur
     "report": obj({"agent": STR, "hamlet": STR, "declared": NUM, "landed": NUM, "catch_event_id": STR}),
