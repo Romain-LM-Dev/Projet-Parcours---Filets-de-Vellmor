@@ -103,3 +103,11 @@ def test_setting_the_number_of_villages_regenerates_the_valley_on_a_real_engine(
     assert "SCRIPT ERROR" not in out and "SCRIPT ERROR" not in proc.stderr, out + proc.stderr
     assert "GENERATETEST fails=0" in out, out
     assert proc.returncode == 0
+
+
+def test_no_road_or_walk_crosses_the_lake_whatever_the_number_of_villages():
+    """Pour 1 à 8 villages, les chemins vers l'ancien et les marches vers l'anneau du conseil contournent le lac."""
+    proc = subprocess.run([GODOT, "--headless", "--path", str(ROOT / "godot"), "-s", "res://tests/roads_test.gd"],
+                          capture_output=True, text=True, timeout=120, encoding="utf-8")
+    assert "SCRIPT ERROR" not in proc.stdout and "SCRIPT ERROR" not in proc.stderr, proc.stdout + proc.stderr
+    assert "ROADSTEST fails=0" in proc.stdout, proc.stdout

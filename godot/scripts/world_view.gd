@@ -186,7 +186,7 @@ func _generate_decor() -> void:
 		var tip := lake_point(th, 0.84)
 		docks[h] = {"shore": shore, "tip": tip, "th": th}
 		paths.append(_curve(c, _px(shore), 0.12))
-		paths.append(_curve(c, elder_px + Vector2(0, 26), -0.18 if c.x < elder_px.x else 0.18))
+		paths.append(_road(c, elder_px + Vector2(0, 26), -0.18 if c.x < elder_px.x else 0.18))
 	houses.append({"p": elder_px + Vector2(-4, -6), "s": Vector2(46, 30), "rot": 0.0, "roof": Color("#7a4b34"),
 		"seed": 0.5, "elder": true})
 	# arbres : bosquets le long des versants et entre les hameaux, jamais sur l'eau, les places ou les chemins
@@ -240,6 +240,50 @@ func _generate_decor() -> void:
 		flies.append({"base": tr["p"] + Vector2(rng.randf_range(-30, 30), rng.randf_range(-30, 30)),
 			"ph": rng.randf() * TAU, "sp": rng.randf_range(0.4, 1.0)})
 	deco = {"trees": trees, "houses": houses, "docks": docks, "paths": paths, "reeds": reeds, "flies": flies}
+
+
+## Ce point (normalisé) est-il sur l'eau, ou presque ?
+func _wet(p: Vector2) -> bool:
+	return lake_rn(p) < 1.1
+
+
+func _angle_of(p: Vector2) -> float:
+	var d := (p - LAKE_C) / LAKE_R
+	return atan2(d.y, d.x)
+
+
+## Les étapes (normalisées) d'une marche à terre de `a` à `b` : tout droit si le lac n'est pas en travers, sinon le long de la
+## rive, du côté le plus court. Quelqu'un qui est déjà sur l'eau (une barque) va tout droit.
+func _land_route(a: Vector2, b: Vector2) -> Array:
+	if lake_rn(a) < 1.0:
+		return [b]
+	var across := false
+	for i in 17:
+		across = across or _wet(a.lerp(b, float(i) / 16.0))
+	if not across:
+		return [b]
+	var a0 := _angle_of(a)
+	var da := angle_difference(a0, _angle_of(b))
+	var steps := maxi(2, int(absf(da) / 0.25))
+	var out: Array = []
+	for i in steps + 1:
+		out.append(lake_point(a0 + da * float(i) / float(steps), 1.18))
+	out.append(b)
+	return out
+
+
+## Le chemin de terre d'un village à la maison de l'ancien (en pixels) : une courbe si le lac n'est pas en travers, sinon la rive.
+func _road(a: Vector2, b: Vector2, bend: float) -> PackedVector2Array:
+	var direct := _curve(a, b, bend)
+	var across := false
+	for q in direct:
+		across = across or _wet(_nm(q))
+	if not across:
+		return direct
+	var out := PackedVector2Array([a])
+	for p in _land_route(_nm(a), _nm(b)):
+		out.append(_px(p))
+	return out
 
 
 func _curve(a: Vector2, b: Vector2, bend: float, n: int = 24) -> PackedVector2Array:
@@ -617,7 +661,7 @@ func _move(id: String, target: Vector2, speed: float = 3.0) -> void:
 	var a: Dictionary = agents[id]
 	a["hold"] = 0.0
 	if animate:
-		a["path"] = [[target, 0.0, speed]]
+		a["path"] = _land_route(a["pos"], target).map(func(p: Vector2) -> Array: return [p, 0.0, speed])
 	else:
 		a["pos"] = target
 		a["path"] = []
