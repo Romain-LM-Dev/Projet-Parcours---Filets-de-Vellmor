@@ -148,7 +148,11 @@ def test_an_ai_sees_the_other_lakes_the_road_and_what_it_costs(tmp_path):
     assert "Tu pêches d'ordinaire dans le lac de Vellmor, celui de ton village" in text
     assert re.search(r"Lac d'Orsane : d'ici, on le dit à \d+ %", text)
     assert re.search(r"à 0\.6 jour de route, chaque sortie dure 2\.1 fois plus longtemps : tu ramènerais environ 47 %", text)
-    assert re.search(r"la route te coûterait 68 écus de plus cette saison", text)
+    assert re.search(r"la route te coûterait 68 écus \(0\.7 t de poisson\) ; tu y viserais jusqu'à [\d.]+ t, soit au mieux [\d.]+ t une fois "
+                     r"la route payée \(contre [\d.]+ t au mieux chez toi\)", text)
+    assert re.search(r"\"prise\": <tonnes dans le lac que tu choisis : entre [\d.]+ et [\d.]+ chez toi ; jusqu'à [\d.]+ t dans le lac d'Orsane>",
+                     text)
+    assert "ce que tu constates de ton lac et des autres, ce que coûte la route, et où pêcher en conséquence" in text
     props = asks[0]["response_format"]["json_schema"]["schema"]["properties"]
     assert list(props)[:3] == ["justification", "lac", "prise"] and props["lac"]["enum"] == ["Lac de Vellmor", "Lac d'Orsane"]
     assert '"lac": "<le lac où tu pêches : Lac de Vellmor ou Lac d\'Orsane>"' in text
