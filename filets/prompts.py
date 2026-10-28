@@ -9,6 +9,8 @@ Deux profils de réflexion (`llm.reflection`) :
 """
 from __future__ import annotations
 
+import math
+
 from .lake import EXTINCT_BELOW
 
 WORLD = (
@@ -49,6 +51,12 @@ REFLEX_SCHEMA = {"type": "object", "properties": {"prise": {"type": "number"}}, 
                  "additionalProperties": False}
 
 
+def cap_text(x: float, digits: int = 2) -> str:
+    """Une limite en tonnes, arrondie VERS LE BAS : 3,636 t s'affiche 3,63, jamais 3,64 (un pêcheur qui répond le maximum affiché ne
+    doit pas dépasser la limite)."""
+    return f"{math.floor(x * 10 ** digits + 1e-9) / 10 ** digits:g}"
+
+
 def villages_text(villages) -> str:
     """« Quatre villages (Ostrel, Bramois, Tilque et Hennad) » : les villages de la vallée, pour le décor des prompts."""
     names = list(villages or ())
@@ -65,7 +73,7 @@ def day_line(obs: dict) -> str:
 
 
 def boat_line(obs: dict) -> str:
-    lo, hi = obs.get("min_catch", 0.0), round(obs["boat_capacity"], 2)
+    lo, hi = obs.get("min_catch", 0.0), float(cap_text(obs["boat_capacity"]))
     if obs.get("boat"):
         # la prise visée n'est pas la prise réelle : le temps de chaque sortie, la chance, la saison de l'année et les événements la font varier
         aim = f"de {lo:g} à {hi:g} t" if lo else f"jusqu'à {hi:g} t"
@@ -79,7 +87,7 @@ def boat_line(obs: dict) -> str:
 
 def catch_range(obs: dict) -> str:
     lo = obs.get("min_catch", 0.0)
-    return f"entre {lo:g} et {round(obs['boat_capacity'], 2):g}" + ("" if lo else " ; 0 si tu restes à quai")
+    return f"entre {lo:g} et {cap_text(obs['boat_capacity'])}" + ("" if lo else " ; 0 si tu restes à quai")
 
 
 def reflex_messages(p, obs: dict) -> list[dict]:
@@ -283,7 +291,16 @@ def clues_block(obs: dict) -> str:
     return ("\n\nIndices et soupçons dans la vallée :\n" + _bullets(lines)) if lines else ""
 
 
-def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dict:
+def trust_schema(ids: list[str] | None) -> dict:
+    """Le jugement de confiance : un entier de −3 à +3 par pêcheur, chacun une fois au plus. Avec les identifiants connus, le schéma
+    interdit à une IA de répéter les mêmes clés jusqu'à épuiser sa réponse (réponses illisibles constatées avec un petit modèle)."""
+    step = {"type": "integer", "minimum": -3, "maximum": 3}
+    if ids:
+        return {"type": "object", "properties": {i: step for i in ids}, "additionalProperties": False}
+    return {"type": "object", "additionalProperties": step}
+
+
+def answer_schema(purpose: str, brief: bool = False, fisher: bool = True, ids: list[str] | None = None) -> dict:
     """Forme exacte de la réponse, pour les fournisseurs qui savent la faire respecter (Ollama : voir `llm.OpenAICompatClient`).
     Tous les champs sont présents, dans cet ordre : pour une prise, la justification (ce que l'agent constate du lac) vient AVANT
     le nombre, qui s'écrit donc à la suite de ce raisonnement et non avant lui. Les textes sont bornés."""
@@ -297,7 +314,7 @@ def answer_schema(purpose: str, brief: bool = False, fisher: bool = True) -> dic
         if fisher:
             props["promesse"] = {"type": ["number", "null"]}
         props["accuse"] = {"type": ["string", "null"], "maxLength": 8}
-        props["confiance"] = {"type": "object", "additionalProperties": {"type": "integer", "minimum": -3, "maximum": 3}}
+        props["confiance"] = trust_schema(ids)
         if fisher:
             props["exclure"] = {"type": ["string", "null"], "maxLength": 8}
             props["reautoriser"] = {"type": ["string", "null"], "maxLength": 8}
@@ -352,7 +369,7 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
             "Pris, tu perdrais encore la confiance des autres ; à quai, tu peux espérer la regagner.\n"
             + lake_reminder(obs) + rumor
             + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
-              f"\"prise\": <0 si tu restes à quai, sinon les tonnes pêchées en cachette, jusqu'à {obs['boat_capacity']:g}>, "
+              f"\"prise\": <0 si tu restes à quai, sinon les tonnes pêchées en cachette, jusqu'à {cap_text(obs['boat_capacity'])}>, "
               "\"declaration\": 0}"
         )
     else:
@@ -361,13 +378,14 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
             + lake_reminder(obs)
             + rule_reminder(obs)
             + rumor
-            + "En rentrant, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ce chiffre. Tu peux mentir, mais "
+            + "En rentrant, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ce chiffre. Tu la déclares telle "
+              "quelle, sauf si tu choisis de cacher une part (par intérêt ou par peur) : tu peux mentir, mais "
               "les voisins qui pêchent du même côté voient les barques rentrer"
             + (" et la patrouille du lac mesure celles qu'elle croise (on ne sait pas où elle passera)" if obs.get("patrol") else "")
             + " : un dépassement avoué se pardonne plus facilement qu'un mensonge découvert.\n"
             + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
               f"\"prise\": <tonnes, {catch_range(obs)}>, "
-              "\"declaration\": <tonnes que tu déclares à l'ancien : ta prise, ou moins si tu la caches>}"
+              "\"declaration\": <tonnes que tu déclares à l'ancien : exactement ta prise, ou moins seulement si tu choisis de la cacher>}"
         )
     return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()))},
             {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
@@ -509,14 +527,15 @@ def narration_messages(p, facts: list[str], capacity: float, villages=()) -> lis
              "N'invente rien : ne parle que de ce qui est dans cette liste. S'il n'y est question ni de promesses, ni de "
              "règle, ni d'accusation, n'en parle pas. Pour le lac, reprends le mot de la liste, sans l'exagérer ; pour une "
              "règle, dis si c'est la première, une règle reconduite, plus stricte ou assouplie, comme la liste le dit. "
-             "Le temps de la pêche peut expliquer de maigres prises : tu peux le dire. Des phrases simples et complètes, en bon français. "
+             "Le temps de la pêche peut expliquer de maigres prises : tu peux le dire. Quand tu cites quelqu'un, reprends son nom et ce que la liste dit de lui, sans le confondre avec un autre. Des phrases simples et complètes, en bon français. "
              "Réponds en JSON : {\"recit\": \"<ton récit>\"}")
     return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": ask}]
 
 
 def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:
     """Les niveaux de prise proposés au modèle de décision : de la prise minimale à la capacité de la barque, en `n` paliers."""
-    return [round(lo + i * (boat_capacity - lo) / (n - 1), 1) for i in range(n)]
+    top = float(cap_text(boat_capacity, 1))           # jamais au-dessus de la limite (3,636 t : 3,6 t, pas 3,7)
+    return [min(round(lo + i * (boat_capacity - lo) / (n - 1), 1), top) for i in range(n)]
 
 
 def reflex_system_one(p, obs: dict) -> dict:
@@ -595,9 +614,12 @@ def election_system_one(p, items: dict[str, str], situation: str) -> dict:
 
 # Le bilan d'un villageois qui n'était pas au conseil : ce que l'ancien lui en rapporte, et ce qu'il en pense de chacun.
 DEBRIEF_MAX_TOKENS = 70
-DEBRIEF_SCHEMA = {"type": "object", "properties": {"confiance": {
-    "type": "object", "additionalProperties": {"type": "integer", "minimum": -3, "maximum": 3}}},
-    "required": ["confiance"], "additionalProperties": False}
+def debrief_schema(ids: list[str] | None = None) -> dict:
+    return {"type": "object", "properties": {"confiance": trust_schema(ids)}, "required": ["confiance"],
+            "additionalProperties": False}
+
+
+DEBRIEF_SCHEMA = debrief_schema()
 
 
 def debrief_messages(p, lines: list[str], trust: str, situation: str) -> list[dict]:

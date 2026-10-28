@@ -8,6 +8,7 @@ textes.
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -125,3 +126,33 @@ def test_the_catch_question_names_the_two_fields_in_the_schema_order(tmp_path):
     rec.close()
     asks = [r["user"].split("Réponds en JSON")[1] for r in rec.requests if '"prise"' in r["user"]]
     assert asks and all(a.index('"justification"') < a.index('"prise"') for a in asks)
+
+
+def test_a_displayed_limit_is_never_above_the_real_one():
+    """Une partie réelle a signalé « prise 3.64 hors de [1, 3.63636] » : la limite affichée était arrondie vers le haut."""
+    from filets import prompts
+
+    for cap in (3.63636, 6.25, 3.65, 7.0, 10.999):
+        obs = {"boat_capacity": cap, "min_catch": 1.0, "boat": "chaloupe"}
+        shown = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", prompts.catch_range(obs))]
+        assert max(shown) <= cap and cap - max(shown) < 0.011, (cap, shown)
+        assert all(v <= cap for v in prompts.catch_levels(cap, lo=1.0))
+        assert f"à {prompts.cap_text(cap)} t" in prompts.boat_line(obs)
+
+
+def test_the_trust_judgment_of_an_ai_is_closed_on_the_known_fishers():
+    """Sans cela, un petit modèle répétait les mêmes clés jusqu'à épuiser sa réponse (« unparseable » en pleine partie)."""
+    trust = answer_schema("speak", ids=["F01", "F02"])["properties"]["confiance"]
+    assert set(trust["properties"]) == {"F01", "F02"} and trust["additionalProperties"] is False
+    assert trust["properties"]["F01"]["maximum"] == 3
+    from filets import prompts
+    assert prompts.debrief_schema(["F03"])["properties"]["confiance"]["properties"].keys() == {"F03"}
+    assert answer_schema("speak")["properties"]["confiance"]["additionalProperties"]["maximum"] == 3      # sans identifiants : comme avant
+
+
+def test_the_declaration_is_the_catch_unless_one_chooses_to_hide_some():
+    from filets import prompts
+    from test_reflection_profile import Profile, long_obs
+
+    text = prompts.catch_messages(Profile(), long_obs(), 100.0)[1]["content"]
+    assert "exactement ta prise" in text and "Tu la déclares telle quelle" in text

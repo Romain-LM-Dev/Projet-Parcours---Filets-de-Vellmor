@@ -375,3 +375,11 @@ def test_the_facts_an_agent_judges_carry_the_neighbourhood_the_gossip_and_the_gr
     ctx = world.trust_context(mathis, 1)
     assert set(ctx) == {"yield", "luck", "debt", "cheated", "harsh", "rng"} and 0.85 <= ctx["harsh"] <= 1.15
     assert len({a.temper for a in world.fishers}) > 1                                                  # chacun a son tempérament
+
+
+def test_a_catch_a_few_kilos_above_the_displayed_limit_is_not_an_invalid_value(tmp_path):
+    """Réponse « 3.64 » pour une limite de 3,63636 t : on borne sans incident ; un nombre absurde, lui, reste un incident."""
+    from filets.agents import decide_catch
+    import inspect
+    src = inspect.getsource(decide_catch)
+    assert "hi + 0.05" in src                                   # la tolérance d'arrondi est dans le bornage

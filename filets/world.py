@@ -1284,6 +1284,10 @@ class World:
         def recent(s: int) -> bool:
             return s >= season - 2
 
+        def passage(zone: str) -> str:       # là où il est déjà allé, il le sait : ce qu'il n'a pas vu depuis longtemps, il peut y retourner
+            seen = [s for s, legs in self.patrol_legs.items() if s < season and any(leg["zone"] == zone for leg in legs)]
+            return f"ton dernier passage : saison {max(seen)}" if seen else "tu n'y es encore jamais allé"
+
         accused = [(e["payload"]["accuser"], e["payload"]["accused"], e["season"]) for e in self.events.index.values()
                    if e["type"] == "accusation" and recent(e["season"])]
         heard = [c for c in self.clues if c["public"] and recent(c["season"]) and c["kind"] != "patrouille"]
@@ -1302,16 +1306,16 @@ class World:
                 facts.append(f"{fine} témoignage{'s' if fine > 1 else ''} concordant{'s' if fine > 1 else ''} avec ce qu'ils ont déclaré")
             names = ", ".join(f"{self.first_name(a.id)} ({a.id}, confiance de la vallée : {prompts.trust_word(self.reputation(a.id))})"
                               for a in here)
-            out.append(f"{h} : {names} ; " + (" ; ".join(facts) if facts else "rien de particulier"))
+            out.append(f"{h} : {names} ; " + (" ; ".join(facts) if facts else "rien de particulier") + f" ; {passage(h)}")
         banned = [a for a in self.fishers if a.id in self.banned]
         if banned:
             seen = [self.heard_text(c) for c in heard if c["kind"] == "depart"][-3:]
             caught = [f"{self.first_name(aid)} a été pris à pêcher en cachette (saison {s})"
                       for (aid, s), f in self.established.items() if f["secret"] and recent(s)]
             out.append("large : les interdits de pêche (" + ", ".join(f"{self.first_name(a.id)} {a.id}" for a in banned)
-                       + ") peuvent y sortir en cachette" + "".join(" ; " + x for x in seen + caught))
+                       + ") peuvent y sortir en cachette" + "".join(" ; " + x for x in seen + caught) + f" ; {passage('large')}")
         else:
-            out.append("large : personne n'y pêche d'ordinaire")
+            out.append(f"large : personne n'y pêche d'ordinaire ; {passage('large')}")
         audit = self.audits.get(season - 1)
         if audit and audit["significant"]:
             out.append(f"Les comptes du lac de la saison dernière ne tombaient pas juste : il a perdu environ {audit['drop']:g} t, "
@@ -1905,8 +1909,10 @@ class World:
             said[r["agent"]] = round(said.get(r["agent"], 0.0) + r["declared"], 2)
         landed = {a: self.known_catch(a, season, now) for a in said}       # ce que l'ancien en sait
         if said:
-            each = ", ".join(f"{self.first_name(a)} {v:g} t" for a, v in sorted(said.items(), key=lambda kv: -kv[1]))
-            facts.append(f"Prises déclarées à l'ancien : {each} (en tout {sum(said.values()):g} t).")
+            # (huit noms et huit chiffres, un petit modèle les mélange : le récit n'a besoin que des extrêmes et du total)
+            low, high = min(said.items(), key=lambda kv: kv[1]), max(said.items(), key=lambda kv: kv[1])
+            facts.append(f"Prises déclarées à l'ancien : de {self.first_name(low[0])} {low[1]:g} t à {self.first_name(high[0])} "
+                         f"{high[1]:g} t (en tout {sum(said.values()):g} t).")
         for d in of("lie_discovered"):          # ce que l'ancien a établi : l'estimation des indices, pas la vérité
             about = f"environ {d['estimated']:g} t" if d.get("estimated") is not None else "on ne sait combien"
             if d["secret"]:

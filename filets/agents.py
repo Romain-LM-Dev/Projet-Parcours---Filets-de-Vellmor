@@ -81,7 +81,8 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
     brief = prompts.is_brief(world.cfg["llm"])
     reflex = system == "S1"
     hint = {"purpose": purpose, "archetype": agent.archetype, "state": state, "system": system,
-            "schema": schema or (prompts.REFLEX_SCHEMA if reflex else prompts.answer_schema(purpose, brief, agent.is_fisher)),
+            "schema": schema or (prompts.REFLEX_SCHEMA if reflex else prompts.answer_schema(
+                purpose, brief, agent.is_fisher, [a.id for a in world.fishers if a.id != agent.id])),
             "seed": _seed(world, agent, purpose, state)}                  # le schéma est imposé aux fournisseurs qui le savent
     if max_tokens:
         hint["max_tokens"] = max_tokens
@@ -164,7 +165,8 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
         world.incident(agent.id, "invalid_value", f"prise absente : {str(data)[:150]}", "règle de repli", res.call_id)
     lo, hi = state.get("min_catch", 0.0), state["boat_capacity"]      # une sortie rapporte au moins la prise minimale
     if v is not None and not (lo <= v <= hi):
-        world.incident(agent.id, "invalid_value", f"prise {v} hors de [{lo:g}, {hi:g}]", "bornage", res.call_id)
+        if not (lo - 0.05 <= v <= hi + 0.05):          # un arrondi de quelques kilos n'est pas une valeur invalide
+            world.incident(agent.id, "invalid_value", f"prise {v} hors de [{lo:g}, {hi:g}]", "bornage", res.call_id)
         v = max(lo, min(hi, v))
     if v is None:
         v, rule = catch_rule(agent.archetype, state)
@@ -311,7 +313,7 @@ async def debrief_villager(world, agent: Agent, asm) -> None:
     trust = prompts.trust_line(world.trust_obs(agent))
     data, _, _ = await _ask_llm(world, agent, "debrief", prompts.debrief_messages(
         agent.profile, lines, trust, f"Tes finances : {agent.wealth:.0f} écus."), {"round": 96}, "S2",
-        schema=prompts.DEBRIEF_SCHEMA, max_tokens=prompts.DEBRIEF_MAX_TOKENS)
+        schema=prompts.debrief_schema([a.id for a in world.fishers if a.id != agent.id]), max_tokens=prompts.DEBRIEF_MAX_TOKENS)
     if data is not None:
         world.judge(agent, data.get("confiance"))
 
