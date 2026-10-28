@@ -18,6 +18,12 @@
     },
     "delta": {
       "type": "number"
+    },
+    "lakes": {
+      "type": "object"
+    },
+    "lake": {
+      "type": "string"
     }
   },
   "required": [

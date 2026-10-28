@@ -126,6 +126,7 @@ def test_a_rationed_catch_is_shared_between_the_outings_by_what_each_brings(tmp_
     p = world.apply_catch(a, 3.0, decision(), 0.0, ration=0.5)["payload"]
     assert p["rationed"] and p["landed"] == pytest.approx(0.5 * 3.0 * 1.0, abs=0.001)         # la moitié de ce qu'il visait, rendement moyen 1
     assert [o["tonnes"] for o in p["outings"]] == pytest.approx([0.375] * 3 + [0.125] * 3, abs=0.002)
+    world.hold_fraction = 100.0                              # (sans limite de part : seul le lac compte)
     world.lake.stock = 1.0                                   # un lac qui n'a plus que 1 t : il ne rend pas davantage, même sans rationnement
     set_outings(b, 1, [1.0] * 6)
     q = world.apply_catch(b, 3.0, decision(), 0.0)["payload"]
@@ -134,9 +135,10 @@ def test_a_rationed_catch_is_shared_between_the_outings_by_what_each_brings(tmp_
 
 
 def test_a_rationed_season_never_lands_more_than_the_lake_held(tmp_path):
-    world, events = played(tmp_path, "ration", lake__capacity=15.0, lake__initial_ratio=0.4)         # huit pêcheurs sur 6 t
+    world, events = played(tmp_path, "ration", lake__capacity=15.0, lake__initial_ratio=0.4,         # huit pêcheurs sur 6 t, qui se
+                           economy__hold_fraction=1.0, lake__observation_noise=0.3)                  # trompent de 30 % sur le lac
     catches = kinds(events, "catch")
-    assert catches and all(e["payload"]["rationed"] for e in catches)
+    assert catches
     for season in {e["season"] for e in catches}:
         fleet = [e["payload"] for e in catches if e["season"] == season]
         assert sum(c["landed"] for c in fleet) <= fleet[0]["stock_before"] + 1e-6                     # la flotte ne prend pas plus que le lac

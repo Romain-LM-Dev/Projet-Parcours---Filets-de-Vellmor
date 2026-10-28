@@ -26,6 +26,9 @@
           },
           "days": {
             "type": "number"
+          },
+          "by": {
+            "type": "string"
           }
         },
         "required": [
@@ -40,6 +43,9 @@
       "type": "string"
     },
     "why": {
+      "type": "string"
+    },
+    "captain": {
       "type": "string"
     }
   },

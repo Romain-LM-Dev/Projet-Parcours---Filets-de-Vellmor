@@ -58,10 +58,13 @@ PAYLOADS: dict[str, dict] = {
         "agents": {"type": "array", "items": {"type": "object"}},
         "hamlets": IDS, "scenario": {"type": "object"}, "season_days": NUM, "config_hash": STR,
         "llm_tiers": {"type": "object"},
-    }, {"label": STR, "population": {"type": "object"}, "boats": {"type": "object"}}),
+    }, {"label": STR, "population": {"type": "object"}, "boats": {"type": "object"},
+        # les lacs de la vallée : nom, capacité, stock de départ, repeuplement, villages et pêcheurs
+        "lakes": {"type": "array", "items": {"type": "object"}}}),
     "run_end": obj({"reason": STR, "seasons_completed": INT}),
     # `conditions` : la saison de l'année, ses facteurs (pêche, repeuplement) et les événements en cours (voir `climate.py`)
-    "season_start": obj({"stock": NUM}, {"mode": {"enum": ["sync", "async"]}, "conditions": {"type": "object"}}),
+    "season_start": obj({"stock": NUM}, {"mode": {"enum": ["sync", "async"]}, "conditions": {"type": "object"},
+                                        "lakes": {"type": "object"}}),      # (plusieurs lacs) le stock de chacun
     "phase": obj({"name": {"enum": ["fishing", "assembly", "regrowth"]}, "state": {"enum": ["open", "close"]}}),
     "decision": obj(
         {"agent": STR, "agent_kind": {"enum": ["llm", "rule"]}, "decision_type": {"enum": ["catch", "speak"]},
@@ -76,6 +79,7 @@ PAYLOADS: dict[str, dict] = {
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
                   "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM},
                  {"zone": STR, "secret": BOOL,        # où il a pêché ; en cachette (interdit de pêche)
+                  "lake": STR,         # (plusieurs lacs) le lac où il a pêché
                   "yield": NUM,        # ce que la pêche a rapporté par rapport à la prise visée (`requested`), tout compris
                   "luck": NUM,         # dont la chance du pêcheur (moyenne de ses sorties)
                   # ses sorties : le jour, le temps (calme, ordinaire, agité, tempête), la chance, le rendement et les tonnes rapportées
@@ -99,8 +103,8 @@ PAYLOADS: dict[str, dict] = {
     # la patrouille du lac, si le conseil en a voté une : sa route de la saison (étapes : zone = un village ou « large », jours
     # depuis le début de la saison), décidée par son capitaine (un agent) ; puis son installation ou son retrait par un vote du conseil
     "patrol_route": obj({"season": INT, "legs": {"type": "array", "items": obj({"zone": STR, "from_day": NUM, "to_day": NUM},
-                                                                                {"follow": STR_OR_NULL, "days": NUM})},
-                         "by": STR}, {"why": STR}),
+                                                                                {"follow": STR_OR_NULL, "days": NUM, "by": STR})},
+                         "by": STR}, {"why": STR, "captain": STR}),      # captain : laquelle des patrouilles (PAT, PAT2…)
     "patrol": obj({"state": {"enum": ["installed", "lifted"]}, "effective_season": INT, "proposal_id": STR, "for": IDS,
                    "voters": INT, "cost": NUM}),
     # l'élection de l'élu d'un village pour la saison (`ballots` : électeur → candidat choisi, `votes` : voix par candidat)
@@ -124,8 +128,10 @@ PAYLOADS: dict[str, dict] = {
                             "adopted": BOOL, "for": IDS, "against": IDS, "voters": INT}),
     "sale": obj({"agent": STR, "hamlet": STR, "tonnes": NUM, "price": NUM, "income": NUM, "wealth": NUM}),
     "lake_update": obj({"stock": NUM, "capacity": NUM, "cause": {"enum": ["init", "catch", "regrowth", "injection", "event"]}},
-                       {"delta": NUM}),
-    "lake_collapsed": obj({"stock": NUM, "capacity": NUM}),
+                       # (plusieurs lacs) `stock` et `capacity` sont ceux de tous les lacs ; `lakes` : le stock de chacun ; `lake` :
+                       # celui qui change
+                       {"delta": NUM, "lakes": {"type": "object"}, "lake": STR}),
+    "lake_collapsed": obj({"stock": NUM, "capacity": NUM}, {"lake": STR}),
     # `delegates` : au conseil de la vallée, l'élu de chaque village ; `mode` : sync (on s'entend, à tour de rôle) ou async
     # (chacun s'exprime de son côté)
     "assembly_start": obj({"scope": STR, "participants": IDS},
@@ -147,7 +153,7 @@ PAYLOADS: dict[str, dict] = {
                          "pinned": BOOL}, {"source_event_id": STR_OR_NULL}),
     "season_end": obj({"stock": NUM, "catches": {"type": "object"}, "wealth": {"type": "object"},
                        "norms_in_force": {"type": "array"}},
-                      {"declared": {"type": "object"}, "reputation": {"type": "object"}}),
+                      {"declared": {"type": "object"}, "reputation": {"type": "object"}, "lakes": {"type": "object"}}),
     "incident": obj({"agent": STR, "incident_type": {"enum": [
         "out_of_role", "unparseable", "no_response", "quota", "invalid_value", "assistant_posture",
         "missed_window", "schema_violation", "temporal_violation"]}, "detail": STR, "handled_by": STR},

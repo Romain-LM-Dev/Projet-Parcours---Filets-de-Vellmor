@@ -12,6 +12,9 @@
     },
     "conditions": {
       "type": "object"
+    },
+    "lakes": {
+      "type": "object"
     }
   },
   "required": [

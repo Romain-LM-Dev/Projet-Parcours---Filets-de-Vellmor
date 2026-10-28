@@ -589,7 +589,7 @@ func _build_right(body: Control) -> void:
 func _same_but_valley(a: Dictionary, b: Dictionary) -> bool:
 	var x := a.duplicate()
 	var y := b.duplicate()
-	for k in ["hamlets", "base_population", "generation"]:
+	for k in ["hamlets", "base_population", "generation", "lakes"]:
 		x.erase(k)
 		y.erase(k)
 	return JSON.stringify(x) == JSON.stringify(y)

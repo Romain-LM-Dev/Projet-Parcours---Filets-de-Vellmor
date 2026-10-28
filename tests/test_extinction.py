@@ -20,9 +20,14 @@ def kinds(events, kind):
 
 
 def tiny_lake(tmp_path, seasons=6, mode="sync", **over):
-    """Huit pêcheurs sur un lac de 15 t parti à 40 % (6 t) : à eux tous ils peuvent en prendre la moitié de la capacité
-    (7,5 t), plus qu'il n'en reste : il est vide dès la première saison."""
-    return cfg_for(tmp_path, seasons=seasons, time__mode=mode, lake__capacity=15.0, lake__initial_ratio=0.4, **over)
+    """Huit pêcheurs sur un lac de 15 t parti à 40 % (6 t), où tout le poisson est pêchable et se voit bien (`hold_fraction` 1 et
+    aucune erreur d'estimation : d'ordinaire un bateau n'en prend que la moitié de sa part) : en synchrone, la pêche le vide dès la
+    première saison. En asynchrone chacun voit le lac que les autres ont déjà entamé et n'en demande pas plus : une sécheresse le
+    vide d'emblée (c'est l'arrêt à l'extinction que l'on éprouve, pas la pêche)."""
+    if mode == "async":
+        over.setdefault("scenario__scheduled_injections", [{"season": 1, "type": "drought", "factor": 0.0}])
+    return cfg_for(tmp_path, seasons=seasons, time__mode=mode, lake__capacity=15.0, lake__initial_ratio=0.4,
+                   economy__hold_fraction=1.0, lake__observation_noise=0.0, **over)
 
 
 # ---------------------------------------------------------------- le lac
@@ -125,7 +130,9 @@ def test_the_lobby_reports_the_extinction_in_the_final_status(tmp_path):
         bus = LocalBus()
         statuses = []
         bus.subscribe("status", statuses.append)
-        eng = Engine(cfg_for(tmp_path), bus, quiet=True)
+        # (une sécheresse totale à la première saison : c'est l'arrêt à l'extinction et son état final que l'on éprouve)
+        eng = Engine(cfg_for(tmp_path, scenario__scheduled_injections=[{"season": 1, "type": "drought", "factor": 0.0}]), bus,
+                     quiet=True)
         task = asyncio.create_task(eng.serve())
         await until(lambda: statuses and statuses[-1]["state"] == "idle")
         bus.send_command({"type": "start_game", "config": request(speed="max", seasons=5, lake={"capacity": 12.0},

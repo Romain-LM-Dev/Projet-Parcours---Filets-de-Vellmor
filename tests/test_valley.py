@@ -165,7 +165,8 @@ def test_the_catch_is_not_always_the_target(tmp_path):
         assert len(outs) == world.econ["outings"] and sum(o["tonnes"] for o in outs) == pytest.approx(c["landed"], abs=0.005)
         assert c["yield"] == pytest.approx(mean(outs, "yield"), abs=0.002) and c["luck"] == pytest.approx(mean(outs, "luck"), abs=0.002)
         if not c["rationed"] and c["stock_after"] > 0.01:      # chaque sortie rapporte sa part de la prise visée, dans la limite de la cale
-            expected = sum(min(c["requested"] * o["yield"], world.hold[c["agent"]]) for o in outs) / len(outs)
+            limit = world.hold_of(world.agents[c["agent"]], c["stock_at_action"])
+            expected = sum(min(c["requested"] * o["yield"], limit) for o in outs) / len(outs)
             assert c["landed"] == pytest.approx(expected, abs=0.01)
 
 
@@ -252,7 +253,8 @@ def test_no_luck_means_the_target_is_the_catch(tmp_path):
     for e in kinds(read_events(tmp_path, "sans-chance"), "catch"):
         p = e["payload"]
         assert p["yield"] == 1.0 and p["luck"] == 1.0 and {o["weather"] for o in p["outings"]} == {"ordinaire"}
-        assert p["rationed"] or p["landed"] == pytest.approx(p["requested"], abs=0.01)
+        limit = world.hold_of(world.agents[p["agent"]], p["stock_at_action"])       # ce que le lac lui laissait prendre
+        assert p["rationed"] or p["landed"] == pytest.approx(min(p["requested"], limit), abs=0.01)
 
 
 def test_the_patrol_measures_a_boat_in_proportion_to_the_outings_it_met(tmp_path):

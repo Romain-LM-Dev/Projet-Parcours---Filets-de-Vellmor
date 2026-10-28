@@ -6,6 +6,9 @@
     },
     "capacity": {
       "type": "number"
+    },
+    "lake": {
+      "type": "string"
     }
   },
   "required": [

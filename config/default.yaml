@@ -13,6 +13,9 @@ population:
   villages: 4                 # nombre de villages autour du lac (1 à 8 ; au plus un par pêcheur)
   fishers: 8                  # nombre de pêcheurs (C2)
   boat_mix: {barque: 0.3, chaloupe: 0.5, cotre: 0.2}    # répartition des tailles de bateaux (le caractère l'infléchit)
+  # random: true tire toute la vallée de la graine seule (villages, pêcheurs, flotte, lacs et leur poisson, patrouilles) ;
+  # les valeurs ci-dessus et lake.lakes sont alors ignorées. false : la vallée est celle que décrivent ces réglages.
+  random: false
   rule_fraction: 0.25         # part des pêcheurs à règles (A6) ; 1.0 = baseline sans LLM (E1)
   elder: true                 # l'ancien, arbitre sans pouvoir, ne pêche pas
   elder_kind: llm             # llm | rule
@@ -26,6 +29,12 @@ lake:
   capacity_per_fisher: 12.5   # tonnes
   initial_ratio: 1.0          # stock initial / capacité
   growth_rate: 1.0            # taux de repeuplement r (croissance logistique, appliquée une fois par saison) ; rendement durable max = r·K/4
+  # Plusieurs lacs : `count` lacs (1 à 4), les villages se partageant en blocs qui se suivent ; chaque lac a son poisson
+  # (capacity_per_fisher par pêcheur du lac), son repeuplement et ses villages. Pour les décrire un à un :
+  #   lakes: [{name: Vellmor, capacity: 100, stock_ratio: 0.8, growth_rate: 1.0, villages: [Ostrel, Bramois]}, ...]
+  # (capacity : tonnes, ou "auto" avec `richness` : un multiplicateur de capacity_per_fisher ; stock_ratio : part pleine au départ)
+  count: 1
+  lakes: null
   collapse_ratio: 0.05        # sous ce ratio, le lac est considéré effondré
   observation_noise: 0.10     # erreur relative de l'estimation du stock par un pêcheur
 
@@ -40,6 +49,9 @@ economy:
     chaloupe: {capacity: 7.0, upkeep: 50}
     cotre: {capacity: 11.0, upkeep: 110}
   min_catch: 1                # prise minimale visée d'une sortie (tonnes) : on ne part pas pour rien
+  # Ce que le lac laisse prendre : un bateau rapporte au plus sa cale, et au plus cette part du poisson qu'il y a dans son lac, partagée
+  # entre les bateaux du lac en proportion de leur cale (voir `World.hold_of`). Un lac qui se vide laisse donc de moins en moins prendre.
+  hold_fraction: 0.5
   # La pêche n'est pas toujours bonne : la prise visée est étalée sur `outings` sorties, et chacune rapporte selon le temps du jour
   # (le même pour tout le lac, plus rude pour les petits bateaux), la saison de l'année et les événements (voir `climate`),
   # l'expérience du pêcheur (plus dure quand le lac est bas) et sa chance. La chance varie de ±`luck` (écart-type) autour de 1 :
@@ -74,7 +86,8 @@ scenario:
   # enabled : la patrouille fait-elle partie de la partie (false : ni vote, ni capitaine, ni coût) ; coût par pêcheur et par
   # saison (écus) ; étapes et jours de mer par saison ; from_season : une patrouille installée d'emblée dès cette saison, sans
   # vote du conseil (pour comparer des parties ; null : c'est au conseil de la voter)
-  patrol: {enabled: true, cost: 15, legs: 3, days: 14, from_season: null}
+  # count : nombre de patrouilles (chacune a son capitaine et sa route) ; cost : ce que chaque pêcheur paie par patrouille et par saison
+  patrol: {enabled: true, count: 1, cost: 15, legs: 3, days: 14, from_season: null}
   # Tours de parole par veillée. Synchrone : on parle à tour de rôle et chacun entend les précédents (dialogues dépendants) ;
   # asynchrone : un seul tour, chacun s'exprime de son côté sans entendre les autres (dialogues indépendants), puis tous votent.
   assembly_rounds: 2

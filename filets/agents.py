@@ -319,14 +319,16 @@ async def debrief_villager(world, agent: Agent, asm) -> None:
         world.judge(agent, data.get("confiance"))
 
 
-async def patrol_decision(world, season: int, legs: int, days: int, lines: list[str]) -> tuple[list[tuple[str, int]], str] | None:
+async def patrol_decision(world, season: int, legs: int, days: int, lines: list[str],
+                          agent: Agent | None = None) -> tuple[list[tuple[str, int]], str] | None:
     """Le capitaine de la patrouille décide où aller : jusqu'à `legs` étapes (une zone du lac, ou un pêcheur qu'il suit), et combien de
     jours à chacune (`days` jours de mer en tout), d'après ce qu'on lui a dit et ce qu'il a relevé. Renvoie (étapes, raison), ou None si
     la réponse est illisible (le plan sera celui d'un capitaine à règles)."""
-    agent = world.patrol_agent
+    agent = agent or world.patrol_agent
     targets = [*world.zones, *(a.id for a in world.fishers)]
     data, _, _ = await _ask_llm(world, agent, "route", prompts.patrol_messages(
-        agent.profile, world.capacity, world.hamlets, lines, legs, days), {"round": 95}, "S2",
+        agent.profile, world.capacity, world.hamlets, lines, legs, days, world.world_text(agent) if world.multi else None),
+        {"round": 95}, "S2",
         schema=prompts.patrol_schema(targets, legs, days), max_tokens=prompts.PATROL_MAX_TOKENS)
     steps = (data or {}).get("etapes")
     if not isinstance(steps, list):
@@ -350,16 +352,17 @@ async def _quota_ballot(world, agent: Agent, asm) -> None:
     contrainte à l'identifiant d'une proposition ou « aucune ». Sans cela, ceux qui ne disent aucun chiffre s'abstenaient et
     aucune proposition n'atteignait la majorité. Une réponse inutilisable n'est pas une erreur : le pêcheur reste sans voix
     ici, et la clôture compte ce qu'il a dit (`World.closing_vote`)."""
-    est = world.lake.observe(agent.rng)
+    lake = world.lake_of(agent)
+    est = lake.observe(agent.rng)
     table = [f"- {pr.id} : {pr.quota:g} t par pêcheur, proposée par {world.name(pr.author)}, "
              f"{sum(1 for v in asm.support.values() if v[0] == pr.id)} soutien(s)" for pr in asm.proposals.values()]
-    messages = prompts.ballot_messages(agent.profile, table, est, world.capacity, world.lake.collapse_ratio)
+    messages = prompts.ballot_messages(agent.profile, table, est, lake.capacity, lake.collapse_ratio)
     described = {pr.id: f"{pr.quota:g} t par pêcheur, proposée par {world.name(pr.author)}, "
                         f"{sum(1 for v in asm.support.values() if v[0] == pr.id)} soutien(s)" for pr in asm.proposals.values()}
     data, res, _ = await _ask_llm(world, agent, "vote", messages, {"round": 99}, "S1",
                                   schema=prompts.ballot_schema(list(asm.proposals)), max_tokens=prompts.BALLOT_MAX_TOKENS,
-                                  system_one=prompts.ballot_system_one(agent.profile, described, est, world.capacity,
-                                                                       world.lake.collapse_ratio))
+                                  system_one=prompts.ballot_system_one(agent.profile, described, est, lake.capacity,
+                                                                       lake.collapse_ratio))
     vote = str((data or {}).get("vote", "")).strip().upper()
     last = next((u for u in reversed(asm.utterances) if u["payload"]["speaker"] == agent.id), None)
     if vote in asm.proposals and last is not None and not asm.closed:

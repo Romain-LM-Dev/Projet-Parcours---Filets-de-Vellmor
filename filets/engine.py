@@ -15,6 +15,7 @@ validée ici, jamais dans l'interface : une demande invalide laisse le salon ouv
 from __future__ import annotations
 
 import asyncio
+import collections
 import copy
 import datetime as dt
 import logging
@@ -29,8 +30,9 @@ from .catalog import (COMMUNICATIONS, COUNCILS, FLEETS, LIMITS, LLM_OPTIONS, MOD
                       generate_world)
 from .config import deep_merge, load_config, normalize
 from .console import console_printer, print_summary
+from .lakes import resolve_lakes
 from .pipeline import IndicatorPublisher
-from .profiles import validate_custom
+from .profiles import VILLAGE_NAMES, validate_custom
 
 log = logging.getLogger("filets.engine")
 
@@ -61,6 +63,13 @@ def validate_request(req: dict) -> list[str]:
     for key, label in (("climate", "le climat"), ("patrol", "la patrouille")):
         if not isinstance(req.get(key, True), bool):
             errs.append(f"{label} doit être vrai ou faux")
+    patrols = req.get("patrols", 1)
+    lo, hi = LIMITS["patrols"]
+    if not isinstance(patrols, int) or isinstance(patrols, bool) or not lo <= patrols <= hi:
+        errs.append(f"le nombre de patrouilles doit être un entier entre {lo} et {hi}")
+    hold = req.get("hold_fraction", 0.5)
+    if not (isinstance(hold, (int, float)) and not isinstance(hold, bool) and 0.05 <= hold <= 1.0):
+        errs.append("la part du poisson qu'un bateau peut prendre doit être un nombre entre 0,05 et 1")
     rate = req.get("event_rate", 0.3)
     if not (isinstance(rate, (int, float)) and not isinstance(rate, bool) and 0 <= rate <= 1):
         errs.append("la fréquence des événements doit être un nombre entre 0 et 1")
@@ -87,6 +96,7 @@ def validate_request(req: dict) -> list[str]:
     lo, hi = LIMITS["growth_rate"]
     if rate is not None and not (isinstance(rate, (int, float)) and not isinstance(rate, bool) and lo <= rate <= hi):
         errs.append(f"le taux de repeuplement du lac doit être un nombre entre {lo:g} et {hi:g}")
+    errs += validate_lakes(lake.get("lakes") if isinstance(lake, dict) else None, req.get("population"))
     if not isinstance(req.get("stop_on_extinction", True), bool):
         errs.append("« arrêter si le lac est vide » doit être vrai ou faux")
     pop = req.get("population")
@@ -107,24 +117,53 @@ def validate_request(req: dict) -> list[str]:
     return errs
 
 
+def validate_lakes(lakes, pop) -> list[str]:
+    """Erreurs (en français) de la description des lacs d'une demande : chaque lac (nom, capacité en tonnes, part pleine au départ,
+    repeuplement, villages) et leur cohérence avec les villages de la vallée. Vide si elle est valide ou absente."""
+    if lakes is None:
+        return []
+    if not isinstance(lakes, list) or not lakes or not all(isinstance(k, dict) for k in lakes):
+        return ["les lacs doivent être une liste d'au moins un lac"]
+    errs = []
+    for key, label in (("capacity", "la capacité"), ("stock_ratio", "la part pleine au départ"), ("growth_rate", "le repeuplement")):
+        lo, hi = LIMITS["capacity"] if key == "capacity" else LIMITS["stock_ratio"] if key == "stock_ratio" else LIMITS["growth_rate"]
+        for k in lakes:
+            v = k.get(key)
+            if v is not None and not (isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi):
+                errs.append(f"{label} d'un lac doit être un nombre entre {lo:g} et {hi:g}")
+                break
+    fishers = pop.get("fishers") if isinstance(pop, dict) else None
+    if errs or not (isinstance(fishers, list) and fishers and all(isinstance(f, dict) for f in fishers)):
+        return errs
+    hamlets = sorted({f.get("hamlet") for f in fishers}, key=lambda h: VILLAGE_NAMES.index(h) if h in VILLAGE_NAMES else 99)
+    try:
+        resolve_lakes({"lakes": lakes, "capacity_per_fisher": 12.5, "initial_ratio": 1.0, "growth_rate": 1.0}, hamlets,
+                      collections.Counter(f.get("hamlet") for f in fishers))
+    except ValueError as exc:
+        errs.append(str(exc))
+    return errs
+
+
 def build_game_config(base_cfg: dict, req: dict) -> dict:
     """Configuration complète d'une partie : la base du moteur, surchargée par ce qu'a choisi le joueur."""
     errs = validate_request(req)
     if errs:
         raise GameRequestError(" · ".join(errs[:4]))
     pop = req["population"]
+    patrols = req["patrols"] if "patrols" in req else (1 if req.get("patrol", True) else 0)
     llm = next(o for o in LLM_OPTIONS if o["id"] == req.get("llm", "scripted"))
     over: dict = {
         "run": {"seasons": req["seasons"], "seed": req["seed"], "label": f"menu-{llm['id']}"},
         "time": {"mode": req["mode"]},
         "scenario": {"communication": req["communication"], "catches_visible": req["catches_visible"],
                      "council": req.get("council", base_cfg["scenario"].get("council", "delegates")),
-                     "patrol": {"enabled": req.get("patrol", True)},
+                     "patrol": {"enabled": patrols > 0, "count": patrols},
                      "assembly_rounds": req.get("assembly_rounds", base_cfg["scenario"]["assembly_rounds"])},
         "population": {"custom": copy.deepcopy(pop["fishers"]), "elder": bool(pop.get("elder", True)),
                        "elder_kind": pop.get("elder_kind", "llm")},
         "climate": {"enabled": req.get("climate", True), "event_rate": float(req.get("event_rate", 0.3))},
-        "economy": {"luck": float(req.get("luck", base_cfg["economy"].get("luck", 0.0)))},
+        "economy": {"luck": float(req.get("luck", base_cfg["economy"].get("luck", 0.0))),
+                    "hold_fraction": float(req.get("hold_fraction", base_cfg["economy"].get("hold_fraction", 0.5)))},
     }
     if llm["config"]:
         preset = load_config(llm["config"])["llm"]
@@ -136,6 +175,8 @@ def build_game_config(base_cfg: dict, req: dict) -> dict:
         over.setdefault("lake", {})["capacity"] = float(lake["capacity"])
     if lake.get("growth_rate") is not None:       # taux de repeuplement choisi ; sinon celui de la configuration (1,0)
         over.setdefault("lake", {})["growth_rate"] = float(lake["growth_rate"])
+    if lake.get("lakes"):                         # les lacs, un à un : nom, poisson, repeuplement, villages
+        over.setdefault("lake", {})["lakes"] = copy.deepcopy(lake["lakes"])
     if "stop_on_extinction" in req:
         over["run"]["stop_on_extinction"] = req["stop_on_extinction"]
     return normalize(deep_merge(base_cfg, over))
@@ -345,25 +386,36 @@ class Engine:
         fleet = req.get("fleet", "mixte")
         if fleet not in [f["id"] for f in FLEETS]:
             errs.append("la flotte doit être l'une de : " + ", ".join(f["id"] for f in FLEETS))
-        for key, label in (("villages", "villages"), ("fishers", "pêcheurs"), ("seed", "graine")):
+        mode = req.get("mode", "params")
+        if mode not in ("params", "random"):
+            errs.append("la génération doit être paramétrée ou aléatoire")
+        # (aléatoire : la graine seule décide, le reste est tiré d'elle)
+        keys = (("seed", "graine"),) if mode == "random" else (("villages", "villages"), ("fishers", "pêcheurs"), ("seed", "graine"),
+                                                              ("lakes", "lacs"), ("patrols", "patrouilles"))
+        for key, label in keys:
             lo, hi = LIMITS[key]
-            v = req.get(key)
+            v = req.get(key, 1 if key in ("lakes", "patrols") else None)
             if not isinstance(v, int) or isinstance(v, bool) or not lo <= v <= hi:
                 errs.append(f"le nombre de {label} doit être un entier entre {lo} et {hi}" if key != "seed"
                             else f"la graine doit être un entier entre {lo} et {hi}")
             got[key] = v
-        if not errs and got["villages"] > got["fishers"]:
+        if not errs and mode == "params" and got["villages"] > got["fishers"]:
             errs.append("il faut au moins un pêcheur par village")
+        if not errs and mode == "params" and got["lakes"] > got["villages"]:
+            errs.append("il faut au moins un village par lac")
         if errs:
             self.error = " · ".join(errs)
             self.publish_status()
             self.error = None            # un refus se dit une fois : redemandé, le même refus doit se lire de nouveau
             return
         self.error = None
-        world = generate_world(self.base_cfg, got["villages"], got["fishers"], got["seed"], fleet)
+        world = generate_world(self.base_cfg, got.get("villages", 4), got.get("fishers", 8), got["seed"], fleet,
+                               got.get("lakes", 1), got.get("patrols", 1), mode)
         self.catalog = {**self.catalog, "hamlets": world["hamlets"], "base_population": world["base_population"],
-                        "generation": {"id": req.get("id"), "villages": got["villages"], "fishers": got["fishers"],
-                                       "seed": got["seed"], "fleet": fleet}}
+                        "lakes": world["lakes"],
+                        "generation": {"id": req.get("id"), "villages": world["villages"], "fishers": world["fishers"],
+                                       "seed": got["seed"], "fleet": world["fleet"], "lakes": len(world["lakes"]),
+                                       "patrols": world["patrols"], "mode": mode}}
         self.publish_status()
 
     async def _prepare(self, cfg: dict) -> None:

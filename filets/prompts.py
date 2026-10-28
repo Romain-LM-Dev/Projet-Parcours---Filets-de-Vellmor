@@ -115,11 +115,30 @@ PATROL_WHO = ("Tu es le capitaine de la patrouille du lac de Vellmor : une barqu
               "soupçonnes que sur des indices, et tu laisses tranquilles ceux que tu as trouvés honnêtes.")
 
 
-def persona(p, capacity: float, brief: bool = False, villages=()) -> str:
+WORLD_LAKES = (
+    "La vallée de Vellmor est fermée. Ses lacs sont ses seules réserves de poisson : {lakes}. Personne ne possède les lacs et "
+    "aucune loi n'encadre la pêche ; seuls comptent les accords que les villages passent entre eux, le soir, chez l'ancien. "
+    "Le poisson se vend au marché de chaque village. Chaque lac se repeuple seul entre deux saisons, à condition qu'on lui en "
+    "laisse le temps : les anciens disent qu'il se refait le mieux quand on le laisse autour de la moitié de sa capacité, qu'un "
+    "lac très bas ne se refait presque plus, et qu'un lac vide ne se refait jamais."
+)
+
+
+def lake_ref(label: str) -> str:
+    """« le lac d'Orsane » (le nom propre garde sa majuscule)."""
+    return "le " + label[0].lower() + label[1:]
+
+
+def lakes_text(lakes: list[tuple[str, list[str]]]) -> str:
+    """« le lac de Vellmor (Ostrel et Bramois), le lac d'Orsane (Tilque) » : les lacs de la vallée et leurs villages."""
+    return ", ".join(f"{lake_ref(label)} ({' et '.join(v)})" for label, v in lakes)
+
+
+def persona(p, capacity: float, brief: bool = False, villages=(), world: str | None = None) -> str:
     who = PATROL_WHO if getattr(p, "role", "") == "patrouille" else (
         f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. "
         f"{p.experience} an{'s' if p.experience > 1 else ''} de pêche sur le lac. {p.traits} Ta façon de parler : {p.voice}.")
-    world = WORLD.format(capacity=capacity, half=capacity / 2, villages=villages_text(villages))
+    world = world or WORLD.format(capacity=capacity, half=capacity / 2, villages=villages_text(villages))
     return f"{world}\n\n{who}\n\n{STYLE}{BRIEF_STYLE if brief else ''}"
 
 
@@ -179,7 +198,8 @@ def lake_block(obs: dict) -> str:
     cap = obs.get("capacity")
     if not cap:
         return f"Ton estimation du stock du lac : environ {est:.0f} tonnes."
-    head = (f"État du lac en ce moment, tel que tu le constates toi-même : environ {est:.0f} tonnes sur {cap:.0f} à pleine "
+    where = f" ({obs['lake_name']}, celui de ton village)" if obs.get("lake_name") else ""
+    head = (f"État du lac{where} en ce moment, tel que tu le constates toi-même : environ {est:.0f} tonnes sur {cap:.0f} à pleine "
             f"capacité, soit {100 * est / cap:.0f} % ({lake_level(est, cap, obs.get('collapse_ratio', 0.05))}).")
     hist = obs.get("stock_history") or []
     if not hist:
@@ -408,7 +428,7 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
               f"\"prise\": <tonnes, {catch_range(obs)}>, "
               "\"declaration\": <tonnes que tu déclares à l'ancien : exactement ta prise, ou moins seulement si tu choisis de la cacher>}"
         )
-    return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()))},
+    return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()), obs.get("world"))},
             {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
 
 
@@ -511,7 +531,7 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     )
     # la veillée a son propre contexte, plus court ; en réflexion complète (profil de référence), le contexte reste entier
     ctx = veillee_block(obs) if brief else context_block(obs, brief)
-    return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()))},
+    return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()), obs.get("world"))},
             {"role": "user", "content": ctx + "\n\n" + ask}]
 
 
@@ -541,7 +561,7 @@ NARRATION_MAX_TOKENS = 260
 NARRATION_TEMPERATURE = 0.3      # un récit fidèle plutôt qu'inventif : à 0,7, un petit modèle enjolive (« le lac à son apogée »)
 
 
-def narration_messages(p, facts: list[str], capacity: float, villages=()) -> list[dict]:
+def narration_messages(p, facts: list[str], capacity: float, villages=(), world: str | None = None) -> list[dict]:
     """Le récit de la saison par l'ancien, pour le joueur : quelques phrases avec sa voix, à partir des seuls faits relevés
     dans le journal de la partie (il n'invente rien, il raconte)."""
     ask = ("La saison vient de finir. Voici ce qui s'est passé, tel qu'on l'a vu au marché et à la veillée :\n"
@@ -552,7 +572,7 @@ def narration_messages(p, facts: list[str], capacity: float, villages=()) -> lis
              "règle, dis si c'est la première, une règle reconduite, plus stricte ou assouplie, comme la liste le dit. "
              "Le temps de la pêche peut expliquer de maigres prises : tu peux le dire. Quand tu cites quelqu'un, reprends son nom et ce que la liste dit de lui, sans le confondre avec un autre. Des phrases simples et complètes, en bon français. "
              "Réponds en JSON : {\"recit\": \"<ton récit>\"}")
-    return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": ask}]
+    return [{"role": "system", "content": persona(p, capacity, True, villages, world)}, {"role": "user", "content": ask}]
 
 
 def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:
@@ -669,11 +689,11 @@ def patrol_schema(targets: list[str], legs: int, days: int) -> dict:
             "required": ["raison", "etapes"], "additionalProperties": False}
 
 
-def patrol_messages(p, capacity: float, villages, lines: list[str], legs: int, days: int) -> list[dict]:
+def patrol_messages(p, capacity: float, villages, lines: list[str], legs: int, days: int, world: str | None = None) -> list[dict]:
     body = (f"Une saison de pêche va s'ouvrir. Tu as {days} jours de mer à répartir sur {legs} étape{'s' if legs > 1 else ''} au plus. "
             f"Voici ce que tu sais, zone par zone :\n{_bullets(lines)}\n\n"
             "Une étape est une zone du lac (un village, ou « large ») où tu passes les jours que tu y mets, en mesurant les barques de "
             "ceux qui y pêchent ; ou un pêcheur que tu suis de près (son identifiant), que tu mesures où qu'il aille. Où vas-tu, "
             "combien de jours à chaque étape, et pourquoi ? Réponds en JSON : {\"raison\": \"<une phrase>\", \"etapes\": "
             "[{\"cible\": \"<zone ou identifiant>\", \"jours\": <nombre>}]}")
-    return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": body}]
+    return [{"role": "system", "content": persona(p, capacity, True, villages, world)}, {"role": "user", "content": body}]

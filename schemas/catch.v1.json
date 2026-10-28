@@ -43,6 +43,9 @@
     "secret": {
       "type": "boolean"
     },
+    "lake": {
+      "type": "string"
+    },
     "yield": {
       "type": "number"
     },

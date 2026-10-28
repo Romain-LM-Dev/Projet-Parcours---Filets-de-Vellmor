@@ -5,12 +5,18 @@ Il est envoyé par le pont à chaque connexion (voir `api.ApiServer`).
 """
 from __future__ import annotations
 
+import collections
+
+from .lakes import LAKE_NAMES, MAX_LAKES, random_valley, resolve_lakes
 from .profiles import (ARCHETYPES, BOAT_NAMES, DEFAULT_BOAT_MIX, FIRST_NAMES, ORDER, VILLAGE_NAMES, archetype_defaults,
                        build_population, profile_to_spec)
 
 LIMITS = {
     "villages": [1, 8],              # villages autour du lac (la génération de la vallée)
     "fishers": [1, 24],
+    "lakes": [1, MAX_LAKES],         # lacs de la vallée (au plus un par village)
+    "patrols": [0, 4],               # patrouilles du lac (0 : aucune)
+    "stock_ratio": [0.05, 1.0],      # part pleine d'un lac au départ
     "seasons": [1, 50],
     "experience": [0, 60],
     "wealth": [0, 5000],
@@ -123,14 +129,26 @@ def base_population(cfg: dict) -> list[dict]:
     return specs
 
 
-def generate_world(cfg: dict, villages: int, fishers: int, seed: int, fleet: str = "mixte") -> dict:
+def generate_world(cfg: dict, villages: int, fishers: int, seed: int, fleet: str = "mixte", lakes: int = 1, patrols: int = 1,
+                   mode: str = "params") -> dict:
     """La vallée que génèrent ces paramètres (génération procédurale, la même pour la même graine) : ses villages et ses pêcheurs,
-    avec la flotte demandée (`FLEETS`). Le menu l'affiche, le joueur la retouche, puis la lance."""
-    over = {"population": {**cfg["population"], "villages": villages, "fishers": fishers, "boat_mix": fleet_mix(cfg, fleet)},
+    avec la flotte demandée (`FLEETS`), ses lacs (chacun son poisson : 12,5 t par pêcheur du lac) et ses patrouilles. En mode
+    `random`, la graine seule décide de tout (`lakes.random_valley`) et les autres paramètres sont ignorés. Le menu l'affiche, le
+    joueur la retouche, puis la lance."""
+    if mode == "random":
+        drawn = random_valley(seed)
+        villages, fishers, fleet, patrols, specs_lakes = drawn["villages"], drawn["fishers"], drawn["fleet"], drawn["patrols"], \
+            drawn["lakes"]
+    else:
+        specs_lakes = [{"name": LAKE_NAMES[i]} for i in range(lakes)]
+    over = {"population": {**cfg["population"], "villages": villages, "fishers": fishers, "boat_mix": fleet_mix(cfg, fleet),
+                           "random": False},
             "run": {**cfg["run"], "seed": seed}}
     specs = base_population({**cfg, **over})
-    return {"villages": villages, "fishers": fishers, "seed": seed, "fleet": fleet, "hamlets": villages_of_specs(specs),
-            "base_population": specs}
+    hamlets = villages_of_specs(specs)
+    resolved = resolve_lakes({**cfg["lake"], "lakes": specs_lakes}, hamlets, collections.Counter(s["hamlet"] for s in specs))
+    return {"villages": villages, "fishers": fishers, "seed": seed, "fleet": fleet, "hamlets": hamlets, "base_population": specs,
+            "lakes": resolved, "patrols": patrols, "mode": mode}
 
 
 def villages_of_specs(specs: list[dict]) -> list[str]:
@@ -142,9 +160,14 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
     pop, scn = cfg["population"], cfg["scenario"]
     option = next((o for o in LLM_OPTIONS if o["id"] == llm), LLM_OPTIONS[0])
     base = base_population(cfg)
+    hamlets = villages_of_specs(base)
+    lakes = resolve_lakes(cfg["lake"], hamlets, collections.Counter(s["hamlet"] for s in base))
+    patrol = cfg["scenario"].get("patrol") or {}
     return {
         "version": 1,
-        "hamlets": villages_of_specs(base),             # les villages de la composition de base
+        "hamlets": hamlets,                             # les villages de la composition de base
+        "lakes": lakes,                                 # les lacs de la composition de base : nom, capacité, stock, villages
+        "lake_names": list(LAKE_NAMES),
         "village_names": list(VILLAGE_NAMES),           # tous ceux que la génération peut poser autour du lac
         "boats": boats_catalog(cfg),
         "fleets": [{"id": f["id"], "label": f["label"], "mix": fleet_mix(cfg, f["id"])} for f in FLEETS],
@@ -168,7 +191,9 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
             "large_model_min_experience": int(pop["large_model_min_experience"]),
             "capacity_per_fisher": float(cfg["lake"]["capacity_per_fisher"]),
             "growth_rate": float(cfg["lake"]["growth_rate"]),
-            "villages": len(villages_of_specs(base)), "fishers": len(base),
+            "villages": len(hamlets), "fishers": len(base), "lakes": len(lakes), "mode_generation": "params",
+            "patrols": int(patrol.get("count", 1)) if patrol.get("enabled", True) else 0,
+            "hold_fraction": float(cfg["economy"].get("hold_fraction", 0.5)),
             "climate": bool((cfg.get("climate") or {}).get("enabled", True)),
             "event_rate": float((cfg.get("climate") or {}).get("event_rate", 0.3)),
             "luck": float(cfg["economy"].get("luck", 0.0)),

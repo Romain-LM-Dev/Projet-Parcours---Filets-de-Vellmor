@@ -148,7 +148,8 @@ def test_every_prompt_carries_the_true_state_of_the_lake_as_that_fisher_saw_it(t
 
 def test_the_lake_is_called_empty_once_it_is_empty(tmp_path):
     # parti à 45 % (18 t) : les 20 t que les quatre pêcheurs peuvent prendre le vident dès la première saison
-    world, events, requests = play_greedy(tmp_path, "aw2", lake__initial_ratio=0.45)
+    world, events, requests = play_greedy(tmp_path, "aw2", lake__initial_ratio=0.45, economy__hold_fraction=1.0,
+                                          lake__observation_noise=0.0)
     collapsed_at = next(e["season"] for e in events if e["type"] == "lake_collapsed")
     late = [r for r in requests if parse(r, world)[1] > collapsed_at]
     assert late, "la partie doit continuer après l'effondrement"

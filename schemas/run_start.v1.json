@@ -73,6 +73,12 @@
     },
     "boats": {
       "type": "object"
+    },
+    "lakes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
     }
   },
   "required": [

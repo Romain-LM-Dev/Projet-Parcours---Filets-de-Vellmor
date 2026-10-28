@@ -9,7 +9,8 @@ EXTINCT_BELOW = 0.05     # tonnes : sous 50 kg, le stock s'affiche « 0.0 t » e
 
 class Lake:
     def __init__(self, capacity: float, initial_ratio: float, growth_rate: float, collapse_ratio: float,
-                 observation_noise: float):
+                 observation_noise: float, name: str = "Vellmor", label: str = "Lac de Vellmor"):
+        self.name, self.label = name, label
         self.capacity = capacity
         self.stock = capacity * initial_ratio
         self.r = growth_rate
