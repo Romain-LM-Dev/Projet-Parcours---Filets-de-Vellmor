@@ -250,6 +250,18 @@ def rule_reminder(obs: dict) -> str:
             "confiance peuvent proposer de t'interdire de pêche.\n")
 
 
+def rule_review(obs: dict) -> str:
+    """Ce que la règle en vigueur a donné, en faits : combien de pêcheurs l'ont dépassée, d'après leurs déclarations. Avant de
+    reproposer la même règle ou une autre, on sait si elle tient ; sans cela, un petit modèle recopiait son chiffre d'une veillée à
+    l'autre (sept réponses sur douze à l'identique)."""
+    rule, vals = obs.get("rule"), obs.get("last_season_catches") or []
+    if not rule or not vals:
+        return ""
+    over = sum(v > rule["quota"] + 0.05 for v in vals)
+    return (f"Bilan de la règle de {rule['quota']:g} t : parmi les {len(vals)} pêcheurs dont tu connais la prise, {over} l'ont "
+            f"dépassée et {len(vals) - over} l'ont respectée.\n")
+
+
 def trust_word(v: float) -> str:
     return ("très faible" if v < 0.25 else "faible" if v < 0.4 else "moyenne" if v < 0.6 else "bonne" if v < 0.8
             else "forte")
@@ -292,8 +304,9 @@ def clues_block(obs: dict) -> str:
 
 
 def trust_schema(ids: list[str] | None) -> dict:
-    """Le jugement de confiance : un entier de −3 à +3 par pêcheur, chacun une fois au plus. Avec les identifiants connus, le schéma
-    interdit à une IA de répéter les mêmes clés jusqu'à épuiser sa réponse (réponses illisibles constatées avec un petit modèle)."""
+    """Le jugement de confiance : un entier de −3 à +3 par pêcheur, chacun une fois au plus. Avec les prénoms connus (ceux que
+    l'invite montre : le moteur lit aussi un identifiant), le schéma interdit à une IA de répéter les mêmes clés jusqu'à épuiser sa
+    réponse (réponses illisibles constatées avec un petit modèle, qui écrivait aussi des noms au lieu des identifiants)."""
     step = {"type": "integer", "minimum": -3, "maximum": 3}
     if ids:
         return {"type": "object", "properties": {i: step for i in ids}, "additionalProperties": False}
@@ -432,7 +445,8 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     fields = [
         f"\"message\": \"{msg}\"",
         "\"destinataire\": \"tous\" ou l'identifiant d'une personne présente",
-        "\"proposition_quota\": <tonnes par pêcheur et par saison que tu proposes comme règle, ou null>",
+        "\"proposition_quota\": <tonnes par pêcheur et par saison d'une règle nouvelle que tu proposes, selon le lac et ce qu'il "
+        "te faut pour vivre, ou null " + ("pour garder la règle en vigueur" if obs.get("rule") else "si tu n'en proposes pas") + ">",
         "\"soutien\": \"<identifiant d'une proposition que tu soutiens, ex. P2>\" ou null",
     ]
     if fisher:
@@ -440,7 +454,7 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     fields.append("\"accuse\": \"<identifiant d'un pêcheur que tu accuses d'avoir trop pêché>\" ou null")
     # la confiance : c'est l'agent qui dit ce que chaque acte, chaque parole change pour lui (le moteur n'y ajoute rien)
     # « ce soir » : sans cela, un petit modèle sanctionnait encore à chaque veillée un dépassement vieux de deux saisons
-    fields.append("\"confiance\": {\"<identifiant>\": <de -3 à +3>} pour ceux envers qui ce que tu apprends ce soir (saison "
+    fields.append("\"confiance\": {\"<prénom>\": <de -3 à +3>} pour ceux envers qui ce que tu apprends ce soir (saison "
                   f"{obs['season']} : prises, indices, paroles) change ta confiance, selon ta morale et tes intérêts (-3 : tu "
                   "ne le crois plus du tout, +3 : il a gagné ta confiance) ; les saisons d'avant comptent déjà dans ta "
                   "confiance ; {} si rien ne change")
@@ -474,7 +488,8 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         acts = ("À toi de parler. Tu peux proposer une règle, promettre, accuser"
                 + sanction_acts)
     else:
-        room = (f"Ce qui a déjà été dit ce soir :\n{transcript}\n\nPropositions de règle sur la table :\n{proposals}\n\n"
+        direct = (f"On s'est adressé à toi :\n{_bullets(obs['addressed'])}\n\n" if obs.get("addressed") else "")
+        room = (f"Ce qui a déjà été dit ce soir :\n{transcript}\n\n{direct}Propositions de règle sur la table :\n{proposals}\n\n"
                 f"{sanctions}")
         acts = ("À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser"
                 + sanction_acts)
@@ -483,7 +498,7 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         f"Veillée chez l'ancien ({obs['scope_label']}){turn}. Présents : {people}.\n\n"
         f"{room}{who_line}{acts}"
         + f", ou simplement donner ton avis. {rumor_hint}Rien ne t'oblige à tenir parole.\n"
-        + lake_reminder(obs)
+        + lake_reminder(obs) + rule_review(obs)
         + "Réponds en JSON : {" + ", ".join(fields) + "}"
     )
     # la veillée a son propre contexte, plus court ; en réflexion complète (profil de référence), le contexte reste entier
@@ -628,7 +643,7 @@ def debrief_messages(p, lines: list[str], trust: str, situation: str) -> list[di
     body = ("Tu n'étais pas au conseil de la vallée, chez l'ancien : ton élu y parlait pour ton village. Voici ce que l'ancien "
             f"t'en rapporte, et ce que tu sais des autres pêcheurs :\n{_bullets(lines, 'rien de particulier')}\n{trust}\n"
             f"{situation}\nCe que tu apprends change-t-il ta confiance envers l'un d'eux, selon ta morale et tes intérêts ? "
-            "Réponds en JSON : {\"confiance\": {\"<identifiant>\": <de -3 à +3>}} (-3 : tu ne le crois plus du tout, +3 : il a "
+            "Réponds en JSON : {\"confiance\": {\"<prénom>\": <de -3 à +3>}} (-3 : tu ne le crois plus du tout, +3 : il a "
             "gagné ta confiance ; {} si rien ne change).")
     return [{"role": "system", "content": who}, {"role": "user", "content": body}]
 

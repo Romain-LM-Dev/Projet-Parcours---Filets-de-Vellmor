@@ -31,11 +31,12 @@ def kinds(events, kind):
     return [e for e in events if e["type"] == kind]
 
 
-def fake_game(tmp_path, run_id, rec, population=TWO_VILLAGES, seasons=2, mode="sync", elder=False, **over):
-    """Une partie dont toutes les IA (grand et petit modèle) sont `rec`, un faux fournisseur qui enregistre ce qu'on lui demande."""
+def fake_game(tmp_path, run_id, rec, population=TWO_VILLAGES, seasons=2, mode="sync", elder=False, schema=False, **over):
+    """Une partie dont toutes les IA (grand et petit modèle) sont `rec`, un faux fournisseur qui enregistre ce qu'on lui demande
+    (`schema` : il sait recevoir le schéma de la réponse, que `rec` enregistre alors)."""
     cfg = cfg_for(tmp_path, seasons=seasons, population__custom=population, population__elder=elder,
                   population__elder_kind="llm", time__mode=mode, **over)
-    cfg["llm"]["providers"]["fake"] = {"base_url": rec.url, "api_key_env": None, "rpm": 0}
+    cfg["llm"]["providers"]["fake"] = {"base_url": rec.url, "api_key_env": None, "rpm": 0, "json_schema": schema}
     cfg["llm"]["tiers"] = {"grand": {"provider": "fake", "model": "m"}, "petit": {"provider": "fake", "model": "m"}}
     bus = LocalBus()
     dead = []
@@ -266,6 +267,65 @@ def test_asynchronous_dialogues_are_independent(tmp_path):
     utterances = kinds(events, "utterance")
     assert len(utterances) == 4 and all(u["payload"]["heard"] == [] and u["payload"]["round"] == 1 for u in utterances)
     assert len({u["payload"]["speaker"] for u in utterances}) == 4           # chacun une seule fois
+
+
+def test_synchronous_speakers_are_told_what_was_said_to_them(tmp_path):
+    """Les échanges sont liés : celui à qui l'on s'adresse le voit, à part, dans l'invite de sa réplique suivante."""
+    rec = Recorder(speech={"destinataire": "F02"})
+    fake_game(tmp_path, "adresse", rec, population=THREE_VILLAGES, seasons=1, mode="sync", scenario__council="all")
+    asked = [(re.search(r"Tu es (\S+)", r["system"]).group(1), r["user"]) for r in rec.requests if "Veillée chez l'ancien" in r["user"]]
+    told = {who for who, user in asked if "On s'est adressé à toi :" in user}
+    assert told == {"Inès"}                                              # elle seule, et jamais ses propres paroles
+    assert all("Inès" not in user.split("On s'est adressé à toi :")[1].split("\n\n")[0] for _, user in asked
+               if "On s'est adressé à toi :" in user)
+
+
+def test_asynchronous_speeches_are_laid_down_together(tmp_path, monkeypatch):
+    """Les paroles étant indépendantes, elles sont déposées au même instant, même si chaque IA a mis un temps différent."""
+    original = World.observe
+
+    async def uneven(self, agent, *args, **kwargs):
+        if "speak" in args:
+            await asyncio.sleep(0.04 * (sum(map(ord, agent.id)) % 5))        # des IA plus ou moins lentes
+        return await original(self, agent, *args, **kwargs)
+
+    monkeypatch.setattr(World, "observe", uneven)
+    world, bus, _ = make_world(tmp_path, "ensemble", seasons=1, time__mode="async", time__fast=False,
+                               time__sim_hours_per_second=100, population__fishers=8)
+    asyncio.run(world.run())
+    events = read_events(tmp_path, "ensemble")
+    spoken = kinds(events, "utterance")
+    thought = [e for e in kinds(events, "decision") if e["payload"]["decision_type"] == "speak"]
+    assert len(spoken) >= 3
+    assert len({e["sim_time"] for e in spoken}) == 1                   # déposées ensemble
+    assert len({e["sim_time"] for e in thought}) > 1                   # alors qu'elles n'ont pas été pensées en même temps
+    order = kinds(events, "assembly_start")[0]["payload"]["participants"]
+    assert [e["payload"]["speaker"] for e in spoken] == [a for a in order if a in {e["payload"]["speaker"] for e in spoken}]
+
+
+def test_an_elected_delegate_knows_whom_he_speaks_for(tmp_path):
+    """Le porte-parole d'un village connaît les siens (caractère, bateau, ce qu'il leur faut pour vivre) et reste lui-même."""
+    world, bus, _ = make_world(tmp_path, "porte-parole", population__fishers=8)
+    asyncio.run(world.prepare_season(1))
+    rep = world.agents[next(iter(world.reps.values()))]
+    line = world.delegate_line(rep)
+    assert "porte-parole" in line and "colore" in line
+    for mate in (a for a in world.fishers if a.profile.hamlet == rep.profile.hamlet and a is not rep):
+        assert world.first_name(mate.id) in line and mate.profile.archetype_label in line and "t par saison pour vivre" in line
+    alone, bus, _ = make_world(tmp_path, "seul", population__custom=THREE_VILLAGES)
+    assert "seul pêcheur de Hennad" in alone.delegate_line(alone.agents[IDS["Rémi"]])
+
+
+def test_the_trust_judgment_names_fishers_by_the_first_name_the_prompt_shows(tmp_path):
+    """Le schéma de la confiance (bilan d'un absent) a pour clés les prénoms, et laisse de quoi les écrire tous."""
+    rec = Recorder(elect={"Mathis": "Mathis", "Inès": "Mathis", "Elwen": "Théo", "Théo": "Théo"}, debrief={IDS["Théo"]: -2})
+    fake_game(tmp_path, "prenoms", rec, seasons=2, schema=True)
+    debrief = [r for r in rec.requests if "Tu n'étais pas au conseil" in r["user"]]
+    assert debrief
+    for r in debrief:
+        keys = set(r["response_format"]["json_schema"]["schema"]["properties"]["confiance"]["properties"])
+        assert keys == {"Mathis", "Inès", "Elwen", "Théo"} - {re.search(r"Tu es (\S+)", r["system"]).group(1)}
+        assert r["max_tokens"] >= 12 + 9 * len(keys) and "<prénom>" in r["user"]
 
 
 # ============================================================ le reste du monde

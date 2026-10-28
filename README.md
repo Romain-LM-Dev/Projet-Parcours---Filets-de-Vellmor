@@ -501,8 +501,8 @@ garde pas le siège de son village.
 
 **Ceux qui n'y sont pas jugent quand même.** À la reprise suivante, chaque villageois absent reçoit de l'ancien les décisions du conseil
 et ce que la vallée sait de chaque pêcheur, et dit lui-même ce que cela change pour sa confiance (de −3 à +3, comme à la veillée) : une IA par
-un petit appel, un agent à règles selon son caractère. Un élu est présenté à son tour comme celui qui parle aussi pour ses voisins (leurs
-besoins moyens pour vivre figurent dans son contexte). Résultat sur les tokens : la veillée ne fait plus parler que 4 à 9 personnes, au lieu de tous.
+un petit appel, un agent à règles selon son caractère. Un élu est le **porte-parole** de son village : son contexte lui rappelle chacun des
+siens (caractère, bateau, ce qu'il lui faut pour vivre). Il reste lui-même : sa façon d'être colore ce qu'il rapporte, et c'est voulu. Résultat sur les tokens : la veillée ne fait plus parler que 4 à 9 personnes, au lieu de tous.
 
 ## La patrouille du lac
 
@@ -541,10 +541,16 @@ route suivante. Un capitaine ne peut être partout : couvrir une zone, c'est en 
 
 * **Synchrone — dialogues dépendants.** À la veillée, on parle **à tour de rôle** (l'ancien ouvre, puis les élus, en commençant chaque
   saison par un village différent) et chacun **entend tout ce qui a été dit avant lui** : l'horloge avance d'un tour à l'autre, et la
-  parole de chacun est visible du suivant (`utterance.heard`). On peut répondre, soutenir, contester.
+  parole de chacun est visible du suivant (`utterance.heard`). On peut répondre, soutenir, contester : ce qu'on t'a dit directement
+  (`destinataire`) est rappelé à part dans l'invite (« On s'est adressé à toi »).
 * **Asynchrone — dialogues indépendants.** Chacun s'exprime **une fois**, à son rythme, **sans rien entendre ni voir** de ce que les autres
-  disent ou déposent (`heard` vide, ni échange, ni propositions sur la table) ; puis tous votent sur tout ce qui a été proposé (bulletins
-  6 h avant la fin de la veillée). Le nombre de tours de parole ne compte qu'en synchrone.
+  disent ou déposent (`heard` vide, ni échange, ni propositions sur la table) ; les IA réfléchissent en parallèle, et leurs paroles sont
+  **déposées toutes au même instant**, quand la dernière est prête (dans l'ordre du conseil). Puis tous votent sur tout ce qui a été
+  proposé (bulletins 6 h avant la fin de la veillée). Le nombre de tours de parole ne compte qu'en synchrone.
+
+**Proposer une règle.** Quand une règle est en vigueur, la rappeler ne la reconduit pas : `proposition_quota: null` la garde (elle reste
+valable sans nouveau vote), un chiffre en propose une **nouvelle**. L'invite donne aussi le bilan de la règle (combien de pêcheurs l'ont
+dépassée d'après leurs déclarations) : sans cela, un petit modèle recopiait le quota en vigueur d'une veillée à l'autre.
 
 ## Moins de tokens, des agents plus cohérents
 

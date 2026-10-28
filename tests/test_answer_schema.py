@@ -150,6 +150,16 @@ def test_the_trust_judgment_of_an_ai_is_closed_on_the_known_fishers():
     assert answer_schema("speak")["properties"]["confiance"]["additionalProperties"]["maximum"] == 3      # sans identifiants : comme avant
 
 
+def test_a_rule_in_force_is_kept_by_proposing_nothing_and_its_record_is_given():
+    """Un petit modèle recopiait le quota en vigueur d'une veillée à l'autre (7 réponses sur 12 à l'identique, avec 2,1 t)."""
+    from filets import prompts
+
+    obs = {"rule": {"quota": 2.1, "supported": True}, "last_season_catches": [3.0, 3.0, 2.0, 2.1]}
+    assert "Bilan de la règle de 2.1 t : parmi les 4 pêcheurs dont tu connais la prise, 2 l'ont dépassée et 2 l'ont respectée" \
+        in prompts.rule_review(obs)
+    assert prompts.rule_review({"rule": None, "last_season_catches": [3.0]}) == "" and prompts.rule_review({"rule": obs["rule"]}) == ""
+
+
 def test_the_declaration_is_the_catch_unless_one_chooses_to_hide_some():
     from filets import prompts
     from test_reflection_profile import Profile, long_obs

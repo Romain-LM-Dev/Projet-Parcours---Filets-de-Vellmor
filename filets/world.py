@@ -138,6 +138,7 @@ class Assembly:
     accused: list[tuple[float, str]] = field(default_factory=list)     # (instant, accusé) : qui a été mis en cause, et quand
     sanctions: dict[str, Sanction] = field(default_factory=dict)        # propositions soumises au vote (voir `Sanction`)
     mode: str = "sync"               # sync : on s'entend, tour à tour ; async : chacun parle de son côté, sans entendre les autres
+    held: dict[str, tuple] = field(default_factory=dict)       # async : paroles prêtes (agent -> (réponse, instant)), déposées ensemble
     delegates: bool = False          # le conseil des élus (un par village), et non tous les pêcheurs
     closed: bool = False
 
@@ -937,6 +938,8 @@ class World:
                 + ("" if u["payload"]["to"] == "tous" else f", à {self.name(u['payload']['to'])}")
                 + f" : « {u['payload']['text']} »" for u in visible_u[-12:]]
             used += [u["event_id"] for u in visible_u[-12:]]
+            obs["addressed"] = [f"{self.name(u['payload']['speaker'])} : « {u['payload']['text']} »"
+                                for u in visible_u[-12:] if u["payload"]["to"] == agent.id and u["payload"]["speaker"] != agent.id]
             props = [] if assembly.independent else [pr for pr in assembly.proposals.values() if pr.t <= horizon]
             obs["proposals"] = []
             best = None
@@ -1695,14 +1698,21 @@ class World:
                 f"({self.patrol_cfg['cost']:g} écus par saison), s'il juge qu'il faut démasquer des fraudes. {how}{seen}")
 
     def delegate_line(self, agent: Agent) -> str:
-        """Pour qui parle un élu : les pêcheurs de son village, et ce qu'il leur faut pour vivre."""
-        mates = [a for a in self.fishers if a.profile.hamlet == agent.profile.hamlet]
-        if len(mates) == 1:
-            return f"Tu es le seul pêcheur de {agent.profile.hamlet}, et son élu au conseil de la vallée."
-        need = sum((self.upkeep(a) + a.profile.debt_payment) / self.econ["price_per_tonne"] for a in mates) / len(mates)
-        others = ", ".join(self.first_name(a.id) for a in mates if a.id != agent.id)
-        return (f"Tu es l'élu de {agent.profile.hamlet} au conseil de la vallée : tu parles aussi pour {others}, qui n'y viennent "
-                f"pas et subiront la décision (il leur faut en moyenne {need:.1f} t par saison pour vivre).")
+        """Pour qui parle un élu : il est le rapporteur de son village, et connaît les siens (leur caractère, leur bateau, ce qu'il
+        leur faut pour vivre). Il reste lui-même : sa façon d'être colore ce qu'il en dit, et c'est voulu."""
+        village = agent.profile.hamlet
+        mates = [a for a in self.fishers if a.profile.hamlet == village and a.id != agent.id]
+        if not mates:
+            return f"Tu es le seul pêcheur de {village}, et son élu au conseil de la vallée."
+
+        def mate(a: Agent) -> str:
+            need = (self.upkeep(a) + a.profile.debt_payment) / self.econ["price_per_tonne"]
+            return (f"{self.first_name(a.id)} ({a.profile.archetype_label}, {a.profile.boat} ; il lui faut {need:.1f} t par saison "
+                    "pour vivre)")
+
+        return (f"Tu es l'élu de {village} au conseil de la vallée, le porte-parole de ton village : tu rapportes ce que veulent les "
+                f"tiens, qui n'y {'viennent' if len(mates) > 1 else 'vient'} pas et subiront la décision : "
+                + " ; ".join(mate(a) for a in mates) + ". Tu restes toi-même : ta façon de voir colore ce que tu en dis.")
 
     def motion_item(self, observer: Agent, s: Sanction, season: int) -> str:
         """Une motion au bulletin d'un élu, en une ligne : ce qu'on propose, par qui, et ce qu'il sait pour en juger."""
@@ -2370,24 +2380,35 @@ class AsyncRunner:
         self.w.events.emit("phase", {"name": "assembly", "state": "open"})
         for asm in asms:
             for aid in asm.participants:
+                self.thinking[("talk", aid)] = 1
                 self.spawn(self.talk(self.w.agents[aid], asm), "talk", aid)
 
     async def talk(self, a: Agent, asm: Assembly):
         """Asynchrone : chacun s'exprime une fois, à son rythme, sans entendre les autres (dialogues indépendants) ; tous votent
         ensuite sur ce qui a été déposé (voir `assembly_vote`)."""
         w = self.w
-        if asm.closed:
-            return
         h = self.c.now()
         self.thinking[("talk", a.id)] = 1
         try:
+            if asm.closed:
+                return
             o = await speak(w, a, asm, 1, h)
         finally:
             self.thinking.pop(("talk", a.id), None)
         if asm.closed or self.c.now() > asm.close_t:
             w.incident(a.id, "missed_window", "parole prête après la fin de la veillée", "réplique perdue")
             return
-        w.post_utterance(a, asm, o, 1, h)
+        asm.held[a.id] = (o, h)
+        self.release(asm)
+
+    def release(self, asm: Assembly, force: bool = False):
+        """Les paroles étant indépendantes, personne n'a entendu personne : on les dépose toutes ensemble, quand la dernière est prête
+        (ou à la clôture), dans l'ordre du conseil, et non l'une après l'autre au gré de la vitesse de chaque IA."""
+        if not force and any(k == "talk" and aid in asm.participants for k, aid in self.thinking):
+            return
+        for aid in [x for x in asm.participants if x in asm.held]:
+            o, h = asm.held.pop(aid)
+            self.w.post_utterance(self.w.agents[aid], asm, o, 1, h)
 
     def assembly_vote(self):
         """Quelques heures avant la fin de la veillée, chaque pêcheur qui n'a rien soutenu remplit son bulletin. Une IA trop lente
@@ -2405,6 +2426,7 @@ class AsyncRunner:
         self.expire("talk", "réplique perdue",
                     "parole du tour {rnd} pas prête à la fin de la veillée : l'IA réfléchissait encore")
         for asm in self.w.assemblies:
+            self.release(asm, force=True)
             self.w.close_assembly(asm)
         self.w.events.emit("phase", {"name": "assembly", "state": "close"})
         self.w.assemblies = []

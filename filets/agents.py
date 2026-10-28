@@ -82,7 +82,7 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
     reflex = system == "S1"
     hint = {"purpose": purpose, "archetype": agent.archetype, "state": state, "system": system,
             "schema": schema or (prompts.REFLEX_SCHEMA if reflex else prompts.answer_schema(
-                purpose, brief, agent.is_fisher, [a.id for a in world.fishers if a.id != agent.id])),
+                purpose, brief, agent.is_fisher, [world.first_name(a.id) for a in world.fishers if a.id != agent.id])),
             "seed": _seed(world, agent, purpose, state)}                  # le schéma est imposé aux fournisseurs qui le savent
     if max_tokens:
         hint["max_tokens"] = max_tokens
@@ -310,10 +310,11 @@ async def debrief_villager(world, agent: Agent, asm) -> None:
         world.judge(agent, trust_rule(agent.archetype, facts, world.trust_context(agent, asm.season)))
         return
     lines = world.debrief_lines(agent, asm, facts)
+    names = [world.first_name(a.id) for a in world.fishers if a.id != agent.id]
     trust = prompts.trust_line(world.trust_obs(agent))
     data, _, _ = await _ask_llm(world, agent, "debrief", prompts.debrief_messages(
         agent.profile, lines, trust, f"Tes finances : {agent.wealth:.0f} écus."), {"round": 96}, "S2",
-        schema=prompts.debrief_schema([a.id for a in world.fishers if a.id != agent.id]), max_tokens=prompts.DEBRIEF_MAX_TOKENS)
+        schema=prompts.debrief_schema(names), max_tokens=max(prompts.DEBRIEF_MAX_TOKENS, 12 + 9 * len(names)))
     if data is not None:
         world.judge(agent, data.get("confiance"))
 

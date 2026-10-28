@@ -290,7 +290,7 @@ def test_the_evening_prompt_keeps_what_matters_and_drops_the_archives():
     assert "Loïc très faible, Théo forte; les autres, moyenne." in brief          # seuls les écarts sont nommés
     assert "Archive" not in brief and "Rappel : le lac est à" in brief
     # c'est l'agent qui dit ce que chaque acte change pour lui, et qui propose d'exclure ou de réautoriser
-    assert '"confiance": {"<identifiant>": <de -3 à +3>}' in brief and '"exclure"' in brief and '"reautoriser"' in brief
+    assert '"confiance": {"<prénom>": <de -3 à +3>}' in brief and '"exclure"' in brief and '"reautoriser"' in brief
 
 
 # ============================================================ un jugement qui dépend de tout ce qui compte, et pas déterministe
