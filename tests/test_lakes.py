@@ -353,3 +353,18 @@ def test_a_game_started_from_the_menu_plays_on_its_lakes(tmp_path):
     start = kinds(events, "run_start")[0]["payload"]
     assert [k["name"] for k in start["lakes"]] == ["Vellmor", "Orsane"] and start["lake"]["capacity"] == 140.0
     assert start["scenario"]["patrol"] is True and {r["payload"]["captain"] for r in kinds(events, "patrol_route")} <= {"PAT", "PAT2"}
+
+
+def test_the_lakes_and_random_configs_load_and_play(tmp_path):
+    for name, lakes, villages in (("lakes", 3, 6), ("random", None, None)):
+        cfg = load_config(f"config/{name}.yaml")
+        cfg["output"]["runs_dir"], cfg["time"]["fast"], cfg["run"]["seasons"] = str(tmp_path / "runs"), True, 1
+        cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
+        events = play(tmp_path, f"cfg-{name}", cfg=cfg)
+        start = kinds(events, "run_start")[0]["payload"]
+        if lakes:
+            assert len(start["lakes"]) == lakes and len(start["hamlets"]) == villages and start["population"]["fishers"] == 16
+            assert start["scenario"]["patrol"] is True
+        else:
+            assert len(start["lakes"]) == len(random_valley(cfg["run"]["seed"])["lakes"])
+        assert kinds(events, "run_end")

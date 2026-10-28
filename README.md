@@ -67,6 +67,7 @@ Au lancement, Godot propose le menu **Nouvelle partie** tant que le moteur est e
 | Durée et hasard | nombre de saisons, graine (un même réglage et une même graine rejouent la même partie avec le faux LLM) |
 | La vallée | veillées (**conseil de la vallée**, par village, interdites), conseil (**un élu par village** ou tous les pêcheurs), **tours de parole** par veillée (1 à 3, 2 par défaut ; un seul en asynchrone), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
 | Le lac | **stock max** : la limite du stock, de 10 à 1000 t, ou *Auto* (12,5 t par pêcheur, qui suit alors le nombre de pêcheurs). C'est 100 % de la jauge : le lac part plein et ne la dépasse jamais. **Repeuplement** : le taux `r` du lac, de 0,1 à 2 par saison (1 = normal). Le menu rappelle ce que le lac renouvelle (`r·K/4` par saison) face à ce que les barques peuvent ramener. **Arrêter si le lac est vide** (coché par défaut) |
+| Vallée, lacs, patrouilles | **Paramétrée** (vous réglez villages, pêcheurs, flotte et nombre de lacs) ou **Aléatoire** (tout est tiré de la graine : villages, pêcheurs, flotte, lacs et leur poisson, patrouilles ; le dé change de vallée). **Lacs** : de 1 à 4 ; avec plusieurs, une ligne par lac (stock max, part pleine au départ, repeuplement), les villages se partageant en blocs. **Patrouilles** : de 1 à 4 (décochée : aucune). **Part prenable** : la part du poisson d'un lac qu'un bateau peut prendre (50 %) |
 | Saisons et hasard | **saisons de l'année et événements** (sécheresse, tempête, banc de poissons…), leur fréquence, et l'amplitude de la **chance à la pêche** (0 : ni chance ni malchance, seul le temps compte) |
 | Patrouille | case **Patrouille du lac** : cochée (par défaut), le conseil peut voter une patrouille dont le capitaine, une IA, choisit sa route d'après les soupçons partagés ; décochée, il n'y en a pas dans la partie |
 | Moteur d'IA | faux LLM de test, **Ollama · rapide** (3B + 1,5B, recommandé), Ollama · qualité (7B + 1,5B) ou Groq ; le moteur vérifie avant de lancer (Ollama joignable, modèles présents, clé d'API) |
@@ -287,9 +288,14 @@ pour les nouveaux venus. Trois tailles de bateaux (`economy.boats`) :
 | chaloupe | 7 t | 50 écus | 150 écus |
 | cotre | 11 t | 110 écus | 210 écus |
 
-La prise d'un pêcheur ne dépasse ni la cale de son bateau, ni sa part de la moitié du lac, **proportionnelle à la cale** : à eux tous,
-ils ne peuvent prendre que la moitié du lac en une saison (6,25 t pour une chaloupe quand huit chaloupes se partagent 100 t). Une
-règle vaut par pêcheur, quelle que soit la taille de son bateau : le grand bateau coûte plus et tente plus. Le caractère infléchit le
+**Ce que le lac laisse prendre.** La prise d'un pêcheur ne dépasse ni la cale de son bateau, ni sa part du **poisson qu'il y a** dans son
+lac à l'ouverture de la saison : au plus `economy.hold_fraction` (la moitié) du stock, partagée entre les bateaux du lac **en proportion
+de leur cale** (`World.hold_of`). Un lac plein donne à chacun sa part de la moitié (6,25 t pour une chaloupe quand huit chaloupes se
+partagent 100 t) ; un lac à moitié vide, la moitié de cela ; un cotre en prend plus qu'une barque, et plus il y a de bateaux sur un lac,
+moins chacun en a. L'invite le dit au pêcheur (« tu peux viser de 1 à X t », d'après ce qu'il croit voir du lac), le lac, lui, tranche au
+retour de la barque (un pêcheur qui sous-estime ou surestime le lac le découvre). Cette part baisse donc avec le poisson : un lac qu'on
+vide laisse prendre de moins en moins (avec `hold_fraction: 1`, tout le poisson est à portée). Une règle vaut par pêcheur, quelle que
+soit la taille de son bateau : le grand bateau coûte plus et tente plus. Le caractère infléchit le
 bateau (le nouveau venu endetté a emprunté pour une barque, la famille ancienne a le plus gros).
 
 **La pêche n'est pas toujours bonne.** Le pêcheur décide d'une **prise visée** pour la saison ; elle est étalée sur
@@ -515,11 +521,32 @@ et ce que la vallée sait de chaque pêcheur, et dit lui-même ce que cela chang
 un petit appel, un agent à règles selon son caractère. Un élu est le **porte-parole** de son village : son contexte lui rappelle chacun des
 siens (caractère, bateau, ce qu'il lui faut pour vivre). Il reste lui-même : sa façon d'être colore ce qu'il rapporte, et c'est voulu. Résultat sur les tokens : la veillée ne fait plus parler que 4 à 9 personnes, au lieu de tous.
 
+## Lacs, vallée aléatoire
+
+**Plusieurs lacs.** `lake.count` (1 à 4) ou `lake.lakes` (une liste : nom, `capacity` en tonnes ou `"auto"` avec `richness`, `stock_ratio` de
+départ, `growth_rate`, `villages`). Chaque village pêche dans le lac de sa rive : ses barques n'en prennent que là, chaque lac se repeuple
+à son rythme (`lake_update.lakes`, `catch.lake`), et l'invite de chacun parle de **son** lac (son nom, son poisson, le repère des
+anciens pour ses pêcheurs) et nomme les autres. La partie ne s'arrête (extinction, effondrement) que lorsque **tous** les lacs sont
+vides (ou effondrés). Le « large » de chaque lac est une zone de pêche (`large-Orsane`), où un interdit de pêche sort en cachette ; la
+carte pose jusqu'à quatre lacs avec leurs villages autour, une jauge chacun. `config/lakes.yaml` en donne trois.
+
+**Une vallée tirée au hasard.** `population.random: true` (`config/random.yaml`) : le nombre de villages (3 à 6), de pêcheurs (2 à 5 par
+village, 24 au plus), de lacs (1 à 3) et leur richesse en poisson (par pêcheur), leur part pleine au départ et leur repeuplement, la flotte
+(petits bateaux, mixte, gros ; la taille de chaque bateau se tire ensuite pêcheur par pêcheur, selon son caractère) et le nombre de
+patrouilles (0 à 2) viennent de la graine seule (`lakes.random_valley`). Dans le menu, **Vallée : Aléatoire** fait de même et grise les
+nombres ; on retouche ensuite chaque pêcheur et chaque lac.
+
 ## La patrouille du lac
 
 **La patrouille est un agent.** Son capitaine (« Capitaine Aubry », l'agent `PAT`) est une IA, ou un agent à règles comme l'ancien (il en
 suit le choix) ; il ne pêche pas, ne siège pas, ne vote pas, n'a aucun pouvoir de punir. Il décide seul où aller, d'après les soupçons et
 les indices que les villageois et les pêcheurs ont **partagés**, et se souvient de ce qu'il a relevé.
+
+**Plusieurs patrouilles.** `scenario.patrol.count` (1 à 4, un par défaut ; 0 : aucune) : chacune a son capitaine (`PAT`, `PAT2`…) et sa
+route de la saison, décidée à tour de rôle : les suivants lisent celle des premiers (« les autres patrouilles feront route vers… ») et
+vont ailleurs. Chaque patrouille coûte `cost` à chaque pêcheur par saison (`World.patrol_cost`), et le conseil les installe ou les retire
+toutes d'un vote. Chacune mesure les barques qu'elle croise (`patrol_by` : celle qui en a le plus croisé), et les patrouilles se
+racontent leurs tournées. La carte montre une barque par patrouille.
 
 **Elle est un réglage de départ.** Le menu propose « Patrouille du lac » (`scenario.patrol.enabled`, activée par défaut). Décochée, il n'y a
 ni capitaine, ni proposition au conseil, ni coût, ni route : les agents n'en entendent pas parler.
@@ -750,7 +777,8 @@ godot/             projet Godot 4 : main.gd (interface, barre de pilotage, inspe
                    legend.gd, shaders/valley.gdshader, fonts/, tests/ (feed_test.gd, menu_test.gd, main_feed_test.gd)
 install.ps1, start.ps1, stop.ps1 (et .cmd)   installation, démarrage et arrêt sous Windows
 corpus/            base de connaissances fictive de la vallée
-config/            default (vallée de base : 4 villages, 8 pêcheurs), large (grande vallée : 4 villages, 18 pêcheurs), baseline (sans LLM),
+config/            default (vallée de base : 4 villages, 8 pêcheurs), large (grande vallée : 4 villages, 18 pêcheurs), lakes (trois lacs,
+                   six villages, deux patrouilles), random (vallée tirée de la graine), baseline (sans LLM),
                    no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
                    ollama_open (3B + tev1), colibri (Qwen3.6 35B), groq, data (PostgreSQL + pgvector, stockage objet)
 docs/              architecture.md : architecture, temps, communication, tokens, asynchrone, stockage

@@ -9,6 +9,7 @@ signal token_moved(index: int, hamlet: String)
 
 var fishers: Array = []
 var hamlets: Array = WV.DEFAULT_HAMLETS         # les villages de la vallée, dans l'ordre de la carte
+var lakes: Array = []                           # les lacs du catalogue : {name, label, villages}
 var elder_on := true
 var elder_kind := "llm"
 var selected := -1
@@ -27,8 +28,9 @@ func _ready() -> void:
 	custom_minimum_size = Vector2(300, 250)
 
 
-func set_data(list: Array, elder: bool, elder_k: String, sel: int, large: int, villages: Array = []) -> void:
+func set_data(list: Array, elder: bool, elder_k: String, sel: int, large: int, villages: Array = [], lake_list: Array = []) -> void:
 	fishers = list
+	lakes = lake_list
 	if not villages.is_empty():
 		hamlets = villages
 	elder_on = elder
@@ -95,8 +97,20 @@ func _pick(pos: Vector2) -> int:
 	return best
 
 
+func _lake_of() -> Dictionary:
+	var out := {}
+	for k in lakes.size():
+		for v in lakes[k].get("villages", []):
+			out[str(v)] = k
+	return out
+
+
+func _boxes() -> Array:
+	return WV.lake_boxes(clampi(lakes.size(), 1, WV.MAX_LAKES))
+
+
 func _pos() -> Dictionary:
-	return WV.layout(hamlets)
+	return WV.layout(hamlets, _lake_of(), _boxes().size())
 
 
 func _nearest_hamlet(pos: Vector2) -> String:
@@ -145,15 +159,20 @@ func _draw() -> void:
 	var f := Art.font("ui_bold")
 	var fr := Art.font("ui")
 	Art.box(Color("#2c4a2a"), 12, Color(1, 1, 1, 0.1), 1).draw(get_canvas_item(), Rect2(Vector2.ZERO, size))
-	# lac
-	var lake := PackedVector2Array()
-	for i in 64:
-		var th := TAU * float(i) / 64.0
-		lake.append(_px(WV.LAKE_C + Vector2(cos(th), sin(th)) * WV.LAKE_R * WV.lake_shape(th)))
-	draw_colored_polygon(lake, Color("#2d6f86"))
-	draw_polyline(lake + PackedVector2Array([lake[0]]), Color("#7fc4d6", 0.55), 2.0, true)
-	draw_string(Art.font("title_italic"), _px(WV.LAKE_C) + Vector2(-44, 5), "Lac de Vellmor", HORIZONTAL_ALIGNMENT_CENTER, 88, 13,
-		Color(1, 1, 1, 0.55))
+	# les lacs
+	var boxes := _boxes()
+	for k in boxes.size():
+		var bc: Vector2 = boxes[k]["c"]
+		var br: Vector2 = boxes[k]["r"]
+		var lake := PackedVector2Array()
+		for i in 64:
+			var th := TAU * float(i) / 64.0
+			lake.append(_px(bc + Vector2(cos(th), sin(th)) * br * WV.lake_shape(th)))
+		draw_colored_polygon(lake, Color("#2d6f86"))
+		draw_polyline(lake + PackedVector2Array([lake[0]]), Color("#7fc4d6", 0.55), 2.0, true)
+		var lname := str(lakes[k].get("label", "Lac de Vellmor")) if k < lakes.size() else "Lac de Vellmor"
+		draw_string(Art.font("title_italic"), _px(bc) + Vector2(-60, 5), lname, HORIZONTAL_ALIGNMENT_CENTER, 120,
+			13 if boxes.size() == 1 else 11, Color(1, 1, 1, 0.55))
 	# hameaux
 	var counts := {}
 	for fi in fishers:

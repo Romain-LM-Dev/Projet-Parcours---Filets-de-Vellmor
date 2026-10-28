@@ -1,0 +1,6 @@
+# Une vallée tirée au hasard : le nombre de villages, de pêcheurs, de lacs et leur poisson, la flotte et le nombre de patrouilles viennent
+# de la graine seule (`run.seed`, ou --set run.seed=N) : la même graine, la même vallée.
+extends: default.yaml
+run: {label: random}
+population:
+  random: true

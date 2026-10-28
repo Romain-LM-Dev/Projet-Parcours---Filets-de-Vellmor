@@ -73,6 +73,15 @@ var spin_luck: SpinBox
 var spin_villages: SpinBox
 var spin_fishers: SpinBox
 var opt_fleet: OptionButton
+var opt_genmode: OptionButton          # vallée paramétrée (nombres choisis) ou aléatoire (tout tiré de la graine)
+var spin_lakes: SpinBox
+var spin_patrols: SpinBox
+var spin_hold: SpinBox                 # part du poisson d'un lac qu'un bateau peut prendre en une saison
+var row_cap: Control                   # les deux lignes du lac unique (masquées quand on règle chaque lac à part)
+var row_growth: Control
+var lakes_box: VBoxContainer           # une ligne par lac : son poisson, son stock de départ, son repeuplement
+var lakes_state: Array = []            # les lacs de la vallée : {name, label, villages, capacity, cap_cat, n_cat, stock_ratio, growth_rate}
+var lake_spins: Array = []
 var btn_generate: Button
 var chk_visible: CheckButton
 var opt_llm: OptionButton
@@ -180,7 +189,7 @@ func _seg(text: String, group: ButtonGroup) -> Button:
 	return b
 
 
-func _row(parent: Control, title: String, w: Control) -> void:
+func _row(parent: Control, title: String, w: Control) -> Control:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 8)
 	var l := _lbl(title, 13, "ui", Art.MUTED)
@@ -190,6 +199,7 @@ func _row(parent: Control, title: String, w: Control) -> void:
 	w.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(w)
 	parent.add_child(h)
+	return h
 
 
 func _build() -> void:
@@ -370,7 +380,7 @@ func _build_left(body: Control) -> void:
 		capacity_auto = true
 		_refresh_all(false))
 	cap_box.add_child(btn_cap_auto)
-	_row(col, "Stock max", cap_box)
+	row_cap = _row(col, "Stock max", cap_box)
 	var growth_box := HBoxContainer.new()
 	growth_box.add_theme_constant_override("separation", 6)
 	spin_growth = _spin(0.1, 2.0, 0.05, 1.0, 104)
@@ -386,13 +396,24 @@ func _build_left(body: Control) -> void:
 	btn_growth_default.pressed.connect(func() -> void:
 		spin_growth.value = float(catalog.get("defaults", {}).get("growth_rate", 1.0)))
 	growth_box.add_child(btn_growth_default)
-	_row(col, "Repeuplement", growth_box)
+	row_growth = _row(col, "Repeuplement", growth_box)
 	chk_stop_empty = CheckButton.new()
 	chk_stop_empty.text = "Arrêter si le lac est vide"
 	chk_stop_empty.button_pressed = true
 	chk_stop_empty.focus_mode = Control.FOCUS_NONE
 	chk_stop_empty.tooltip_text = "Un lac tombé à 0 ne se repeuple jamais : la partie s'arrête dès le dernier poisson pêché."
 	col.add_child(chk_stop_empty)
+	lakes_box = VBoxContainer.new()
+	lakes_box.add_theme_constant_override("separation", 4)
+	lakes_box.visible = false
+	col.add_child(lakes_box)
+	spin_hold = _spin(5, 100, 5, 50, 84)
+	spin_hold.suffix = "%"
+	spin_hold.tooltip_text = "Ce que le lac laisse prendre : un bateau rapporte au plus sa cale, et au plus cette part du poisson de son lac, partagée entre les bateaux du lac selon leur taille. Un lac qui se vide laisse donc prendre de moins en moins ; 100 % : tout le poisson est à portée."
+	spin_hold.value_changed.connect(func(_v: float) -> void:
+		if not _updating:
+			_refresh_all(false))
+	_row(col, "Part prenable", spin_hold)
 	lbl_cap_hint = _lbl("", 12, "ui", Color(Art.MUTED, 0.95))
 	lbl_cap_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl_cap_hint.custom_minimum_size = Vector2(276, 0)
@@ -411,7 +432,18 @@ func _build_left(body: Control) -> void:
 	chk_patrol.button_pressed = true
 	chk_patrol.focus_mode = Control.FOCUS_NONE
 	chk_patrol.tooltip_text = "Le conseil de la vallée peut voter une patrouille, aux frais de chaque pêcheur. Son capitaine est une IA : il décide seul où aller d'après les soupçons et les indices que les villageois ont partagés, et mesure les barques qu'il croise. Décochée : pas de patrouille dans la partie."
-	col.add_child(chk_patrol)
+	var patrol_row := HBoxContainer.new()
+	patrol_row.add_theme_constant_override("separation", 8)
+	patrol_row.add_child(chk_patrol)
+	spin_patrols = _spin(1, 4, 1, 1, 56)
+	spin_patrols.tooltip_text = "Nombre de patrouilles : chacune a son capitaine (une IA) et sa route, et coûte à chaque pêcheur. Les suivantes lisent la route des premières."
+	spin_patrols.value_changed.connect(func(_v: float) -> void:
+		if not _updating:
+			_refresh_all(false))
+	chk_patrol.toggled.connect(func(_on: bool) -> void: spin_patrols.editable = chk_patrol.button_pressed)
+	patrol_row.add_child(_lbl("patrouilles", 12, "ui", Art.MUTED))
+	patrol_row.add_child(spin_patrols)
+	col.add_child(patrol_row)
 	spin_events = _spin(0, 100, 5, 30, 84)
 	spin_events.suffix = "%"
 	spin_events.tooltip_text = "Chance qu'un événement survienne à chaque saison, à partir de la deuxième."
@@ -505,6 +537,19 @@ func _build_center(body: Control) -> void:
 	base.tooltip_text = "Reprend les pêcheurs que le jeu génère par défaut"
 	base.pressed.connect(reset_population)
 	tools.add_child(base)
+	var gen0 := HBoxContainer.new()
+	gen0.add_theme_constant_override("separation", 8)
+	col.add_child(gen0)
+	gen0.add_child(_lbl("Vallée", 12, "ui", Art.MUTED))
+	opt_genmode = _option(["Paramétrée", "Aléatoire"], 128)
+	opt_genmode.set_item_metadata(0, "params")
+	opt_genmode.set_item_metadata(1, "random")
+	opt_genmode.tooltip_text = "Paramétrée : vous choisissez le nombre de villages, de pêcheurs, de lacs et la flotte. Aléatoire : tout est tiré de la graine (villages, pêcheurs, flotte, lacs et leur poisson, patrouilles) ; le dé change de graine, donc de vallée. Vous pouvez ensuite retoucher chaque pêcheur et chaque lac."
+	gen0.add_child(opt_genmode)
+	gen0.add_child(_lbl("Lacs", 12, "ui", Art.MUTED))
+	spin_lakes = _spin(1, 4, 1, 1, 56)
+	spin_lakes.tooltip_text = "Nombre de lacs : les villages se partagent en blocs, chacun pêchant dans le lac de sa rive ; chaque lac a son poisson et son repeuplement. La vallée est régénérée dès que vous le changez (au moins un village par lac)."
+	gen0.add_child(spin_lakes)
 	var gen := HBoxContainer.new()
 	gen.add_theme_constant_override("separation", 8)
 	col.add_child(gen)
@@ -535,6 +580,10 @@ func _build_center(body: Control) -> void:
 	spin_villages.value_changed.connect(_on_gen_spin.bind(true))
 	spin_fishers.value_changed.connect(_on_gen_spin.bind(false))
 	spin_seed.value_changed.connect(_on_gen_spin.bind(false))
+	spin_lakes.value_changed.connect(_on_gen_spin.bind(false))
+	opt_genmode.item_selected.connect(func(_i: int) -> void:
+		_set_gen_enabled()
+		_on_gen_spin(0.0, false))
 	opt_fleet.item_selected.connect(func(_i: int) -> void: _on_gen_spin(0.0, false))
 	# titres de colonnes, alignés sur les lignes
 	var titles := HBoxContainer.new()
@@ -608,6 +657,7 @@ func set_catalog(cat: Dictionary) -> void:
 			_pending_generation = ""
 			btn_generate.disabled = false
 			lbl_error.text = ""
+			_apply_generation()
 			reset_population()
 			if _regenerate:
 				_on_generate.call_deferred()
@@ -658,6 +708,11 @@ func set_catalog(cat: Dictionary) -> void:
 	var fish: Array = lim.get("fishers", [1, 24])
 	spin_fishers.min_value = fish[0]
 	spin_fishers.max_value = fish[1]
+	var nl: Array = lim.get("lakes", [1, 4])
+	spin_lakes.min_value = nl[0]
+	spin_lakes.max_value = nl[1]
+	var np_: Array = lim.get("patrols", [0, 4])
+	spin_patrols.max_value = np_[1]
 	spin_growth.min_value = rates[0]
 	spin_growth.max_value = rates[1]
 	_updating = false
@@ -685,6 +740,11 @@ func reset_all() -> void:
 	spin_luck.value = roundf(float(d.get("luck", 0.4)) * 100.0)
 	spin_villages.value = int(d.get("villages", 4))
 	spin_fishers.value = int(d.get("fishers", 8))
+	spin_lakes.value = int(d.get("lakes", 1))
+	spin_patrols.value = maxi(1, int(d.get("patrols", 1)))
+	spin_patrols.editable = chk_patrol.button_pressed
+	spin_hold.value = roundf(float(d.get("hold_fraction", 0.5)) * 100.0)
+	opt_genmode.select(0)
 	chk_visible.button_pressed = bool(d.get("catches_visible", true))
 	_select_meta(opt_llm, str(d.get("llm", "scripted")))
 	_select_meta(opt_reflection, str(d.get("reflection", "rapide")))
@@ -698,6 +758,7 @@ func reset_all() -> void:
 	speed_touched = false
 	reflection_touched = false
 	_updating = false
+	_set_gen_enabled()
 	_show_llm(opt_llm.selected)
 	_suggest_reflection()
 	_show_reflection(opt_reflection.selected)
@@ -710,6 +771,7 @@ func reset_population() -> void:
 	for s in catalog.get("base_population", []):
 		fishers.append((s as Dictionary).duplicate(true))
 	selected = -1
+	_load_lakes()
 	_rebuild_rows()
 	_refresh_all()
 
@@ -1044,7 +1106,8 @@ func _refresh_all(_full: bool = true) -> void:
 	var d: Dictionary = catalog.get("defaults", {})
 	var elder_kind := "llm" if opt_elder.selected == 0 else "rule"
 	opt_elder.disabled = not chk_elder.button_pressed
-	map.call("set_data", fishers, chk_elder.button_pressed, elder_kind, selected, int(d.get("large_model_min_experience", 15)), catalog.get("hamlets", []))
+	map.call("set_data", fishers, chk_elder.button_pressed, elder_kind, selected, int(d.get("large_model_min_experience", 15)), catalog.get("hamlets", []),
+		catalog.get("lakes", []))
 	var lim: Array = catalog.get("limits", {}).get("fishers", [1, 24])
 	lbl_count.text = "%d" % fishers.size()
 	_sync_generation()
@@ -1091,8 +1154,137 @@ func _holds() -> float:
 	return total
 
 
+func _is_random() -> bool:
+	return opt_genmode != null and opt_genmode.selected == 1
+
+
+## Règle-t-on chaque lac à part ? Dès qu'il y en a plusieurs, ou que la vallée est tirée au hasard (chaque lac a alors son stock de départ).
+func _use_rows() -> bool:
+	return lakes_state.size() > 1 or (_is_random() and not lakes_state.is_empty())
+
+
+## Les villages, les pêcheurs et les lacs que le moteur vient de générer (et, en aléatoire, ce qu'il a tiré) remplacent les nombres du menu.
+func _apply_generation() -> void:
+	var g: Dictionary = catalog.get("generation", {})
+	if g.is_empty():
+		return
+	var was := _updating
+	_updating = true
+	opt_genmode.select(1 if str(g.get("mode", "params")) == "random" else 0)
+	spin_villages.set_value_no_signal(int(g.get("villages", spin_villages.value)))
+	spin_fishers.set_value_no_signal(int(g.get("fishers", spin_fishers.value)))
+	spin_lakes.set_value_no_signal(int(g.get("lakes", 1)))
+	_select_meta(opt_fleet, str(g.get("fleet", "mixte")))
+	if str(g.get("mode", "params")) == "random":       # tiré de la graine : les patrouilles aussi
+		chk_patrol.button_pressed = int(g.get("patrols", 1)) > 0
+		spin_patrols.set_value_no_signal(maxi(1, int(g.get("patrols", 1))))
+		spin_patrols.editable = chk_patrol.button_pressed
+	_updating = was
+	_set_gen_enabled()
+
+
+## En aléatoire, les nombres de la vallée sont ceux qu'a tirés la graine : on ne les règle pas.
+func _set_gen_enabled() -> void:
+	var manual := not _is_random()
+	spin_villages.editable = manual
+	spin_fishers.editable = manual
+	spin_lakes.editable = manual
+	opt_fleet.disabled = not manual
+
+
+## Les lacs du catalogue deviennent ceux du menu (stock auto : 12,5 t par pêcheur du lac, comme le moteur).
+func _load_lakes() -> void:
+	if lakes_box == null:
+		return
+	var by_village := {}
+	for f in fishers:
+		by_village[str(f["hamlet"])] = int(by_village.get(str(f["hamlet"]), 0)) + 1
+	lakes_state = []
+	for lk in catalog.get("lakes", []):
+		var n := 0
+		for v in lk.get("villages", []):
+			n += int(by_village.get(str(v), 0))
+		lakes_state.append({"name": str(lk["name"]), "label": str(lk["label"]), "villages": (lk["villages"] as Array).duplicate(),
+			"capacity": float(lk["capacity"]), "cap_cat": float(lk["capacity"]), "n_cat": n,
+			"stock_ratio": float(lk["initial_ratio"]), "growth_rate": float(lk["growth_rate"])})
+	if _use_rows():
+		capacity_auto = true
+	_rebuild_lake_rows()
+
+
+func _rebuild_lake_rows() -> void:
+	for c in lakes_box.get_children():
+		c.queue_free()
+	lake_spins = []
+	if not _use_rows():
+		return
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 6)
+	for t in [["", 110], ["Stock max", 84], ["Au départ", 70], ["Repeuplement", 70]]:
+		var l := _lbl(str(t[0]).to_upper(), 9, "ui_black", Art.MUTED)
+		l.custom_minimum_size = Vector2(int(t[1]), 0)
+		head.add_child(l)
+	lakes_box.add_child(head)
+	for k in lakes_state.size():
+		var lk: Dictionary = lakes_state[k]
+		var h := HBoxContainer.new()
+		h.add_theme_constant_override("separation", 6)
+		var l := _lbl(str(lk["label"]), 12, "ui_bold", Art.INK)
+		l.custom_minimum_size = Vector2(110, 0)
+		l.tooltip_text = "Villages de ce lac : " + ", ".join(PackedStringArray(lk["villages"]))
+		h.add_child(l)
+		var sc := _spin(10, 1000, 0.5, float(lk["capacity"]), 84)
+		sc.suffix = "t"
+		sc.tooltip_text = "Le poisson de ce lac quand il est plein (tonnes). Auto : 12,5 t par pêcheur du lac."
+		var ss := _spin(5, 100, 5, float(lk["stock_ratio"]) * 100.0, 70)
+		ss.suffix = "%"
+		ss.tooltip_text = "Part du lac pleine au départ."
+		var sg := _spin(0.1, 2.0, 0.05, float(lk["growth_rate"]), 70)
+		sg.tooltip_text = "Taux de repeuplement r de ce lac, par saison."
+		sc.value_changed.connect(func(v: float) -> void:
+			if not _updating:
+				lakes_state[k]["capacity"] = v
+				capacity_auto = false
+				_refresh_all(false))
+		ss.value_changed.connect(func(v: float) -> void:
+			if not _updating:
+				lakes_state[k]["stock_ratio"] = v / 100.0
+				_refresh_all(false))
+		sg.value_changed.connect(func(v: float) -> void:
+			if not _updating:
+				lakes_state[k]["growth_rate"] = v
+				_refresh_all(false))
+		h.add_child(sc)
+		h.add_child(ss)
+		h.add_child(sg)
+		lakes_box.add_child(h)
+		lake_spins.append({"cap": sc, "stock": ss, "growth": sg})
+
+
+## Le stock de chaque lac, tant qu'il est « auto » : celui du moteur, au prorata des pêcheurs du lac (il suit la liste des pêcheurs).
+func _lake_capacity(k: int) -> float:
+	var lk: Dictionary = lakes_state[k]
+	if not capacity_auto:
+		return float(lk["capacity"])
+	var n := 0
+	for f in fishers:
+		if (lk["villages"] as Array).has(str(f["hamlet"])):
+			n += 1
+	var per := float(lk["cap_cat"]) / float(lk["n_cat"]) if int(lk["n_cat"]) > 0 else float(catalog.get("defaults", {}).get("capacity_per_fisher", 12.5))
+	var caps: Array = catalog.get("limits", {}).get("capacity", [10, 1000])
+	return clampf(per * float(n), float(caps[0]), float(caps[1]))
+
+
 func _refresh_lake() -> void:
 	var d: Dictionary = catalog.get("defaults", {})
+	var rows := _use_rows()
+	row_cap.visible = not rows
+	row_growth.visible = not rows
+	btn_cap_auto.disabled = capacity_auto
+	lakes_box.visible = rows
+	if rows:
+		_refresh_lake_rows(d)
+		return
 	var auto_cap := _auto_capacity()
 	if capacity_auto:
 		var was := _updating
@@ -1110,7 +1302,33 @@ func _refresh_lake() -> void:
 	var how := "Auto : %s t par pêcheur." % _num(float(d.get("capacity_per_fisher", 12.5))) if capacity_auto \
 		else "Choisi à la main (auto : %s t)." % _num(auto_cap)
 	lbl_cap_hint.text = ("%s Le lac part plein et ne dépasse jamais ce stock. À moitié plein, il regagne au mieux %s t par "
-		+ "saison ; %d bateaux peuvent en ramener jusqu'à %s t.") % [how, _num(yield_max), fishers.size(), _num(reach)]
+		+ "saison ; %d bateaux peuvent en ramener jusqu'à %s t (au plus %d %% du poisson du lac, partagé selon leur cale).") % [
+		how, _num(yield_max), fishers.size(), _num(minf(_holds(), cap * spin_hold.value / 100.0)), int(spin_hold.value)]
+
+
+## Plusieurs lacs (ou une vallée aléatoire) : la ligne de chacun, et ce que tous ensemble peuvent donner.
+func _refresh_lake_rows(d: Dictionary) -> void:
+	var was := _updating
+	_updating = true
+	var total := 0.0
+	var yield_max := 0.0
+	for k in lakes_state.size():
+		var cap := _lake_capacity(k)
+		lakes_state[k]["capacity"] = cap
+		total += cap
+		yield_max += float(lakes_state[k]["growth_rate"]) * cap / 4.0
+		if k < lake_spins.size():
+			(lake_spins[k]["cap"] as SpinBox).set_value_no_signal(cap)
+			(lake_spins[k]["stock"] as SpinBox).set_value_no_signal(roundf(float(lakes_state[k]["stock_ratio"]) * 100.0))
+			(lake_spins[k]["growth"] as SpinBox).set_value_no_signal(float(lakes_state[k]["growth_rate"]))
+	_updating = was
+	btn_cap_auto.disabled = capacity_auto
+	lbl_lake.text = "%d lac%s · %s t de poisson · rendement durable max %s t par saison" % [lakes_state.size(),
+		"s" if lakes_state.size() > 1 else "", _num(total), _num(yield_max)]
+	lbl_cap_hint.text = ("%s Chaque lac part de son stock et se repeuple à son rythme ; les bateaux d'un lac ne peuvent en ramener "
+		+ "que %d %% du poisson qu'il contient, partagé selon leur cale.") % [
+		"Stock auto : 12,5 t par pêcheur du lac (modifiable lac par lac)." if capacity_auto else "Stock choisi à la main.",
+		int(spin_hold.value)]
 
 
 # ------------------------------------------------------------------ envoi
@@ -1142,8 +1360,11 @@ func _fleet_id() -> String:
 func _on_generate() -> void:
 	if catalog.is_empty():
 		return
+	if spin_lakes.value > spin_villages.value and not _is_random():
+		spin_lakes.set_value_no_signal(spin_villages.value)
 	var params := {"villages": int(spin_villages.value), "fishers": int(spin_fishers.value), "seed": int(spin_seed.value),
-		"fleet": _fleet_id()}
+		"fleet": _fleet_id(), "lakes": int(spin_lakes.value), "patrols": int(spin_patrols.value) if chk_patrol.button_pressed else 0,
+		"mode": "random" if _is_random() else "params"}
 	if _pending_generation != "" and Time.get_ticks_msec() - _pending_since < 5000:
 		_regenerate = params != _pending_params       # une demande est en route : si les nombres ont changé, on y revient (au-delà de 5 s, on la croit perdue)
 		return
@@ -1154,6 +1375,27 @@ func _on_generate() -> void:
 	btn_generate.disabled = true
 	lbl_error.text = ""
 	generate_requested.emit(params.merged({"id": _pending_generation}))
+
+
+## Le ou les lacs de la demande : le lac unique comme avant ; plusieurs lacs (ou une vallée aléatoire), chacun avec son poisson, son
+## stock de départ, son repeuplement et ses villages (ceux où il reste un pêcheur ; un lac sans village n'existe pas).
+func _lake_request() -> Dictionary:
+	if not _use_rows():
+		return {"capacity": null if capacity_auto else float(spin_capacity.value), "growth_rate": float(spin_growth.value)}
+	var present := {}
+	for f in fishers:
+		present[str(f["hamlet"])] = true
+	var out: Array = []
+	for k in lakes_state.size():
+		var lk: Dictionary = lakes_state[k]
+		var vs: Array = []
+		for v in lk["villages"]:
+			if present.has(str(v)):
+				vs.append(str(v))
+		if not vs.is_empty():
+			out.append({"name": str(lk["name"]), "capacity": _lake_capacity(k), "stock_ratio": float(lk["stock_ratio"]),
+				"growth_rate": float(lk["growth_rate"]), "villages": vs})
+	return {"lakes": out}
 
 
 func build_config() -> Dictionary:
@@ -1171,7 +1413,9 @@ func build_config() -> Dictionary:
 		"llm": str(opt_llm.get_item_metadata(opt_llm.selected)), "speed": opt_speed.get_item_metadata(opt_speed.selected),
 		"reflection": str(opt_reflection.get_item_metadata(opt_reflection.selected)),
 		# `null` : le moteur calcule 12,5 t par pêcheur ; sinon, la limite du stock choisie par le joueur
-		"lake": {"capacity": null if capacity_auto else float(spin_capacity.value), "growth_rate": float(spin_growth.value)},
+		"lake": _lake_request(),
+		"patrols": int(spin_patrols.value) if chk_patrol.button_pressed else 0,
+		"hold_fraction": float(spin_hold.value) / 100.0,
 		"stop_on_extinction": chk_stop_empty.button_pressed,
 		"population": {"elder": chk_elder.button_pressed, "elder_kind": "llm" if opt_elder.selected == 0 else "rule",
 			"fishers": list},

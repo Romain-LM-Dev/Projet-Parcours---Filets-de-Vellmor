@@ -29,8 +29,18 @@ const LAYOUTS := {
 	8: ["NW", "NE", "SE", "SW", "W", "E", "BL", "BR"],
 }
 const ELDER_POS := Vector2(0.5, 0.115)
-const LAKE_C := Vector2(0.5, 0.535)
+const LAKE_C := Vector2(0.5, 0.535)          # le centre de la carte, où se tient la salle du conseil (et le lac, s'il est seul)
 const LAKE_R := Vector2(0.29, 0.245)
+## Les lacs de la carte selon leur nombre (centre et rayons, normalisés) : un seul au centre (la vallée de base), puis deux côte à
+## côte, trois, quatre. Leurs villages se placent autour d'eux (voir `layout`).
+const MAX_LAKES := 4
+const LAKE_BOXES := {
+	1: [[Vector2(0.5, 0.535), Vector2(0.29, 0.245)]],
+	2: [[Vector2(0.31, 0.56), Vector2(0.15, 0.21)], [Vector2(0.69, 0.56), Vector2(0.15, 0.21)]],
+	3: [[Vector2(0.29, 0.42), Vector2(0.15, 0.13)], [Vector2(0.71, 0.42), Vector2(0.15, 0.13)], [Vector2(0.5, 0.69), Vector2(0.19, 0.115)]],
+	4: [[Vector2(0.29, 0.42), Vector2(0.15, 0.115)], [Vector2(0.71, 0.42), Vector2(0.15, 0.115)],
+		[Vector2(0.29, 0.72), Vector2(0.15, 0.115)], [Vector2(0.71, 0.72), Vector2(0.15, 0.115)]],
+}
 const ROOM := Rect2(0.045, 0.105, 0.91, 0.85)
 const RING_R := Vector2(0.33, 0.335)
 const LAND_SPEED := 0.45
@@ -69,7 +79,9 @@ var light := 1.0
 var phase := ""
 var assembly_scope := ""            # "" | "valley" | "hamlet"
 var hamlet_pos := layout(DEFAULT_HAMLETS)    # où est chaque village autour du lac (voir layout)
-var patrol_legs: Array = []         # la route de la patrouille du lac cette saison : {zone, from_day, to_day}
+var lakes: Array = lake_boxes(1)    # les lacs : {c, r, name, label, capacity, ratio}
+var hamlet_lake := {}               # village -> indice de son lac
+var patrol_routes := {}             # la route de chaque patrouille cette saison (capitaine -> étapes {zone, from_day, to_day})
 var patrol_season := 0
 var seats := 0                      # sièges occupés à la veillée (le conseil des élus, ou toute la vallée)
 var hamlet_fires: Array = []        # hameaux qui tiennent veillée
@@ -120,20 +132,47 @@ func _layer(c: Control) -> Control:
 func _on_resized() -> void:
 	if size.x < 10:
 		return
-	mat.set_shader_parameter("lake_c", LAKE_C)
-	mat.set_shader_parameter("lake_r", LAKE_R)
+	_push_lakes()
 	mat.set_shader_parameter("px_size", size)
 	_generate_decor()
 	decor.queue_redraw()
 
 
 # ================================================================== géométrie
-## Où poser les villages (dans l'ordre donné, celui de la vallée) : la table du nombre de villages, de 1 à 8.
-static func layout(names: Array) -> Dictionary:
-	var slots: Array = LAYOUTS[clampi(names.size(), 1, 8)]
+static func lake_boxes(n: int) -> Array:
+	var out: Array = []
+	for b in LAKE_BOXES[clampi(n, 1, MAX_LAKES)]:
+		out.append({"c": b[0], "r": b[1], "name": "", "label": "Lac de Vellmor", "capacity": 100.0, "ratio": 1.0})
+	return out
+
+
+## Où poser les villages (dans l'ordre donné, celui de la vallée). Avec un seul lac : la table du nombre de villages, de 1 à 8.
+## Avec plusieurs : chaque village sur la rive extérieure de son lac (`lake_of` : village -> indice du lac), les villages d'un même lac
+## répartis le long de cette rive.
+static func layout(names: Array, lake_of: Dictionary = {}, n_lakes: int = 1) -> Dictionary:
 	var out := {}
-	for i in names.size():
-		out[str(names[i])] = SLOTS[slots[mini(i, slots.size() - 1)]]
+	if n_lakes <= 1:
+		var slots: Array = LAYOUTS[clampi(names.size(), 1, 8)]
+		for i in names.size():
+			out[str(names[i])] = SLOTS[slots[mini(i, slots.size() - 1)]]
+		return out
+	var boxes := lake_boxes(n_lakes)
+	var by_lake := {}
+	for h in names:
+		var k := clampi(int(lake_of.get(str(h), 0)), 0, n_lakes - 1)
+		if not by_lake.has(k):
+			by_lake[k] = []
+		by_lake[k].append(str(h))
+	for k in by_lake:
+		var hs: Array = by_lake[k]
+		var c: Vector2 = boxes[k]["c"]
+		var r: Vector2 = boxes[k]["r"]
+		var outward := atan2(c.y - 0.55, c.x - 0.5) if absf(c.x - 0.5) + absf(c.y - 0.55) > 0.05 else PI / 2.0
+		var step := minf(TAU / float(hs.size()), 2.0 if hs.size() == 2 else 1.65 if hs.size() == 3 else 1.3)
+		for i in hs.size():
+			var a := outward + (float(i) - float(hs.size() - 1) / 2.0) * step
+			var p := c + Vector2(cos(a) * r.x * 1.55, sin(a) * r.y * 1.55)
+			out[hs[i]] = Vector2(clampf(p.x, 0.15, 0.85), clampf(p.y, 0.29, 0.86))
 	return out
 
 
@@ -141,13 +180,66 @@ static func lake_shape(th: float) -> float:
 	return 1.0 + 0.06 * sin(3.0 * th + 1.0) + 0.04 * sin(5.0 * th + 2.0) + 0.03 * sin(7.0 * th + 0.5)
 
 
+## Le rayon normalisé de ce point par rapport au lac le plus proche (moins de 1 : sur l'eau).
 func lake_rn(n: Vector2) -> float:
-	var d := (n - LAKE_C) / LAKE_R
-	return d.length() / lake_shape(atan2(d.y, d.x))
+	var best := INF
+	for lk in lakes:
+		var d: Vector2 = (n - lk["c"]) / lk["r"]
+		best = minf(best, d.length() / lake_shape(atan2(d.y, d.x)))
+	return best
 
 
-func lake_point(th: float, rn: float) -> Vector2:
-	return LAKE_C + Vector2(cos(th), sin(th)) * LAKE_R * lake_shape(th) * rn
+## Le lac le plus proche de ce point (indice).
+func _lake_at(n: Vector2) -> int:
+	var best := 0
+	var bv := INF
+	for i in lakes.size():
+		var d: Vector2 = (n - lakes[i]["c"]) / lakes[i]["r"]
+		var v := d.length() / lake_shape(atan2(d.y, d.x))
+		if v < bv:
+			bv = v
+			best = i
+	return best
+
+
+func lake_point(th: float, rn: float, k: int = 0) -> Vector2:
+	var lk: Dictionary = lakes[clampi(k, 0, lakes.size() - 1)]
+	return lk["c"] + Vector2(cos(th), sin(th)) * lk["r"] * lake_shape(th) * rn
+
+
+func _lake_of_hamlet(h: String) -> int:
+	return clampi(int(hamlet_lake.get(h, 0)), 0, lakes.size() - 1)
+
+
+## Le lac d'une zone de pêche : « large-Orsane » est le large du lac d'Orsane ; à défaut, `fallback`.
+func _lake_named(zone: String, fallback: int) -> int:
+	for i in lakes.size():
+		if zone == "large-" + str(lakes[i].get("name", "")):
+			return i
+	return fallback
+
+
+## Pousse les lacs au shader (centres, rayons, niveau de chacun), complétés à quatre.
+func _push_lakes() -> void:
+	if mat == null:
+		return
+	var cs := PackedVector2Array()
+	var rs := PackedVector2Array()
+	var hs := PackedFloat32Array()
+	for i in MAX_LAKES:
+		var lk: Dictionary = lakes[mini(i, lakes.size() - 1)]
+		cs.append(lk["c"])
+		rs.append(lk["r"])
+		hs.append(clampf(_ratio(mini(i, lakes.size() - 1)), 0.0, 1.0))
+	mat.set_shader_parameter("lake_n", lakes.size())
+	mat.set_shader_parameter("lake_c", cs)
+	mat.set_shader_parameter("lake_r", rs)
+	mat.set_shader_parameter("health_k", hs)
+
+
+## Le niveau d'un lac (stock / capacité) : celui de la partie s'il est seul.
+func _ratio(k: int) -> float:
+	return stock_ratio if lakes.size() == 1 else float(lakes[k].get("ratio", 1.0))
 
 
 func _px(n: Vector2) -> Vector2:
@@ -159,7 +251,8 @@ func _nm(p: Vector2) -> Vector2:
 
 
 func _hamlet_angle(h: String) -> float:
-	var d: Vector2 = (hamlet_pos[h] - LAKE_C) / LAKE_R
+	var lk: Dictionary = lakes[_lake_of_hamlet(h)]
+	var d: Vector2 = (hamlet_pos[h] - lk["c"]) / lk["r"]
 	return atan2(d.y, d.x)
 
 
@@ -182,9 +275,9 @@ func _generate_decor() -> void:
 				"roof": [Color("#b5583c"), Color("#8e6b52"), Color("#c49a55"), Color("#6f7584")][rng.randi() % 4],
 				"seed": rng.randf()})
 		var th := _hamlet_angle(h)
-		var shore := lake_point(th, 1.02)
-		var tip := lake_point(th, 0.84)
-		docks[h] = {"shore": shore, "tip": tip, "th": th}
+		var shore := lake_point(th, 1.02, _lake_of_hamlet(h))
+		var tip := lake_point(th, 0.84, _lake_of_hamlet(h))
+		docks[h] = {"shore": shore, "tip": tip, "th": th, "k": _lake_of_hamlet(h)}
 		paths.append(_curve(c, _px(shore), 0.12))
 		paths.append(_road(c, elder_px + Vector2(0, 26), -0.18 if c.x < elder_px.x else 0.18))
 	houses.append({"p": elder_px + Vector2(-4, -6), "s": Vector2(46, 30), "rot": 0.0, "roof": Color("#7a4b34"),
@@ -226,13 +319,14 @@ func _generate_decor() -> void:
 	var reeds: Array = []
 	for i in 70:
 		var th := rng.randf_range(0, TAU)
+		var lk := rng.randi() % lakes.size()
 		var near_dock := false
 		for h in docks:
-			if absf(angle_difference(th, docks[h]["th"])) < 0.12:
+			if int(docks[h]["k"]) == lk and absf(angle_difference(th, docks[h]["th"])) < 0.12:
 				near_dock = true
 		if near_dock:
 			continue
-		reeds.append({"p": _px(lake_point(th, rng.randf_range(0.98, 1.05))), "n": rng.randi_range(3, 6),
+		reeds.append({"p": _px(lake_point(th, rng.randf_range(0.98, 1.05), lk)), "n": rng.randi_range(3, 6),
 			"seed": rng.randf()})
 	var flies: Array = []
 	for i in 36:
@@ -247,8 +341,8 @@ func _wet(p: Vector2) -> bool:
 	return lake_rn(p) < 1.1
 
 
-func _angle_of(p: Vector2) -> float:
-	var d := (p - LAKE_C) / LAKE_R
+func _angle_of(p: Vector2, k: int = 0) -> float:
+	var d: Vector2 = (p - lakes[k]["c"]) / lakes[k]["r"]
 	return atan2(d.y, d.x)
 
 
@@ -257,17 +351,20 @@ func _angle_of(p: Vector2) -> float:
 func _land_route(a: Vector2, b: Vector2) -> Array:
 	if lake_rn(a) < 1.0:
 		return [b]
-	var across := false
+	var blocking := -1
 	for i in 17:
-		across = across or _wet(a.lerp(b, float(i) / 16.0))
-	if not across:
+		var q := a.lerp(b, float(i) / 16.0)
+		if _wet(q):
+			blocking = _lake_at(q)
+			break
+	if blocking < 0:
 		return [b]
-	var a0 := _angle_of(a)
-	var da := angle_difference(a0, _angle_of(b))
+	var a0 := _angle_of(a, blocking)
+	var da := angle_difference(a0, _angle_of(b, blocking))
 	var steps := maxi(2, int(absf(da) / 0.25))
 	var out: Array = []
 	for i in steps + 1:
-		out.append(lake_point(a0 + da * float(i) / float(steps), 1.18))
+		out.append(lake_point(a0 + da * float(i) / float(steps), 1.18, blocking))
 	out.append(b)
 	return out
 
@@ -406,8 +503,18 @@ func _fire_pos() -> Vector2:
 
 
 # ================================================================== état
-func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Array = []) -> void:
-	hamlet_pos = layout(hamlets if not hamlets.is_empty() else DEFAULT_HAMLETS)
+func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Array = [], lake_info: Array = []) -> void:
+	lakes = lake_boxes(clampi(lake_info.size(), 1, MAX_LAKES))
+	hamlet_lake = {}
+	for k in mini(lake_info.size(), MAX_LAKES):
+		var li: Dictionary = lake_info[k]
+		lakes[k]["name"] = str(li.get("name", ""))
+		lakes[k]["label"] = str(li.get("label", "Lac de Vellmor"))
+		lakes[k]["capacity"] = float(li.get("capacity", 100.0))
+		lakes[k]["ratio"] = float(li.get("stock", 0.0)) / maxf(float(li.get("capacity", 1.0)), 0.001)
+		for v in li.get("villages", []):
+			hamlet_lake[str(v)] = k
+	hamlet_pos = layout(hamlets if not hamlets.is_empty() else DEFAULT_HAMLETS, hamlet_lake, lakes.size())
 	agents.clear()
 	order.clear()
 	effects.clear()
@@ -421,7 +528,7 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 	stock_ratio = 1.0
 	dry = 0.0
 	assembly_scope = ""
-	patrol_legs.clear()
+	patrol_routes.clear()
 	patrol_season = 0
 	seats = 0
 	hamlet_fires.clear()
@@ -458,6 +565,7 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 	fish.clear()
 	_sync_fish(true)
 	if size.x > 10:
+		_push_lakes()
 		_generate_decor()                # les villages ont changé de place : maisons, pontons et chemins aussi
 		decor.queue_redraw()
 
@@ -502,6 +610,10 @@ func on_event(ev: Dictionary) -> void:
 		"lake_update":
 			stock_t = float(p.get("stock", 0.0))
 			stock_ratio = stock_t / max(capacity, 0.001)
+			for k in lakes.size():
+				var held: Variant = p.get("lakes", {}).get(str(lakes[k].get("name", "")))
+				if held != null:
+					lakes[k]["ratio"] = float(held) / maxf(float(lakes[k]["capacity"]), 0.001)
 			_sync_fish(not animate)
 		"lake_collapsed":
 			collapsed = true
@@ -536,7 +648,9 @@ func on_event(ev: Dictionary) -> void:
 							[dk["shore"], 0.0], [a["home"], 0.0]]
 					a["landed"] = float(p.get("landed", 0.0))
 		"patrol_route":
-			patrol_legs = p.get("legs", [])
+			if int(p.get("season", 0)) != patrol_season:
+				patrol_routes.clear()                  # une nouvelle saison : les routes de la précédente ne comptent plus
+			patrol_routes[str(p.get("captain", "PAT"))] = p.get("legs", [])
 			patrol_season = int(p.get("season", 0))
 			_banner("La patrouille prend la mer", "Elle visite quelques zones du lac cette saison", Color("#7fe0c8"))
 		"patrol":
@@ -675,40 +789,50 @@ func _move(id: String, target: Vector2, speed: float = 3.0) -> void:
 func _fishing_spot(a: Dictionary, zone: String = "") -> Vector2:
 	# chaque pêcheur a son coin, du côté de son hameau (ou de la zone où il pêche en cachette) : les barques ne se superposent pas
 	var h := zone if hamlet_pos.has(zone) else str(a["info"].get("hamlet", ""))
-	if zone == "large":
-		return lake_point(randf() * TAU, randf_range(0.05, 0.25))
+	if zone.begins_with("large"):
+		return lake_point(randf() * TAU, randf_range(0.05, 0.25), _lake_named(zone, _lake_of_hamlet(str(a["info"].get("hamlet", "")))))
 	var th: float = _hamlet_angle(h) if hamlet_pos.has(h) else randf() * TAU
 	var k := order.find(a["id"])
 	var slot := float(k % 3) - 1.0
 	var depth := 0.38 + 0.2 * float((k / 3) % 2)
-	return lake_point(th + slot * 0.42 + randf_range(-0.08, 0.08), depth + randf_range(-0.05, 0.05))
+	return lake_point(th + slot * 0.42 + randf_range(-0.08, 0.08), depth + randf_range(-0.05, 0.05), _lake_of_hamlet(h))
 
 
 ## La patrouille du lac : elle visite les zones de sa route l'une après l'autre (jours depuis le début de la saison), au centre du
 ## lac pour « large », devant la rive du village sinon ; entre deux zones, elle fait route.
 func _zone_pos(zone: String) -> Vector2:
-	return LAKE_C if zone == "large" or not hamlet_pos.has(zone) else lake_point(_hamlet_angle(zone), 0.62)
+	if zone.begins_with("large") or not hamlet_pos.has(zone):
+		return lakes[_lake_named(zone, 0)]["c"]
+	return lake_point(_hamlet_angle(zone), 0.62, _lake_of_hamlet(zone))
 
 
-func _patrol_pos() -> Vector2:
+func _patrol_pos(legs: Array, idx: int = 0) -> Vector2:
 	var day := sim_time - float(patrol_season - 1) * season_days
 	var k := 0
-	for i in patrol_legs.size():
-		if day >= float(patrol_legs[i]["from_day"]):
+	for i in legs.size():
+		if day >= float(legs[i]["from_day"]):
 			k = i
-	var leg: Dictionary = patrol_legs[k]
+	var leg: Dictionary = legs[k]
 	var here := _zone_pos(str(leg["zone"]))
 	var span := maxf(float(leg["to_day"]) - float(leg["from_day"]), 0.01)
 	var u := clampf((day - float(leg["from_day"])) / span, 0.0, 1.0)
 	if k > 0 and u < 0.25:
-		here = _zone_pos(str(patrol_legs[k - 1]["zone"])).lerp(here, smoothstep(0.0, 0.25, u))
-	return here + Vector2(cos(t * 0.7) * 0.012, sin(t * 0.9) * 0.014)
+		here = _zone_pos(str(legs[k - 1]["zone"])).lerp(here, smoothstep(0.0, 0.25, u))
+	return here + Vector2(cos(t * 0.7 + float(idx)) * 0.012, sin(t * 0.9 + float(idx)) * 0.014)
 
 
 func _draw_patrol(ci: CanvasItem) -> void:
-	if patrol_legs.is_empty() or int(floor(sim_time / maxf(season_days, 1.0))) + 1 != patrol_season:
+	if patrol_routes.is_empty() or int(floor(sim_time / maxf(season_days, 1.0))) + 1 != patrol_season:
 		return
-	var p := _px(_patrol_pos())
+	var idx := 0
+	for captain in patrol_routes:
+		var legs: Array = patrol_routes[captain]
+		if not legs.is_empty():
+			_draw_patrol_boat(ci, _px(_patrol_pos(legs, idx)), idx)
+		idx += 1
+
+
+func _draw_patrol_boat(ci: CanvasItem, p: Vector2, idx: int) -> void:
 	var col := Color("#7fe0c8")
 	ci.draw_arc(p, 38.0, 0, TAU, 40, Color(col, 0.30), 1.2, true)
 	var sweep := fmod(t * 1.2, TAU)
@@ -723,7 +847,8 @@ func _draw_patrol(ci: CanvasItem) -> void:
 	ci.draw_line(p - dir * 2.0, p - dir * 2.0 - side * 18.0, Color("#0b1f1a"), 1.4)
 	ci.draw_colored_polygon(PackedVector2Array([p - dir * 2.0 - side * 18.0, p - dir * 2.0 - side * 24.0 + dir * 4.0,
 		p - dir * 2.0 - side * 24.0 - dir * 4.0]), Color("#ff6a5c"))
-	Art.pill(ci, p + Vector2(-26, 26), "patrouille", Color(col, 0.9), Color("#0b1f1a"), 10, "ui_black")
+	Art.pill(ci, p + Vector2(-26, 26), "patrouille" if patrol_routes.size() < 2 else "patrouille %d" % (idx + 1), Color(col, 0.9),
+		Color("#0b1f1a"), 10, "ui_black")
 
 
 func _link(a: String, b: String, col: Color, width: float, ttl: float, kind: String) -> void:
@@ -751,23 +876,30 @@ func _num(v: Variant) -> String:
 
 # ================================================================== poissons
 func _sync_fish(instant: bool) -> void:
-	var target := 0 if collapsed and stock_ratio < 0.05 else int(round(clamp(stock_ratio, 0.0, 1.0) * 42.0))
-	var alive := fish.filter(func(f): return not f["dying"])
-	while alive.size() < target:
-		var th := randf() * TAU
-		var f := {"d": Vector2(cos(th), sin(th)) * randf_range(0.1, 0.8), "ang": randf() * TAU, "sp": randf_range(0.05, 0.12),
-			"a": 1.0 if instant else 0.0, "dying": false, "len": randf_range(7.0, 11.0), "wig": randf() * TAU}
-		fish.append(f)
-		alive.append(f)
-	var extra := alive.size() - target
-	for f in alive:
-		if extra <= 0:
-			break
-		f["dying"] = true
-		if instant:
-			f["a"] = 0.0
-		extra -= 1
+	var area := 0.0
+	for lk in lakes:
+		area += float(lk["r"].x) * float(lk["r"].y)
+	for k in lakes.size():
+		var ratio := _ratio(k)
+		var share: float = float(lakes[k]["r"].x) * float(lakes[k]["r"].y) / maxf(area, 0.0001)
+		var target := 0 if (collapsed or lakes.size() > 1) and ratio < 0.05 else int(round(clamp(ratio, 0.0, 1.0) * 42.0 * share))
+		var alive := fish.filter(func(f): return int(f["k"]) == k and not f["dying"])
+		while alive.size() < target:
+			var th := randf() * TAU
+			var f := {"d": Vector2(cos(th), sin(th)) * randf_range(0.1, 0.8), "ang": randf() * TAU, "sp": randf_range(0.05, 0.12),
+				"a": 1.0 if instant else 0.0, "dying": false, "len": randf_range(7.0, 11.0), "wig": randf() * TAU, "k": k}
+			fish.append(f)
+			alive.append(f)
+		var extra := alive.size() - target
+		for f in alive:
+			if extra <= 0:
+				break
+			f["dying"] = true
+			if instant:
+				f["a"] = 0.0
+			extra -= 1
 	fish = fish.filter(func(f): return not (f["dying"] and f["a"] <= 0.0))
+	_push_lakes()
 
 
 func _update_fish(dt: float) -> void:
@@ -786,7 +918,7 @@ func _update_fish(dt: float) -> void:
 	fish = fish.filter(func(f): return not (f["dying"] and f["a"] <= 0.0))
 	if stock_ratio > 0.3 and randf() < dt * 0.5 * stock_ratio and not fish.is_empty():
 		var f: Dictionary = fish[randi() % fish.size()]
-		splashes.append({"p": LAKE_C + f["d"] * LAKE_R, "ttl": 1.0, "max": 1.0, "r": 10.0})
+		splashes.append({"p": lakes[int(f["k"])]["c"] + f["d"] * lakes[int(f["k"])]["r"], "ttl": 1.0, "max": 1.0, "r": 10.0})
 
 
 # ================================================================== animation
@@ -801,7 +933,7 @@ func _process(delta: float) -> void:
 	light = move_toward(light, target, delta * 2.0) if animate else target
 	room_alpha = move_toward(room_alpha, 1.0 if assembly_scope == "valley" else 0.0, delta * (3.5 if animate else 100.0))
 	dry = max(0.0, dry - delta * 0.004)
-	mat.set_shader_parameter("health", clampf(stock_ratio, 0.0, 1.0))
+	_push_lakes()
 	mat.set_shader_parameter("dry", dry)
 	# déplacements
 	for id in agents:
@@ -889,6 +1021,10 @@ func _pick(pos: Vector2) -> String:
 
 # ================================================================== dessin dynamique
 func _draw_under(ci: CanvasItem) -> void:
+	if lakes.size() > 1:
+		for lk in lakes:
+			ci.draw_string(Art.font("title_italic"), _px(lk["c"]) + Vector2(-70, 5), str(lk["label"]), HORIZONTAL_ALIGNMENT_CENTER, 140,
+				15, Color(1, 1, 1, 0.38))
 	for w in wakes:
 		var a: float = float(w["ttl"]) / float(w["max"])
 		var p := _px(w["p"])
@@ -896,7 +1032,7 @@ func _draw_under(ci: CanvasItem) -> void:
 		ci.draw_circle(p + side, 1.6 * a + 0.6, Color(1, 1, 1, 0.35 * a))
 		ci.draw_circle(p - side, 1.6 * a + 0.6, Color(1, 1, 1, 0.35 * a))
 	for f in fish:
-		var p := _px(LAKE_C + f["d"] * LAKE_R)
+		var p := _px(lakes[int(f["k"])]["c"] + f["d"] * lakes[int(f["k"])]["r"])
 		var ang: float = f["ang"]
 		var L: float = f["len"]
 		var dir := Vector2(cos(ang), sin(ang))
@@ -1266,13 +1402,17 @@ func _draw_hud(ci: CanvasItem) -> void:
 		Art.pill(ci, card.position + Vector2(100, 34), phase, Color(pc, 0.22), pc, 11)
 	if paused:
 		ci.draw_rect(Rect2(Vector2.ZERO, size), Color(0.03, 0.04, 0.09, 0.28), true)
-		var pr := Rect2(Vector2(size.x - 146, 16), Vector2(130, 40))
+		var pr := Rect2(Vector2(size.x - 146 - (354.0 if lakes.size() > 1 else 0.0), 16), Vector2(130, 40))
 		Art.box(Color(0.05, 0.07, 0.12, 0.92), 14, Color(Art.PROPOSAL, 0.8), 1, 10).draw(ci.get_canvas_item(), pr)
 		ci.draw_rect(Rect2(pr.position + Vector2(16, 12), Vector2(5, 16)), Art.PROPOSAL, true)
 		ci.draw_rect(Rect2(pr.position + Vector2(26, 12), Vector2(5, 16)), Art.PROPOSAL, true)
 		ci.draw_string(tf, pr.position + Vector2(42, 27), "En pause", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Art.INK)
 	# jauge du lac
 	var gw := 330.0
+	if lakes.size() > 1:
+		_draw_lake_gauges(ci, gw)
+		_draw_banner(ci)
+		return
 	var g := Rect2(Vector2(size.x / 2 - gw / 2, size.y - 60), Vector2(gw, 48))
 	Art.box(Color(0.05, 0.07, 0.12, 0.84), 14, Art.LINE, 1, 10).draw(ci.get_canvas_item(), g)
 	ci.draw_string(tf, g.position + Vector2(14, 21), "Lac de Vellmor", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Art.INK)
@@ -1290,7 +1430,36 @@ func _draw_hud(ci: CanvasItem) -> void:
 	var mx := bar.position.x + bar.size.x * 0.5
 	ci.draw_line(Vector2(mx, bar.position.y - 3), Vector2(mx, bar.end.y + 3), Color(1, 1, 1, 0.75), 1.5)
 	ci.draw_string(f, Vector2(mx + 4, bar.position.y - 2), "moitié", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1, 1, 1, 0.55))
-	# bandeau
+	_draw_banner(ci)
+
+
+## Plusieurs lacs : une ligne par lac (son nom, ses tonnes, sa barre), au bas de la carte.
+func _draw_lake_gauges(ci: CanvasItem, gw: float) -> void:
+	var f := Art.font("ui")
+	var fb := Art.font("ui_bold")
+	var n := lakes.size()
+	var g := Rect2(Vector2(size.x - gw - 14, 14), Vector2(gw, 14 + 22 * n))
+	Art.box(Color(0.05, 0.07, 0.12, 0.84), 14, Art.LINE, 1, 10).draw(ci.get_canvas_item(), g)
+	for k in n:
+		var lk: Dictionary = lakes[k]
+		var y := g.position.y + 8 + 22 * k
+		var ratio := _ratio(k)
+		ci.draw_string(fb, Vector2(g.position.x + 14, y + 11), str(lk["label"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Art.INK)
+		ci.draw_string(f, Vector2(g.position.x, y + 11), "%.0f / %.0f t" % [ratio * float(lk["capacity"]), float(lk["capacity"])],
+			HORIZONTAL_ALIGNMENT_RIGHT, gw - 14, 11, Art.ACCUSE if ratio < 0.05 else Art.MUTED)
+		var bar := Rect2(Vector2(g.position.x + 14, y + 15), Vector2(gw - 28, 6))
+		Art.box(Color(1, 1, 1, 0.08), 3).draw(ci.get_canvas_item(), bar)
+		var fillw: float = bar.size.x * clamp(ratio, 0.0, 1.0)
+		if fillw > 2:
+			Art.box(Color("#8a7a4c").lerp(Color("#3fb6c9"), clamp(ratio * 1.2, 0.0, 1.0)), 3).draw(ci.get_canvas_item(),
+				Rect2(bar.position, Vector2(fillw, bar.size.y)))
+		var mx := bar.position.x + bar.size.x * 0.5
+		ci.draw_line(Vector2(mx, bar.position.y - 2), Vector2(mx, bar.end.y + 2), Color(1, 1, 1, 0.6), 1.2)
+
+
+func _draw_banner(ci: CanvasItem) -> void:
+	var f := Art.font("ui")
+	var tf := Art.font("title")
 	if not banners.is_empty():
 		var bn: Dictionary = banners[0]
 		var life: float = float(bn["max"]) - float(bn["ttl"])

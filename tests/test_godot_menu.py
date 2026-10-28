@@ -16,7 +16,7 @@ import time
 import pytest
 
 from filets.catalog import build_catalog
-from filets.config import ROOT, load_config
+from filets.config import ROOT, load_config, normalize
 from filets.engine import build_game_config, validate_request
 from helpers import cfg_for, read_events
 
@@ -111,3 +111,21 @@ def test_no_road_or_walk_crosses_the_lake_whatever_the_number_of_villages():
                           capture_output=True, text=True, timeout=120, encoding="utf-8")
     assert "SCRIPT ERROR" not in proc.stdout and "SCRIPT ERROR" not in proc.stderr, proc.stdout + proc.stderr
     assert "ROADSTEST fails=0" in proc.stdout, proc.stdout
+
+
+def test_the_menu_sets_each_lake_the_patrols_and_the_random_valley(tmp_path):
+    """Trois lacs : une ligne chacun (poisson, départ, repeuplement), patrouilles, part prenable, vallée aléatoire ; la demande est valide."""
+    cfg = load_config(None)
+    cfg["lake"]["count"], cfg["population"]["villages"], cfg["population"]["fishers"] = 3, 6, 16
+    catalog = tmp_path / "catalog_lakes.json"
+    catalog.write_text(json.dumps(build_catalog(normalize(cfg))), encoding="utf-8")
+    proc = subprocess.run([GODOT, "--headless", "--path", str(ROOT / "godot"), "-s", "res://tests/lakes_menu_test.gd",
+                           "--", f"--catalog={catalog}"], capture_output=True, text=True, timeout=120, encoding="utf-8")
+    out = proc.stdout
+    assert "SCRIPT ERROR" not in out and "SCRIPT ERROR" not in proc.stderr, out + proc.stderr
+    assert "LAKESMENUTEST fails=0" in out, out
+    request = json.loads(next(line for line in out.splitlines() if line.startswith("CONFIG:"))[len("CONFIG:"):])
+    assert validate_request(request) == [], validate_request(request)
+    built = build_game_config(cfg_for(tmp_path), {**request, "llm": "scripted", "speed": "max", "seasons": 1})
+    assert [k["name"] for k in built["lake"]["lakes"]] == ["Vellmor", "Orsane", "Brémol"]
+    assert built["lake"]["lakes"][1]["capacity"] == 80.0 and built["lake"]["lakes"][0]["stock_ratio"] == 0.5

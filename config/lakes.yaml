@@ -1,0 +1,11 @@
+# Une vallée à trois lacs : six villages, seize pêcheurs, deux patrouilles. Chaque lac a son poisson (12,5 t par pêcheur du lac), son
+# repeuplement et ses villages (deux chacun) ; chaque village pêche dans le lac de sa rive.
+extends: default.yaml
+run: {label: lakes}
+population:
+  villages: 6
+  fishers: 16
+lake:
+  count: 3
+scenario:
+  patrol: {count: 2}

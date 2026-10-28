@@ -47,6 +47,8 @@ var lbl_weather: Label          # le temps du jour sur le lac (voir `weather_day
 var weather_days: Array = []    # le temps de chaque jour de pêche de la saison en cours (`season_start`)
 var weather_season := 0
 var lbl_patrol: Label           # la patrouille du lac : aucune, ou installée (et sa route de la saison)
+var patrol_texts := {}          # la route de chaque patrouille cette saison (capitaine -> texte)
+var patrol_text_season := 0
 var patrol_installed := false
 var reps := {}                  # village -> pêcheur élu au conseil de la vallée
 var rumor_edit: LineEdit
@@ -923,7 +925,12 @@ func _on_event(ev: Dictionary) -> void:
 			var zs := PackedStringArray()
 			var rich := PackedStringArray()
 			for leg in p.get("legs", []):
-				var where := "le large" if str(leg.get("zone", "")) == "large" else str(leg.get("zone", ""))
+				var zone := str(leg.get("zone", ""))
+				var where := zone
+				if zone == "large":
+					where = "le large"
+				elif zone.begins_with("large-"):
+					where = "le large du lac d'" + zone.substr(6) if zone.substr(6, 1) in "AEIOUY" else "le large du lac de " + zone.substr(6)
 				var days := " (%d j)" % int(leg.get("days", 0)) if leg.has("days") else ""
 				if leg.get("follow") != null:
 					var fa = _agent(str(leg["follow"]))
@@ -932,9 +939,15 @@ func _on_event(ev: Dictionary) -> void:
 				else:
 					zs.append(where + days)
 					rich.append(where + days)
-			lbl_patrol.text = "Patrouille : en route vers " + " → ".join(zs)
+			var captain := str(p.get("captain", "PAT"))
+			if int(p.get("season", 0)) != patrol_text_season:
+				patrol_texts.clear()                    # une nouvelle saison : les routes de la précédente ne comptent plus
+				patrol_text_season = int(p.get("season", 0))
+			patrol_texts[captain] = " → ".join(zs)
+			lbl_patrol.text = "Patrouille : en route vers " + " · ".join(PackedStringArray(patrol_texts.values()))
 			var why := "" if str(p.get("why", "")) == "" else "  [color=#9ba1ba]« %s »[/color]" % _esc(str(p.get("why")))
-			_feed(lab + _tag("PATROUILLE", "#7fe0c8") + " le capitaine fait route vers [b]%s[/b]%s  [color=#6f7896](les pêcheurs ne savent pas où il passera)[/color]" % [" → ".join(rich), why], [])
+			var who := "" if captain == "PAT" else " " + captain
+			_feed(lab + _tag("PATROUILLE", "#7fe0c8") + " le capitaine%s fait route vers [b]%s[/b]%s  [color=#6f7896](les pêcheurs ne savent pas où il passera)[/color]" % [who, " → ".join(rich), why], [])
 		"patrol":
 			var on := str(p.get("state", "")) == "installed"
 			patrol_installed = on
@@ -1180,7 +1193,9 @@ func _reset(ev: Dictionary) -> void:
 		agents[str(a["id"])] = {"info": a, "catches": {}, "promises": [], "memories": [], "last_decision": {},
 			"last_decision_label": "", "wealth": float(a.get("wealth", 0)), "incidents": 0,
 			"declared": {}, "reputation": 0.5, "trust_from": {}, "lies_found": 0, "banned": false}
-	world.reset_world(p.get("agents", []), float(run["capacity"]), float(p.get("season_days", 30.0)), p.get("hamlets", []))
+	world.reset_world(p.get("agents", []), float(run["capacity"]), float(p.get("season_days", 30.0)), p.get("hamlets", []),
+		p.get("lakes", []))
+	patrol_texts.clear()
 	legend.set_villages(p.get("hamlets", []))
 	chart.reset()
 	_reset_kpis()

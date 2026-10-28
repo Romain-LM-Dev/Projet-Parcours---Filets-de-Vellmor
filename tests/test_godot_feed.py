@@ -68,3 +68,21 @@ def test_the_main_view_says_clearly_what_was_lost_and_shows_the_announcement(tmp
     assert "SCRIPT ERROR" not in out and "SCRIPT ERROR" not in proc.stderr, out + proc.stderr
     assert "MAINFEEDTEST fails=0" in out, out
     assert proc.returncode == 0
+
+
+def test_the_map_shows_every_lake_its_villages_and_one_boat_per_patrol(tmp_path):
+    """Deux lacs, deux patrouilles : la carte les pose, suit le niveau de chacun et dessine sans erreur (`lakes_world_test.gd`)."""
+    from helpers import play
+
+    lakes = [{"name": "Vellmor", "capacity": 100, "stock_ratio": 0.8, "villages": ["Ostrel", "Bramois"]},
+             {"name": "Orsane", "capacity": 40, "stock_ratio": 0.5, "growth_rate": 0.6, "villages": ["Tilque", "Hennad"]}]
+    cfg = cfg_for(tmp_path, seasons=3, time__mode="sync", population__custom=ROSTER, climate__enabled=True, lake__lakes=lakes,
+                  scenario__patrol={"enabled": True, "count": 2, "from_season": 1, "cost": 15, "legs": 2, "days": 10})
+    play(tmp_path, "gdlakes", cfg=cfg)
+    events = tmp_path / "runs" / "gdlakes" / "events.jsonl"
+    proc = subprocess.run([GODOT, "--headless", "--path", str(ROOT / "godot"), "-s", "res://tests/lakes_world_test.gd", "--",
+                           f"--events={events}"], capture_output=True, text=True, timeout=120, encoding="utf-8")
+    out = proc.stdout
+    assert "SCRIPT ERROR" not in out and "SCRIPT ERROR" not in proc.stderr, out + proc.stderr
+    assert "LAKESWORLDTEST fails=0" in out, out
+    assert proc.returncode == 0

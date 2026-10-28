@@ -3,10 +3,11 @@
 // pour que barques et poissons restent exactement sur l'eau.
 shader_type canvas_item;
 
-uniform vec2 lake_c = vec2(0.5, 0.53);
-uniform vec2 lake_r = vec2(0.30, 0.25);
+uniform int lake_n = 1;                              // nombre de lacs (1 à 4)
+uniform vec2 lake_c[4];
+uniform vec2 lake_r[4];
 uniform vec2 px_size = vec2(1000.0, 800.0);
-uniform float health : hint_range(0.0, 1.0) = 1.0;   // stock / capacité
+uniform float health_k[4];                           // stock / capacité de chaque lac
 uniform float dry : hint_range(0.0, 1.0) = 0.0;      // sécheresse en cours
 uniform float t_offset = 0.0;
 
@@ -32,9 +33,17 @@ void fragment() {
 	float T = TIME + t_offset;
 	vec2 uv = UV;
 	vec2 p = uv * px_size / 110.0;
-	vec2 d = (uv - lake_c) / lake_r;
-	float th = atan(d.y, d.x);
-	float rn = length(d) / lake_shape(th);
+	// le lac le plus proche (le plus petit rayon normalisé) : sa forme, son niveau
+	float rn = 1000.0;
+	float th = 0.0;
+	float health = 1.0;
+	for (int i = 0; i < 4; i++) {
+		if (i >= lake_n) { break; }
+		vec2 d = (uv - lake_c[i]) / lake_r[i];
+		float ti = atan(d.y, d.x);
+		float ri = length(d) / lake_shape(ti);
+		if (ri < rn) { rn = ri; th = ti; health = health_k[i]; }
+	}
 
 	// --- prairie : deux verts, taches d'herbe haute, fleurs
 	float g = fbm(p * 0.7);
