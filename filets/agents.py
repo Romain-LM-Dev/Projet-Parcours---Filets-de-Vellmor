@@ -36,6 +36,7 @@ class Agent:
     declared: dict[int, float] = field(default_factory=dict)       # ce qu'il a déclaré à l'ancien, par saison
     outings: dict[int, list[dict]] = field(default_factory=dict)   # ses sorties de chaque saison (voir `World.outings`)
     form: float = 0.0                                              # sa chance de la saison (elle se prolonge d'une saison à l'autre)
+    temper: float = 1.0                                            # sa sévérité : plus de 1, il pardonne moins (tirée une fois)
 
     @property
     def id(self) -> str:
@@ -304,10 +305,10 @@ async def debrief_villager(world, agent: Agent, asm) -> None:
     (`policies.trust_rule`) ; une IA qui ne répond pas ne juge pas (sa confiance reste ce qu'elle était)."""
     facts = world.trust_facts(agent, asm.season, world.clock.now(), None)
     if world.policy_voter(agent):
-        world.judge(agent, trust_rule(agent.archetype, facts))
+        world.judge(agent, trust_rule(agent.archetype, facts, world.trust_context(agent, asm.season)))
         return
     lines = world.debrief_lines(agent, asm, facts)
-    trust = prompts.trust_line({"trust": [(world.first_name(s), v) for s, v in world.trust[agent.id].items()]})
+    trust = prompts.trust_line(world.trust_obs(agent))
     data, _, _ = await _ask_llm(world, agent, "debrief", prompts.debrief_messages(
         agent.profile, lines, trust, f"Tes finances : {agent.wealth:.0f} écus."), {"round": 96}, "S2",
         schema=prompts.DEBRIEF_SCHEMA, max_tokens=prompts.DEBRIEF_MAX_TOKENS)

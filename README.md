@@ -444,6 +444,20 @@ taiseux ne juge guère les autres, mais en veut à qui dénonce ; le beau parleu
 avoué se pardonne mieux qu'un mensonge établi. Chaque jugement est un événement `trust` (qui juge, `by`, de combien, `delta`, la
 confiance qui en résulte et la **réputation**, moyenne de la confiance des autres).
 
+**Un jugement qui dépend de tout ce qui compte, et pas toujours le même.** Cette table n'est que le point de départ d'un agent à règles
+(`policies.trust_rule` avec son contexte, `World.trust_facts` et `World.trust_context`). Le jugement pèse aussi : la **gravité** d'un
+mensonge (l'écart entre ce que les indices estiment et ce qui a été déclaré) ; le **voisinage** (on pardonne plus à un voisin, selon le
+caractère) ; la **chance** (une prise qui dépasse la règle de ce que la chance explique, `economy.luck`, ou un banc de poissons, n'est
+pas un défi à la règle : sans cela, la chance punirait les honnêtes et les menteurs, qui déclarent la règle pile, paraîtraient les plus
+sages) ; ses **dettes** (qui doit de l'argent comprend qui pêche pour vivre) et sa **propre triche** (qui a triché pardonne) ; ce qu'il
+pensait **déjà** du pêcheur (on perd d'autant plus qu'on en avait ; on gagne de moins en moins, et jamais au-delà de 90 % par la seule
+obéissance, sinon tout le monde finit à 100 %) ; ce qu'on **en dit dans la vallée** (la réputation, avec un poids propre à chaque
+caractère) ; et son **tempérament**, tiré une fois par agent (`Agent.temper`, de 0,85 à 1,15 : plus sévère ou plus indulgent). Le résultat
+est un nombre réel, **arrondi au hasard de l'agent** : la même nouvelle ne change pas toujours la confiance du même nombre de dixièmes.
+« A témoigné » ne compte que pour un témoignage qui contredit la déclaration de quelqu'un, pas pour un relevé qui la confirme. Les IA
+reçoivent les mêmes éléments dans leur contexte (le temps de la pêche et la dispersion due à la chance, leurs voisins, ce que la vallée
+pense des autres, leurs finances) et jugent seules.
+
 **La confiance oriente les réactions.** Les IA la lisent dans leur **carnet** (« Ta confiance envers les autres : Loïc faible,
 Théo forte ; les autres, moyenne », et leur propre réputation) et devant chaque parole de la veillée. Un témoin ne dénonce pas devant
 tous celui à qui il fait toute confiance (0,8 et plus) ; un agent à règles ne soutient pas la proposition de quelqu'un qu'il ne croit
@@ -465,7 +479,7 @@ Sur un lac bien rempli, le repère des anciens rappelle qu'au-dessus de la moiti
 pêcher ce surplus sans l'abîmer (la vallée votait 2 t chacun pour 6 t de surplus par pêcheur).
 
 Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), s'il est interdit, sa dernière prise et sa
-déclaration (en rouge si elle ment) et ses mensonges établis ; sur la carte, la patrouille navigue de zone en zone, un astre doré marque les élus des villages, un anneau rouge barré marque les
+déclaration (en rouge « ment » s'il a déclaré moins qu'il n'a pêché, ce que vous seul savez) et ses mensonges **établis** par l'ancien sur des indices (il peut se tromper) ; sur la carte, la patrouille navigue de zone en zone, un astre doré marque les élus des villages, un anneau rouge barré marque les
 interdits et les bateaux ont la taille de leur cale ; le fil écrit `MENSONGE` et `EN CACHETTE` (vus de vous seul), `INDICE` (ou `INDICE GARDÉ`), `COMPTES`,
 `MENSONGE ÉTABLI`, `PRIS EN CACHETTE`, `ACCUSÉ À TORT`, `CONFIANCE` (un jugement marqué, d'au moins 0,2), `EXCLUSION` et
 `RÉAUTORISATION` (une proposition), `VOTE`, `INTERDIT DE PÊCHE`, `RÉAUTORISÉ`, `ÉLU`, `CONSEIL`, `PATROUILLE` et `ÉVÉNEMENT` ; la pêche

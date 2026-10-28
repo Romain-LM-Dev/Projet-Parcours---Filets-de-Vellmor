@@ -211,7 +211,8 @@ class World:
         lo, hi = t["async_offset_days"]
         for i, p in enumerate(build_population(cfg)):
             arng = random.Random(seed * 1000 + i)
-            self.agents[p.id] = Agent(p, memory_of(p.id), arng, p.wealth, offset_days=round(arng.uniform(lo, hi), 3))
+            self.agents[p.id] = Agent(p, memory_of(p.id), arng, p.wealth, offset_days=round(arng.uniform(lo, hi), 3),
+                                      temper=round(0.85 + 0.3 * arng.random(), 3))
         self.fishers = [a for a in self.agents.values() if a.is_fisher]
         self.elder = next((a for a in self.agents.values() if not a.is_fisher), None)
         # la vallée : ses villages (une zone du lac chacun, plus le large), et son conseil, un élu par village
@@ -678,14 +679,56 @@ class World:
             promise = self.promises.get((a.id, season))
             if promise is not None and known is not None:
                 f["promise"] = known <= promise[0] + ptol
+            # a témoigné : contre quelqu'un (un relevé qui confirme sa déclaration ne dénonce personne)
             f["testified"] = any(c["observer"] == a.id and c["public"] and c["season"] == season and c["t"] <= horizon
-                                 for c in self.clues)
+                                 and self.discordant(c) for c in self.clues)
             since_ban = self.banned.get(a.id)
             f["stayed_away"] = since_ban is not None and since_ban <= season and found is None and \
                 not any(c["subject"] == a.id and c["public"] and c["season"] == season for c in self.clues)
-            if not any(v for v in f.values() if v is not None) and f.get("over") is None:
+            if f.get("over") is None and f.get("promise") is None and not any(
+                    f.get(k) for k in ("lie", "secret", "accused_me", "testified", "stayed_away")):
                 del out[a.id]
+                continue
+            # ce qui, hors de la nouvelle, pèse sur le jugement : le voisinage, ce qu'on en dit dans la vallée, ce qu'on en pensait,
+            # et la gravité d'un mensonge établi (l'écart entre l'estimation des indices et la déclaration)
+            f["kin"] = a.profile.hamlet == agent.profile.hamlet
+            f["rep"] = self.reputation(a.id)
+            f["old"] = self.trust[agent.id].get(a.id, TRUST_START)
+            said = self.reports.get((a.id, season))
+            if found is not None and found["t"] <= horizon and not found["secret"] and found["value"] is not None and said:
+                f["gap"] = max(0.0, (found["value"] - said["payload"]["declared"]) / max(said["payload"]["declared"], 0.5))
         return out
+
+    def trust_context(self, agent: Agent, season: int) -> dict:
+        """Ce qui, en dehors de ce qu'il apprend de chacun, pèse sur le jugement d'un agent à règles (voir `policies.trust_rule`) : la
+        chance de la saison (saison de l'année et événements), ses dettes, s'il a lui-même triché, sa sévérité et son hasard."""
+        return {"yield": float(self.conditions.get("yield", 1.0)), "luck": float(self.econ.get("luck", 0.0)),
+                "debt": agent.profile.debt_payment,
+                "cheated": self.cheated(agent.id, season), "harsh": agent.temper, "rng": agent.rng}
+
+    def trust_obs(self, agent: Agent) -> dict:
+        """Ce que l'agent sait de la confiance, pour son contexte : la sienne envers chacun, ses voisins, et ce que la vallée pense des
+        autres (la confiance moyenne de tous, pour ceux qui s'écartent de la moyenne)."""
+        others = [a for a in self.fishers if a.id != agent.id]
+        return {"trust": sorted(((self.first_name(s), v) for s, v in self.trust[agent.id].items()), key=lambda kv: kv[1]),
+                "neighbors": [self.first_name(a.id) for a in others if a.profile.hamlet == agent.profile.hamlet],
+                "valley": [(self.first_name(a.id), self.reputation(a.id)) for a in others
+                           if not 0.4 <= self.reputation(a.id) < 0.6]}
+
+    def sky_phrase(self, days: list[str]) -> str:
+        """Le temps des jours de pêche, en mots : « 3 jours calmes, 8 jours ordinaires, 2 jours de tempête »."""
+        return ", ".join(f"{days.count(k)} jour{'s' if days.count(k) > 1 else ''} {w + 's' if w[0] != 'd' and days.count(k) > 1 else w}"
+                         for k, w in (("calme", "calme"), ("ordinaire", "ordinaire"), ("agité", "agité"), ("tempête", "de tempête"))
+                         if days.count(k))
+
+    def sky_line(self, season: int) -> str:
+        """Ce que tout le monde sait du temps de la saison, une fois la pêche faite (rien sans climat)."""
+        line = f"Le temps de la pêche cette saison : {self.sky_phrase(self.weather(season))}." if self.climate.enabled else ""
+        luck = float(self.econ.get("luck", 0.0))
+        if luck > 0:        # chacun le sait : la prise d'un pêcheur n'est pas celle qu'il visait
+            line += (f" La chance fait varier la prise de chacun d'environ ±{100 * luck:.0f} % : dépasser un peu la règle n'est "
+                     "pas forcément tricher.")
+        return line.strip()
 
     def promise_lines(self, agent: Agent, season: int, horizon: float) -> list[str]:
         """Les promesses faites à la dernière veillée pour cette saison, et ce que la vallée sait de leur sort."""
@@ -809,7 +852,6 @@ class World:
         skip = {m.id for m in pinned} | {m.id for m in agent.memory.items if m.kind == "rumeur"}
         rumors = self.active_rumors(horizon)
         carnet = self.carnet(agent, horizon)
-        trust = sorted(self.trust[agent.id].items(), key=lambda kv: kv[1])
         exposed = any(aid == agent.id and f["t"] <= horizon and s >= season - 2 for (aid, s), f in self.established.items())
         banned = agent.id in self.banned
         clues = self.clue_lines(agent, horizon, season)
@@ -853,7 +895,7 @@ class World:
             "min_catch": min_catch, "carnet": carnet, "norms": norm_lines,
             "known_catches": catches_txt, "clues": clues, "banned": banned,
             "banned_others": [self.first_name(b) for b in self.banned if b != agent.id],
-            "trust": [(self.first_name(s), v) for s, v in trust],
+            **self.trust_obs(agent),
             "last_season_catches": sorted(last_catches.values()),
             # la règle votée qui s'applique à ce pêcheur, et s'il l'a soutenue (rappelée juste avant la question de prise)
             "rule": ({"quota": norm.quota, "supported": agent.id in norm.supporters, "visible": self.visible}
@@ -918,6 +960,8 @@ class World:
             mine = [u for u in visible_u if u["payload"]["speaker"] == agent.id]
             state["facts"] = self.trust_facts(agent, season, horizon,
                                               mine[-1]["payload"]["info_horizon"] if mine else None)
+            state["trust_ctx"] = self.trust_context(agent, season)
+            obs["conditions"] = " ".join(x for x in (obs["conditions"], self.sky_line(season)) if x)     # la pêche est faite : on l'a vue
             state["present"] = [a for a in assembly.participants if self.agents[a].is_fisher and a != agent.id]
             state["banned_ids"] = list(self.banned)
             obs["participants"] = [{"id": a, "name": self.name(a), "label": self.agents[a].profile.archetype_label}
@@ -1695,7 +1739,8 @@ class World:
         """Ce que l'ancien rapporte à un villageois absent du conseil : les décisions prises, les accusations portées, et ce que
         la vallée sait de chaque pêcheur (seuls ceux sur qui il y a quelque chose à dire)."""
         evs = [e for e in self.events.index.values() if e["season"] == asm.season]
-        lines = []
+        sky = self.sky_line(asm.season)
+        lines = [sky] if sky else []
         adopted = [e["payload"] for e in evs if e["type"] == "norm_adopted" and e["payload"]["scope"] == "valley"]
         lines.append(f"le conseil a adopté une règle : pas plus de {adopted[-1]['quota']:g} t par pêcheur dès la saison "
                      f"{adopted[-1]['effective_season']}" if adopted else "le conseil n'a adopté aucune règle")
@@ -1894,12 +1939,9 @@ class World:
         cond = next((p.get("conditions") for p in of("season_start")), None) or {}
         if cond.get("climate"):
             facts.append(f"Saison de l'année : {cond['climate']}.")
-            days = cond.get("days") or []                  # le temps de la pêche : tout le monde l'a vu
-            sky = [f"{days.count(k)} jour{'s' if days.count(k) > 1 else ''} {w + 's' if w[0] != 'd' and days.count(k) > 1 else w}"
-                   for k, w in (("calme", "calme"), ("ordinaire", "ordinaire"), ("agité", "agité"), ("tempête", "de tempête"))
-                   if days.count(k)]
+            sky = self.sky_phrase(cond.get("days") or [])                 # le temps de la pêche : tout le monde l'a vu
             if sky:
-                facts.append("Temps de la pêche : " + ", ".join(sky) + " (les petites barques souffrent le plus des mauvais jours).")
+                facts.append("Temps de la pêche : " + sky + " (les petites barques souffrent le plus des mauvais jours).")
         for ev in of("world_event"):
             facts.append(f"Événement : {ev['label']} ({ev['text']}).")
         route = next((p["legs"] for p in of("patrol_route")), None)         # la vallée l'a vue passer : l'ancien le sait

@@ -1284,7 +1284,7 @@ func _render_trust() -> void:
 	var obs := trust_observer if trust_mode == "from" and agents.has(trust_observer) else ""
 	var s := "[color=#f3dca8][b]CONFIANCE[/b][/color] [color=#6f7896]· %s[/color]\n" % (
 		"la confiance moyenne que les autres accordent à chacun" if obs == "" else "la confiance que %s accorde aux autres" % _who(obs))
-	s += "[color=#8f97b2][font_size=12]La vallée ne connaît que les déclarations faites à l'ancien ; les vraies prises, seuls vous et chaque pêcheur les connaissez.[/font_size][/color]\n\n"
+	s += "[color=#8f97b2][font_size=12]La vallée ne connaît que les déclarations faites à l'ancien ; les vraies prises, seuls vous et chaque pêcheur les connaissez.\n« ment » : il a déclaré moins qu'il n'a pêché (vous seul le savez). MENSONGES : ceux que l'ancien a établis sur des indices (il peut se tromper).[/font_size][/color]\n\n"
 	var ids: Array = agents.keys().filter(func(k): return str(agents[k]["info"].get("role", "")) == "pecheur" and str(k) != obs)
 	var trust_of := func(k) -> float:
 		return float(agents[k]["reputation"]) if obs == "" else float(agents[k]["trust_from"].get(obs, 0.5))

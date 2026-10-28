@@ -291,3 +291,87 @@ def test_the_evening_prompt_keeps_what_matters_and_drops_the_archives():
     assert "Archive" not in brief and "Rappel : le lac est à" in brief
     # c'est l'agent qui dit ce que chaque acte change pour lui, et qui propose d'exclure ou de réautoriser
     assert '"confiance": {"<identifiant>": <de -3 à +3>}' in brief and '"exclure"' in brief and '"reautoriser"' in brief
+
+
+# ============================================================ un jugement qui dépend de tout ce qui compte, et pas déterministe
+def mean_steps(arch, facts, n=600, **ctx):
+    """Ce que change la confiance en moyenne (en dixièmes), sur `n` tirages du hasard de l'agent."""
+    import random
+    rng = random.Random(7)
+    base = {"yield": 1.0, "debt": 0, "cheated": False, "harsh": 1.0, **ctx}
+    return sum(trust_rule(arch, facts, {**base, "rng": rng}).get("X", 0) for _ in range(n)) / n
+
+
+LIE = {"X": {"lie": True, "gap": 1.0, "kin": False, "old": 0.5, "rep": 0.5}}
+
+
+def test_without_a_context_the_table_of_the_character_judges_alone():
+    assert trust_rule("taiseux", {"X": {"lie": True}}) == {"X": -1}
+    assert trust_rule("ancienne_famille", {"X": {"lie": True, "gap": 2.0, "kin": True}}) == {"X": -3}      # (rien d'autre n'est pesé)
+
+
+def test_a_lie_costs_more_trust_the_bigger_it_is():
+    small = mean_steps("ancienne_famille", {"X": {**LIE["X"], "gap": 0.3}})
+    big = mean_steps("ancienne_famille", {"X": {**LIE["X"], "gap": 2.0}})
+    assert big < small < -1.5 and big > -3.001
+
+
+def test_an_overshoot_that_luck_explains_is_not_held_against_the_fisher():
+    small = {"X": {"over": 0.2, "kin": False, "old": 0.5, "rep": 0.5}}
+    assert mean_steps("ancienne_famille", small, luck=0.4) == 0.0              # +20 % : l'effet de la chance, sur 40 % de dispersion
+    assert mean_steps("ancienne_famille", small, luck=0.0) < 0                  # sans chance dans la partie, c'est un dépassement
+    assert mean_steps("ancienne_famille", {"X": {**small["X"], "over": 1.0}}, luck=0.4) < -1.0          # mais pas le double de la règle
+
+
+def test_trust_does_not_climb_to_one_hundred_percent_by_obeying():
+    """Respecter la règle chaque saison fait monter la confiance de moins en moins vite, et pas au-delà de 90 % : elle ne sature pas."""
+    import random
+    rng, trust = random.Random(3), 0.5
+    for _ in range(40):
+        step = trust_rule("ancienne_famille", {"X": {"over": 0.0, "promise": True, "old": trust, "rep": trust, "kin": False}},
+                          {"yield": 1.0, "luck": 0.4, "debt": 0, "cheated": False, "harsh": 1.0, "rng": rng}).get("X", 0)
+        trust = min(1.0, max(0.0, trust + 0.1 * step))
+    assert 0.6 < trust <= 0.9 + 1e-9
+
+
+def test_the_same_news_weighs_differently_on_a_neighbour_a_debtor_a_cheater_and_in_a_lucky_season():
+    over = {"X": {"over": 0.8, "kin": False, "old": 0.5, "rep": 0.5}}
+    plain = mean_steps("ancienne_famille", over)
+    assert mean_steps("ancienne_famille", {"X": {**over["X"], "kin": True}}) > plain                 # un voisin, on lui pardonne plus
+    assert mean_steps("ancienne_famille", over, debt=120) > plain                                      # qui doit de l'argent comprend
+    assert mean_steps("ancienne_famille", over, cheated=True) > plain                                  # qui a triché pardonne
+    assert mean_steps("ancienne_famille", over, **{"yield": 1.4}) > plain                              # un banc de poissons : de la chance
+    assert mean_steps("ancienne_famille", over, harsh=1.15) < plain < mean_steps("ancienne_famille", over, harsh=0.85)
+
+
+def test_what_one_already_thought_of_the_fisher_and_what_the_valley_says_count():
+    lie = lambda **kw: {"X": {**LIE["X"], **kw}}
+    assert mean_steps("beau_parleur", lie(old=0.9)) < mean_steps("beau_parleur", lie(old=0.2))          # on perd d'autant plus qu'on en avait
+    kept = lambda old: {"X": {"promise": True, "old": old}}
+    assert mean_steps("beau_parleur", kept(0.9)) < mean_steps("beau_parleur", kept(0.5)) > mean_steps("beau_parleur", kept(0.2))   # on gagne de moins en moins, et lentement après une déception
+    assert mean_steps("beau_parleur", lie(rep=0.1)) < mean_steps("beau_parleur", lie(rep=0.9))          # et la vallée en pense du mal
+    # le taiseux se moque de la rumeur plus que le beau parleur
+    spread = lambda arch: mean_steps(arch, lie(rep=0.9)) - mean_steps(arch, lie(rep=0.1))
+    assert spread("beau_parleur") > spread("taiseux")
+
+
+def test_the_result_is_not_fixed_but_follows_the_agents_own_luck_and_is_repeatable_from_a_seed():
+    import random
+    news = {"X": {"over": 0.3, "kin": False, "old": 0.5, "rep": 0.4}}
+    ctx = lambda seed: {"yield": 1.0, "debt": 0, "cheated": False, "harsh": 1.0, "rng": random.Random(seed)}
+    seen = {trust_rule("ancienne_famille", news, ctx(s)).get("X", 0) for s in range(40)}
+    assert len(seen) >= 2 and all(-3 <= v <= 3 for v in seen)                                 # tantôt l'un, tantôt l'autre
+    assert trust_rule("ancienne_famille", news, ctx(5)) == trust_rule("ancienne_famille", news, ctx(5))
+    assert mean_steps("ancienne_famille", news) < 0 < mean_steps("ancienne_famille", {"X": {**news["X"], "over": 0.0}})
+
+
+def test_the_facts_an_agent_judges_carry_the_neighbourhood_the_gossip_and_the_gravity(tmp_path):
+    world, events, _ = game(tmp_path, "faits", NEIGHBOURS)
+    mathis = world.agents[named(world, "Mathis").id]
+    facts = world.trust_facts(mathis, 2, world.clock.now(), None)
+    assert facts, "Mathis a appris quelque chose de chacun"
+    elwen = facts[elwen_of(world).id]
+    assert elwen["kin"] is True and 0.0 <= elwen["rep"] <= 1.0 and 0.0 <= elwen["old"] <= 1.0           # un voisin d'Ostrel
+    ctx = world.trust_context(mathis, 1)
+    assert set(ctx) == {"yield", "luck", "debt", "cheated", "harsh", "rng"} and 0.85 <= ctx["harsh"] <= 1.15
+    assert len({a.temper for a in world.fishers}) > 1                                                  # chacun a son tempérament

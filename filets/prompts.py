@@ -253,10 +253,14 @@ def trust_line(obs: dict) -> str:
     if not trust:
         return ""
     marked = [f"{name} {trust_word(v)}" for name, v in trust if not 0.4 <= v < 0.6]
-    if not marked:
-        return "Ta confiance envers les autres : moyenne pour tous, personne ne t'a encore déçu ni convaincu."
-    return "Ta confiance envers les autres : " + ", ".join(marked) + ("; les autres, moyenne." if len(marked) < len(trust)
-                                                                       else ".")
+    out = ("Ta confiance envers les autres : moyenne pour tous, personne ne t'a encore déçu ni convaincu." if not marked else
+           "Ta confiance envers les autres : " + ", ".join(marked) + ("; les autres, moyenne." if len(marked) < len(trust) else "."))
+    if obs.get("neighbors"):          # ce qui pèse aussi sur ce qu'on pense d'un pêcheur : qu'il soit un voisin, ce qu'on en dit
+        out += " Tes voisins (ton village) : " + ", ".join(obs["neighbors"]) + "."
+    if obs.get("valley"):
+        out += (" Ce que la vallée pense d'eux (la confiance moyenne des autres) : "
+                + ", ".join(f"{name} {trust_word(v)}" for name, v in obs["valley"]) + ".")
+    return out
 
 
 def carnet_block(obs: dict) -> str:
@@ -627,120 +631,4 @@ def patrol_messages(p, capacity: float, villages, lines: list[str], legs: int, d
             "ceux qui y pêchent ; ou un pêcheur que tu suis de près (son identifiant), que tu mesures où qu'il aille. Où vas-tu, "
             "combien de jours à chaque étape, et pourquoi ? Réponds en JSON : {\"raison\": \"<une phrase>\", \"etapes\": "
             "[{\"cible\": \"<zone ou identifiant>\", \"jours\": <nombre>}]}")
-    return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": body}]
-
-
-def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:
-    """Les niveaux de prise proposés au modèle de décision : de la prise minimale à la capacité de la barque, en `n` paliers."""
-    return [round(lo + i * (boat_capacity - lo) / (n - 1), 1) for i in range(n)]
-
-
-def reflex_system_one(p, obs: dict) -> dict:
-    """La prise de routine en question typée : l'état (les mêmes lignes que `reflex_messages`), une échelle de prises."""
-    msgs = reflex_messages(p, obs)
-    state = msgs[0]["content"].replace(" Réponds uniquement par un objet JSON.", "") + "\n" + \
-        msgs[1]["content"].rsplit("\n", 1)[0]
-    levels = catch_levels(obs["boat_capacity"], lo=obs.get("min_catch", 0.0))
-    criteria = [f"{t:g} t" + (" : il reste à quai" if t == 0 else "") for t in levels]
-    return {"state": state, "values": {"prise": levels},
-            "questions": {"prise": {"type": "score", "criteria": criteria,
-                                    "instructions": "Combien de tonnes ce pêcheur pêche-t-il cette saison, vu l'état du lac, "
-                                                    "ses engagements et les règles ?"}}}
-
-
-# Le vote sur une exclusion (ou une réautorisation) : « oui » ou « non » par proposition, selon sa confiance envers le pêcheur
-# visé, sa morale (le caractère) et ses intérêts (sa situation).
-SANCTION_MAX_TOKENS = 40
-
-
-def sanction_schema(ids: list[str]) -> dict:
-    return {"type": "object", "properties": {i: {"enum": ["oui", "non"]} for i in ids}, "required": list(ids),
-            "additionalProperties": False}
-
-
-def sanction_messages(p, items: dict[str, str], situation: str) -> list[dict]:
-    who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
-    body = ("La veillée touche à sa fin. La vallée vote sur ces propositions ; tu votes selon ta confiance, ta morale et tes "
-            f"intérêts. {situation}\n" + "\n".join(f"- {i} : {t}" for i, t in items.items())
-            + "\nRéponds en JSON : {" + ", ".join(f"\"{i}\": \"oui\" ou \"non\"" for i in items) + "}")
-    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
-
-
-def sanction_system_one(p, items: dict[str, str], situation: str) -> dict:
-    """Le même vote en questions typées : une question oui/non par proposition (la probabilité du oui)."""
-    state = f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n{situation}"
-    return {"state": state, "questions": {i: {"type": "noul", "instructions": f"Ce pêcheur vote-t-il pour : {t}"}
-                                          for i, t in list(items.items())[:25]}}
-
-
-def ballot_system_one(p, proposals: dict[str, str], est: float, capacity: float, collapse_ratio: float = 0.05) -> dict:
-    """Le bulletin de vote en question typée : `proposals` = identifiant → description (« 1.5 t par pêcheur, proposée par… »)."""
-    state = (f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n"
-             f"La veillée touche à sa fin. Le lac est à {100 * est / capacity:.0f} % ({lake_level(est, capacity, collapse_ratio)}).")
-    criteria = {**dict(list(proposals.items())[:25]), "aucune": "aucune de ces propositions"}   # 26 options au plus
-    return {"state": state,
-            "questions": {"vote": {"type": "choice", "criteria": criteria,
-                                   "instructions": "Pour quelle proposition de règle ce pêcheur vote-t-il ?"}}}
-
-
-# L'élection de l'élu d'un village : chaque pêcheur vote pour celui qui, selon lui, parlera le mieux au conseil pour le village.
-ELECTION_MAX_TOKENS = 10
-
-
-def election_schema(ids: list[str]) -> dict:
-    return {"type": "object", "properties": {"vote": {"enum": list(ids)}}, "required": ["vote"], "additionalProperties": False}
-
-
-def election_messages(p, items: dict[str, str], situation: str) -> list[dict]:
-    who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
-    body = ("Ton village choisit celui qui siégera pour lui au conseil de la vallée, chez l'ancien : il y parlera et y votera au "
-            "nom de tous les pêcheurs du village, toi compris, et ceux-ci subiront ses décisions. Tu votes pour celui que tu "
-            f"juges le plus apte à défendre tes intérêts et ceux du village, selon ta confiance et ta morale. {situation}\n"
-            + "\n".join(f"- {i} : {t}" for i, t in items.items())
-            + "\nPour qui votes-tu ? Réponds en JSON : {\"vote\": \"<identifiant>\"}")
-    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
-
-
-def election_system_one(p, items: dict[str, str], situation: str) -> dict:
-    """La même élection en question typée : un choix parmi les pêcheurs du village."""
-    state = f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\n{situation}"
-    return {"state": state, "questions": {"vote": {"type": "choice", "criteria": dict(list(items.items())[:26]),
-                                                   "instructions": "Qui ce pêcheur choisit-il pour siéger au conseil de la "
-                                                                   "vallée au nom de son village ?"}}}
-
-
-# Le bilan d'un villageois qui n'était pas au conseil : ce que l'ancien lui en rapporte, et ce qu'il en pense de chacun.
-DEBRIEF_MAX_TOKENS = 70
-DEBRIEF_SCHEMA = {"type": "object", "properties": {"confiance": {
-    "type": "object", "additionalProperties": {"type": "integer", "minimum": -3, "maximum": 3}}},
-    "required": ["confiance"], "additionalProperties": False}
-
-
-def debrief_messages(p, lines: list[str], trust: str, situation: str) -> list[dict]:
-    who = (f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.experience} ans de pêche sur le lac. {p.traits} "
-           "Réponds uniquement par un objet JSON.")
-    body = ("Tu n'étais pas au conseil de la vallée, chez l'ancien : ton élu y parlait pour ton village. Voici ce que l'ancien "
-            f"t'en rapporte, et ce que tu sais des autres pêcheurs :\n{_bullets(lines, 'rien de particulier')}\n{trust}\n"
-            f"{situation}\nCe que tu apprends change-t-il ta confiance envers l'un d'eux, selon ta morale et tes intérêts ? "
-            "Réponds en JSON : {\"confiance\": {\"<identifiant>\": <de -3 à +3>}} (-3 : tu ne le crois plus du tout, +3 : il a "
-            "gagné ta confiance ; {} si rien ne change).")
-    return [{"role": "system", "content": who}, {"role": "user", "content": body}]
-
-
-# La route de la patrouille du lac, décidée par l'ancien au début de la saison.
-ROUTE_MAX_TOKENS = 50
-
-
-def route_schema(zones: list[str], legs: int) -> dict:
-    return {"type": "object", "properties": {"zones": {"type": "array", "items": {"enum": list(zones)}, "minItems": 1,
-                                                       "maxItems": legs}},
-            "required": ["zones"], "additionalProperties": False}
-
-
-def route_messages(p, capacity: float, villages, lines: list[str], legs: int) -> list[dict]:
-    body = ("La patrouille du lac, que le conseil a votée, prend la mer cette saison. Elle visitera "
-            f"{legs} zone{'s' if legs > 1 else ''} du lac, l'une après l'autre, et mesurera les barques qu'elle croise ; "
-            f"personne ne saura où elle passera. Voici ce que tu sais de chaque zone :\n{_bullets(lines)}\n"
-            f"Où l'envoies-tu, et dans quel ordre ? Réponds en JSON : {{\"zones\": [\"<zone>\", ...]}} "
-            f"({legs} zone{'s différentes' if legs > 1 else ''} au plus).")
     return [{"role": "system", "content": persona(p, capacity, True, villages)}, {"role": "user", "content": body}]
