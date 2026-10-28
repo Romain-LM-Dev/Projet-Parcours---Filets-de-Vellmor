@@ -19,12 +19,13 @@ CYCLE = [
 ]
 
 # weight : fréquence relative ; duration : saisons (la sienne comprise) ; growth / yield : facteurs tant qu'il dure ;
-# stock : choc unique sur le stock du lac à son arrivée ; boats : rendement propre à chaque taille de bateau (remplace `yield`)
+# stock : choc unique sur le stock du lac à son arrivée ; weather : de combien il rend chaque temps plus (ou moins) fréquent
+# (voir `Climate.calendar`) : une tempête, c'est du gros temps, et les petites barques en souffrent le plus (`BAD_DAY_BOATS`)
 EVENTS = {
     "secheresse": {"label": "sécheresse", "weight": 2, "duration": 2, "growth": 0.6, "yield": 1.0, "stock": 0.9,
                    "text": "les eaux sont basses, les frayères à sec : le lac se repeuple mal"},
-    "tempete": {"label": "tempête", "weight": 2, "duration": 1, "growth": 1.0, "yield": 0.65,
-                "boats": {"barque": 0.4, "chaloupe": 0.7, "cotre": 0.85},
+    "tempete": {"label": "tempête", "weight": 2, "duration": 1, "growth": 1.0, "yield": 1.0,
+                "weather": {"calme": 0.2, "ordinaire": 0.5, "agité": 1.8, "tempête": 6.0},
                 "text": "le lac est dur : les petites barques sortent à peine, la pêche rend bien moins"},
     "banc": {"label": "banc de poissons", "weight": 2, "duration": 1, "growth": 1.0, "yield": 1.35,
              "text": "un gros banc est remonté : la pêche rend beaucoup plus"},
@@ -64,6 +65,7 @@ class Climate:
         self.cycle = CYCLE[0]
         self.growth = self.yield_ = 1.0
         self.new: str | None = None           # l'événement arrivé au début de cette saison
+        self.by_season: dict[int, list[str]] = {}      # les événements en cours à chaque saison (le temps en dépend)
 
     def begin(self, season: int) -> dict:
         """Les conditions de la saison `season` : la saison de l'année, les événements (un nouveau a pu survenir)."""
@@ -78,6 +80,7 @@ class Climate:
                 kind = self.rng.choices(free, [EVENTS[k]["weight"] for k in free])[0]
                 self.active.append({"kind": kind, "until": season + EVENTS[kind]["duration"] - 1})
                 self.new = kind
+        self.by_season[season] = [e["kind"] for e in self.active]
         self.growth = self.cycle["growth"]
         self.yield_ = self.cycle["yield"]
         for e in self.active:
@@ -86,22 +89,25 @@ class Climate:
         return self.conditions()
 
     def yield_for(self, boat: str) -> float:
-        """Ce que rapporte la pêche à ce bateau cette saison : la saison de l'année, et les événements (un événement peut
-        toucher les petites barques plus que les grosses)."""
+        """Ce que rapporte la pêche à ce bateau cette saison : la saison de l'année, et les événements (le temps de chaque jour,
+        qui touche les petites barques plus que les grosses, vient en plus : voir `day_factor`)."""
         if not self.enabled:
             return 1.0
         out = self.cycle["yield"]
         for e in self.active:
             ev = EVENTS[e["kind"]]
-            out *= ev.get("boats", {}).get(boat, ev.get("yield", 1.0))
+            out *= ev.get("yield", 1.0)
         return out
 
     def calendar(self, season: int, n_days: int) -> list[str]:
         """La météo de chacun des `n_days` jours de pêche de la saison : le temps d'hier se prolonge (`STAY`), sinon il est tiré selon la
-        saison de l'année. Tirée d'un hasard propre à la saison : la même pour tout le lac, quel que soit l'ordre des barques."""
+        saison de l'année et les événements en cours. Tirée d'un hasard propre à la saison : la même pour tout le lac, quel que soit l'ordre des barques."""
         if not self.enabled:
             return ["ordinaire"] * n_days
-        weights = DAY_WEIGHTS[CYCLE[(season - 1) % len(CYCLE)]["name"]]
+        weights = dict(DAY_WEIGHTS[CYCLE[(season - 1) % len(CYCLE)]["name"]])
+        for kind in self.by_season.get(season, []):         # une tempête rend le gros temps bien plus fréquent
+            for label, k in EVENTS[kind].get("weather", {}).items():
+                weights[label] *= k
         labels = list(weights)
         rng = random.Random(f"{self.seed}|days|{season}")
         today = rng.choices(labels, [weights[k] for k in labels])[0]

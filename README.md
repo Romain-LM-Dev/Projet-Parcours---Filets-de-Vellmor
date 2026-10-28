@@ -314,8 +314,8 @@ la vitesse de repeuplement du lac.
 | hiver | × 0,75 | × 0,7 |
 
 Dès la 2e saison, un événement survient avec la probabilité `climate.event_rate` (0,3) : **sécheresse** (2 saisons : repeuplement × 0,6 et le
-stock perd 10 % d'un coup), **tempête** (la pêche rend × 0,65, bien moins aux petites barques : × 0,4 pour une barque, × 0,85 pour un
-cotre), **banc de poissons** (× 1,35), **algues** (2 saisons : repeuplement × 0,5), **crue** (repeuplement × 1,25, pêche × 0,85) et **maladie des
+stock perd 10 % d'un coup), **tempête** (le gros temps devient bien plus fréquent : la pêche rend environ × 0,65, bien moins aux petites barques,
+voir plus haut), **banc de poissons** (× 1,35), **algues** (2 saisons : repeuplement × 0,5), **crue** (repeuplement × 1,25, pêche × 0,85) et **maladie des
 poissons** (le stock perd 20 %). Ils sont tirés d'un hasard à part (`world_event`, `season_start.conditions`) ; les agents savent la saison
 de l'année et les événements en cours. Moyennées sur l'année, les saisons ne changent pas le repeuplement (× 1,0).
 

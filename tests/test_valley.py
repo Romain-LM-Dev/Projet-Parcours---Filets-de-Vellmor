@@ -311,11 +311,24 @@ def test_an_event_can_be_switched_off_and_the_climate_too():
     assert off.begin(5)["climate"] is None and off.yield_for("barque") == 1.0 and off.line(5) == ""
 
 
-def test_a_storm_hurts_the_small_boats_more():
-    c = Climate({"climate": {"enabled": True, "event_rate": 0.0}}, 1)
-    c.begin(1)
-    c.active = [{"kind": "tempete", "until": 9}]
-    assert c.yield_for("barque") < c.yield_for("chaloupe") < c.yield_for("cotre") < 1.0
+def test_a_storm_makes_the_weather_rough_and_hurts_the_small_boats_more():
+    """L'événement « tempête » se voit dans le temps des jours de pêche, et pèse plus sur une barque que sur un cotre."""
+    def season(seed, storm):
+        c = Climate({"climate": {"enabled": True, "event_rate": 0.0}}, seed)
+        c.begin(1)
+        if storm:
+            c.active, c.by_season[1] = [{"kind": "tempete", "until": 1}], ["tempete"]
+        return c
+
+    def rough(c):
+        return sum(d in ("agité", "tempête") for d in c.calendar(1, 20)) / 20
+
+    calm, storm = [statistics.mean(rough(season(s, st)) for s in range(40)) for st in (False, True)]
+    assert calm < 0.4 and storm > 0.65
+    mean = {b: statistics.mean(c.day_factor(d, 1, b) for s in range(40) for c in [season(s, True)] for d in c.calendar(1, 20))
+            for b in ("barque", "chaloupe", "cotre")}
+    assert mean["barque"] < mean["chaloupe"] < mean["cotre"] < 0.9              # (un coefficient plat ne distinguait pas les bateaux)
+    assert season(1, True).yield_for("barque") == season(1, False).yield_for("barque")      # le temps seul fait la tempête
 
 
 def test_the_lake_regrows_with_the_season_of_the_year():
