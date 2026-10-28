@@ -30,6 +30,11 @@ class Lake:
         self.stock = min(self.capacity, self.stock + r * self.stock * (1 - self.stock / self.capacity))
         return self.stock - before
 
+    def observe_far(self, rng: random.Random) -> float:
+        """Ce qu'on croit d'un lac où l'on ne pêche pas, vu de loin (par ouï-dire) : deux fois plus d'erreur que sur son propre lac."""
+        est = self.stock * (1 + rng.uniform(-2 * self.noise, 2 * self.noise))
+        return round(max(0.0, est), 1)
+
     def shock(self, factor: float) -> float:
         before = self.stock
         self.stock *= factor

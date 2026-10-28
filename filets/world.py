@@ -54,7 +54,7 @@ from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
 from .events import EventFactory, Recorder
 from .lake import Lake
-from .lakes import resolve_lakes
+from .lakes import lake_distance, resolve_lakes
 from .memory import MemoryBank, MemoryStore, VectorMemory
 from .objects import archive_run, make_objects
 from .profiles import Profile, build_population, villages_of
@@ -247,6 +247,8 @@ class World:
         self.lake_boats = {name: sum(self.boat_cap[a.id] for a in self.fishers if self.lake_of_hamlet[a.profile.hamlet] == name)
                            for name in self.lakes}
         self.hold_fraction = float(self.econ.get("hold_fraction", 0.5))
+        self.travel_days = float(self.econ.get("travel_days", 1.5))      # jours de route pour traverser toute la carte
+        self.travel_price = float(self.econ.get("travel_cost", 10.0))    # écus par jour de mer
         self.hold = {a.id: self.hold_of(a, self.lake_of(a).capacity) for a in self.fishers}     # au mieux : le lac plein
         self.boat_max = max(float(b["capacity"]) for b in self.boats.values())       # le plus gros bateau qui existe
         self.max_catch = max(self.hold.values(), default=0.0)
@@ -378,13 +380,46 @@ class World:
                      "c'est le lac de ton village.")
         return text
 
-    def hold_of(self, agent: Agent, stock: float | None = None) -> float:
+    def distance(self, a: Lake, b: Lake) -> float:
+        """Jours de route, à l'aller, d'un lac à l'autre (0 si c'est le même)."""
+        if a is b:
+            return 0.0
+        names = list(self.lakes)
+        return lake_distance(len(names), names.index(a.name), names.index(b.name), self.travel_days)
+
+    @staticmethod
+    def travel_factor(days: float) -> float:
+        """Ce qu'une sortie rapporte, comparée à la même sortie chez soi, quand la route fait `days` jours à l'aller : la sortie dure
+        1 + 2 × `days` jours au lieu d'un, le temps de pêche n'en est que la part correspondante."""
+        return 1.0 / (1.0 + 2.0 * days)
+
+    def travel_cost(self, days: float) -> float:
+        """Ce que la route coûte pour la saison : `economy.travel_cost` écus par jour de mer, aller et retour, à chaque sortie."""
+        return self.travel_price * 2.0 * days * max(1, int(self.econ.get("outings", 6)))
+
+    def lake_options(self, agent: Agent, est: float, horizon: float) -> list[dict]:
+        """Les autres lacs, pour un pêcheur qui hésiterait : ce qu'il en croit (de loin, avec deux fois plus d'erreur que sur le sien),
+        la route (jours, ce qu'elle laisse de prise, ce qu'elle coûte) et ce que le lac lui laisserait viser là-bas."""
+        home, seed = self.lake_of(agent), self.cfg["run"]["seed"]
+        out = []
+        for lake in self.lakes.values():
+            if lake is home:
+                continue
+            far = lake.observe_far(random.Random(f"{seed}|far|{agent.id}|{round(horizon, 3)}|{lake.name}"))
+            days = self.distance(home, lake)
+            out.append({"name": lake.name, "label": lake.label, "est": far, "ratio": far / lake.capacity, "capacity": lake.capacity,
+                        "fishers": self.lake_fishers[lake.name], "days": round(days, 2),
+                        "factor": round(self.travel_factor(days), 3), "cost": round(self.travel_cost(days), 1),
+                        "hold": round(self.hold_of(agent, min(far, lake.capacity), lake), 2)})
+        return out
+
+    def hold_of(self, agent: Agent, stock: float | None = None, lake: Lake | None = None) -> float:
         """Ce qu'un bateau peut rapporter de la saison : sa cale (sa taille), et sa part du poisson qu'il y a dans le lac : au plus
         `economy.hold_fraction` (la moitié) du stock de son lac, partagée entre les bateaux de ce lac en proportion de leur cale.
         Un lac plein donne à chacun sa part de la moitié ; un lac à moitié vide, la moitié de cela ; les gros bateaux en prennent plus
         que les petits, et plus il y a de bateaux sur un lac, moins chacun en a. `stock` : le stock que l'on suppose (l'estimation du
         pêcheur quand il planifie, le stock réel quand la prise est rapportée) ; à défaut, celui du lac."""
-        lake = self.lake_of(agent)
+        lake = lake or self.lake_of(agent)           # (`lake` : un autre que le sien, où il va pêcher ; la part reste celle des bateaux du lac)
         stock = lake.stock if stock is None else stock
         boat = self.boat_cap[agent.id]
         return min(boat, self.hold_fraction * max(0.0, stock) * boat / (self.lake_boats[lake.name] or 1.0))
@@ -678,7 +713,7 @@ class World:
         """Le temps de chaque jour de la fenêtre de pêche de la saison, le même pour tout le lac (voir `Climate.calendar`)."""
         return self.climate.calendar(season, int(self.T["fishing_close_day"]))
 
-    def outings(self, agent: Agent, season: int, stock: float | None = None) -> list[dict]:
+    def outings(self, agent: Agent, season: int, stock: float | None = None, lake: Lake | None = None) -> list[dict]:
         """Les sorties de ce pêcheur cette saison, étalées sur la fenêtre de pêche (la première part un jour propre à chacun) : pour
         chacune, le jour, le temps qu'il faisait (le même pour tout le lac, voir `weather`), la chance du pêcheur et ce que la
         sortie rapporte par rapport à ce qu'il visait. Sa chance mêle sa forme de la saison (elle se prolonge d'une saison à l'autre,
@@ -692,9 +727,10 @@ class World:
         amp, keep = float(self.econ.get("luck", 0.0)), float(self.econ.get("luck_streak", 0.5))
         n, (lo, hi) = max(1, int(self.econ.get("outings", 6))), (self.T["fishing_open_day"], self.T["fishing_close_day"])
         first = (zlib.crc32(f"{seed}|day|{agent.id}|{season}".encode()) % 10000) / 10000
+        lake = lake or self.lake_of(agent)           # le lac où il pêche (le sien, sauf s'il est allé ailleurs)
         base, weather = self.climate.yield_for(boat), self.weather(season)
+        base *= self.travel_factor(self.distance(self.lake_of(agent), lake))      # la route prend du temps de pêche
         if amp > 0:
-            lake = self.lake_of(agent)
             ratio = (lake.stock if stock is None else stock) / lake.capacity
             base *= (1 + SKILL_STEP * (min(max(agent.profile.experience, 0), 40) - 15)) * \
                 (1.0 if ratio >= LOW_LAKE else 0.55 + 1.5 * ratio)
@@ -1060,6 +1096,13 @@ class World:
             "self_id": agent.id, "names": {a.id: (a.profile.first_name or a.profile.name.split()[0]) for a in self.fishers},
             "exposed": exposed, "trust": dict(self.trust[agent.id]),     # un mensonge à lui découvert depuis peu ; sa confiance
         }
+        if self.multi and purpose == "catch" and agent.id in self.boat_cap and not banned:
+            options = self.lake_options(agent, est, horizon)
+            if options:                    # d'autres lacs sont à portée : lesquels, à quelle route, et ce qu'on en croit
+                obs["lake_options"] = state["lake_options"] = options
+                obs["lake_labels"] = state["lake_labels"] = [lake.label] + [o["label"] for o in options]
+                state["lake_estimates"] = {lake.name: est, **{o["name"]: o["est"] for o in options}}
+                state["lake_stocks"] = {name: round(lk.stock, 3) for name, lk in self.lakes.items()}
         if assembly:
             # synchrone : on entend ceux qui ont parlé avant soi (dialogues dépendants) ; asynchrone : chacun s'exprime de son
             # côté, sans rien entendre ni voir des propositions des autres avant le vote (dialogues indépendants)
@@ -1145,28 +1188,34 @@ class World:
 
     # ------------------------------------------------------------ actions du monde
     def apply_catch(self, agent: Agent, requested: float, decision: dict, horizon: float,
-                    ration: float = 1.0, stock_at_action: float | None = None, declared: float | None = None) -> dict:
+                    ration: float = 1.0, stock_at_action: float | None = None, declared: float | None = None,
+                    lake_name: str | None = None) -> dict:
         """Applique une prise, puis la déclaration du pêcheur à l'ancien. `stock_at_action` : stock au moment où l'action prend
         effet (en synchrone, le même pour toutes les barques parties ensemble ; en asynchrone, le stock courant). `declared` :
         ce qu'il comptait déclarer (None : la vérité). Un interdit de pêche reste à quai (0 t) ou sort en cachette : il ne
-        déclare rien, et va plutôt pêcher loin de sa rive. Renvoie l'événement `catch` (None : resté à quai)."""
+        déclare rien, et va plutôt pêcher loin de sa rive. `lake_name` : le lac où il a choisi de pêcher (le sien à défaut) ; ailleurs,
+        la route lui prend du temps de pêche et lui coûte des écus. Renvoie l'événement `catch` (None : resté à quai)."""
         season = self.clock.season_of()
         secret = agent.id in self.banned
         if secret and requested <= 0:
             self.remember(agent, "Interdit de pêche, je suis resté à quai cette saison.", "peche", 0.5)
             return None
-        zone = self.secret_zone(agent) if secret else agent.profile.hamlet
-        lake = self.lake_of(agent)
+        home = self.lake_of(agent)
+        lake = home if secret or lake_name not in self.lakes else self.lakes[lake_name]
+        away = lake is not home
+        days = self.distance(home, lake)
+        zone = self.secret_zone(agent) if secret else (self.large_zone(lake) if away else agent.profile.hamlet)
+        agent.lake_choice[season] = lake.name
         before = lake.stock
         obs = decision["payload"]["observed"]
-        stock_observed = obs["stock_estimate"]
+        stock_observed = obs.get("lake_estimates", {}).get(lake.name, obs["stock_estimate"])
         # la pêche n'est pas toujours bonne : la prise visée est étalée sur les sorties, et chacune rapporte selon sa journée (le
         # temps, la chance, la saison de l'année, les événements) sans jamais dépasser sa part de la cale ; puis, en synchrone, le
         # rationnement si la flotte demande plus que le lac
-        outs = self.outings(agent, season, stock_at_action)
+        outs = self.outings(agent, season, stock_at_action, lake)
         # ce que le lac lui laisse prendre : sa part du poisson qu'il y avait à l'ouverture de la saison (le même pour tous, quel que
         # soit l'ordre des retours ; ceux qui rentrent tard peuvent trouver le lac déjà vidé par les autres)
-        hold = self.hold_of(agent, self.season_stock[lake.name] if stock_at_action is None else stock_at_action)
+        hold = self.hold_of(agent, self.season_stock[lake.name] if stock_at_action is None else stock_at_action, lake)
         wanted = [min(requested * o["yield"], hold) / len(outs) * ration for o in outs]
         landed = round(lake.take(sum(wanted)), 3)
         tonnes = [round(landed * w / sum(wanted), 3) if landed else 0.0 for w in wanted]
@@ -1177,11 +1226,15 @@ class World:
             "stock_observed": stock_observed, "stock_before": round(before, 3), "stock_after": round(lake.stock, 3),
             **({"lake": lake.name} if self.multi else {}),
             "decision_event_id": decision["event_id"], "info_horizon": round(horizon, 6), "rationed": ration < 1.0,
-            "stock_at_horizon": obs["stock_true"],
+            "stock_at_horizon": obs.get("lake_stocks", {}).get(lake.name, obs["stock_true"]),
             "stock_at_action": round(before if stock_at_action is None else stock_at_action, 3),
             "zone": zone, "secret": secret, "yield": round(factor, 3), "luck": round(luck, 3),
             "outings": [{**o, "tonnes": t} for o, t in zip(outs, tonnes)],
+            **({"away": True, "home_lake": home.name, "travel_days": round(days, 2), "travel_cost": round(self.travel_cost(days), 1)}
+               if away else {}),
         }, actor=agent.id)
+        if away:                       # la route se paie, qu'on rapporte beaucoup ou peu
+            agent.wealth -= self.travel_cost(days)
         # la saison de pêche : où, combien, et la part des sorties où la patrouille du lac était dans cette zone (lu le soir de la veillée)
         cover, by = self.patrol_cover(season, zone, [o["day"] for o in outs], agent.id)
         self.trips.setdefault(season, []).append({"agent": agent.id, "zone": zone, "landed": landed, "secret": secret,
@@ -1194,7 +1247,7 @@ class World:
                                   "price": self.econ["price_per_tonne"], "income": round(income, 2),
                                   "wealth": round(agent.wealth, 2)}, actor=agent.id)
         if secret:
-            self.remember(agent, f"Interdit de pêche, je suis sorti en cachette ({'au large' if zone == 'large' else 'du côté de ' + zone}) "
+            self.remember(agent, f"Interdit de pêche, je suis sorti en cachette ({'au large' if zone.startswith('large') else 'du côté de ' + zone}) "
                                  f"et j'ai pris {landed:g} t. Personne ne doit le savoir.", "peche", 0.8,
                           source_event_id=ev["event_id"])
             return ev
@@ -1208,6 +1261,9 @@ class World:
             self.lies[rep["event_id"]] = {"agent": agent.id, "season": season, "declared": said, "landed": landed,
                                           "found_t": None, "report_event_id": rep["event_id"]}
         note = f"J'ai pêché {landed:g} t cette saison ; le lac m'a semblé contenir environ {stock_observed:.0f} t. {outings_text(outs)}"
+        if away:
+            note = (f"Je suis allé pêcher dans {prompts.lake_ref(lake.label)}, à {days:.1f} jour de route de chez moi : la route m'a coûté "
+                    f"{self.travel_cost(days):.0f} écus et du temps de pêche. ") + note
         if abs(factor - 1.0) >= 0.15 and requested > 0:
             note += f" J'en visais {requested:g} : {day_word(factor)} pêche."
         elif landed + 1e-6 < requested * ration or ration < 1:
@@ -2385,13 +2441,17 @@ class SyncRunner:
         outs = await w.ctl.guard(asyncio.gather(*(decide_catch(w, a, h) for a in w.fishers)))
         await self.goto(h + 1.0)        # départ en mer : toutes les barques au même instant
         s0 = {name: lake.stock for name, lake in w.lakes.items()}               # le même instantané pour toutes les barques d'un lac
+        # le lac où chacun pêche : le sien, ou celui qu'il a choisi (les interdits de pêche restent chez eux)
+        where = {a.id: (w.lakes[o.data["lake"]] if o.data.get("lake") in w.lakes and a.id not in w.banned else w.lake_of(a))
+                 for a, o in zip(w.fishers, outs)}
         # ce que la flotte d'un lac demande vraiment : chacun dans la limite de sa part (une prise visée au-delà n'est pas rapportée)
-        asked = {name: sum(min(o.value, w.hold_of(a, s0[name])) for a, o in zip(w.fishers, outs) if w.lake_of(a) is lake)
+        asked = {name: sum(min(o.value, w.hold_of(a, s0[name], lake)) for a, o in zip(w.fishers, outs) if where[a.id] is lake)
                  for name, lake in w.lakes.items()}
         for a, o in zip(w.fishers, outs):
-            lake = w.lake_of(a)
+            lake = where[a.id]
             ration = min(1.0, s0[lake.name] / asked[lake.name]) if asked[lake.name] > 0 else 1.0
-            w.apply_catch(a, o.value, o.decision, h, ration, stock_at_action=s0[lake.name], declared=o.data.get("declaration"))
+            w.apply_catch(a, o.value, o.decision, h, ration, stock_at_action=s0[lake.name], declared=o.data.get("declaration"),
+                          lake_name=lake.name)
         await self.goto(t0 + T["fishing_close_day"])
         w.events.emit("phase", {"name": "fishing", "state": "close"})
         # --- veillée : on parle à tour de rôle, chacun entend ceux qui ont parlé avant lui (dialogues dépendants)
@@ -2564,7 +2624,7 @@ class AsyncRunner:
             w.incident(a.id, "missed_window", f"décision prise en {w.when()}, après la fermeture de la pêche",
                        "sortie perdue")
             return
-        w.apply_catch(a, o.value, o.decision, h, declared=o.data.get("declaration"))
+        w.apply_catch(a, o.value, o.decision, h, declared=o.data.get("declaration"), lake_name=o.data.get("lake"))
 
     def assembly_open(self, season: int, close_t: float):
         asms = self.w.open_assemblies(season, close_t, "async")

@@ -61,6 +61,13 @@ func _initialize() -> void:
 	check(is_equal_approx(m.build_config()["hold_fraction"], 0.7), "part prenable : 70 %")
 	check("70 %" in m.lbl_cap_hint.text, "l'aide la cite : " + m.lbl_cap_hint.text)
 
+	# --- la route entre les lacs : visible avec plusieurs lacs, et dans la demande
+	check(m.row_travel.visible and is_equal_approx(m.spin_travel_days.value, 1.5) and m.spin_travel_cost.value == 10.0,
+		"la route entre les lacs : 1,5 jour pour traverser la carte, 10 écus par jour de mer")
+	m.spin_travel_days.value = 2.0
+	m.spin_travel_cost.value = 25
+	check(m.build_config()["travel_days"] == 2.0 and m.build_config()["travel_cost"] == 25.0, "la demande porte la route")
+
 	# --- un lac dont plus aucun village n'a de pêcheur n'existe pas dans la demande
 	var gone: Array = m.lakes_state[0]["villages"]
 	var elsewhere: String = str(m.lakes_state[1]["villages"][0])

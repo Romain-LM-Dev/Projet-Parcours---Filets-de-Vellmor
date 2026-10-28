@@ -48,6 +48,7 @@ var weather_days: Array = []    # le temps de chaque jour de pêche de la saison
 var weather_season := 0
 var lbl_patrol: Label           # la patrouille du lac : aucune, ou installée (et sa route de la saison)
 var patrol_texts := {}          # la route de chaque patrouille cette saison (capitaine -> texte)
+var lake_labels := {}           # nom du lac -> son nom en toutes lettres (« Lac d'Orsane »)
 var patrol_text_season := 0
 var patrol_installed := false
 var reps := {}                  # village -> pêcheur élu au conseil de la vallée
@@ -831,14 +832,19 @@ func _on_event(ev: Dictionary) -> void:
 			if bool(p.get("secret", false)):
 				var zone := str(p.get("zone", ""))
 				_feed(lab + _tag("EN CACHETTE", "#ff8a5c") + " %s, interdit de pêche, sort %s et ramène [b]%.1f t[/b]  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
-					_who(id), "au large" if zone == "large" else "du côté de " + zone, float(p.get("landed", 0))], [id])
+					_who(id), "au large" if zone.begins_with("large") else "du côté de " + zone, float(p.get("landed", 0))], [id])
 			else:
 				var aim := ""
 				if p.has("yield") and absf(float(p.get("yield", 1.0)) - 1.0) >= 0.15 and float(p.get("requested", 0)) > 0.0:
 					var yv := float(p.get("yield", 1.0))
 					aim = "  [color=%s](visait %s t : %s pêche%s)[/color]" % ["#ff8a7e" if yv < 1.0 else "#58d08a", _num(p.get("requested", 0)), _day_word(yv),
 						_weather_note(p.get("outings", []))]
-				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s%s" % [_who(id), float(p.get("landed", 0)), aim, gap], [id])
+				var trip := ""
+				if bool(p.get("away", false)):       # pas dans le lac de son village : la route lui a pris du temps de pêche et lui a coûté
+					var lk := str(lake_labels.get(str(p.get("lake", "")), "Lac " + str(p.get("lake", ""))))
+					trip = "  [color=#e2bd6a](pêche dans le %s, à %.1f j de route : %d écus)[/color]" % [lk.substr(0, 1).to_lower() + lk.substr(1),
+						float(p.get("travel_days", 0)), int(round(float(p.get("travel_cost", 0))))]
+				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s%s%s" % [_who(id), float(p.get("landed", 0)), aim, trip, gap], [id])
 		"report":
 			# la déclaration à l'ancien : les autres ne connaissent qu'elle ; un mensonge n'est visible que d'ici
 			var id := str(p.get("agent", ""))
@@ -1196,6 +1202,9 @@ func _reset(ev: Dictionary) -> void:
 	world.reset_world(p.get("agents", []), float(run["capacity"]), float(p.get("season_days", 30.0)), p.get("hamlets", []),
 		p.get("lakes", []))
 	patrol_texts.clear()
+	lake_labels.clear()
+	for lk in p.get("lakes", []):
+		lake_labels[str(lk["name"])] = str(lk["label"])
 	legend.set_villages(p.get("hamlets", []))
 	chart.reset()
 	_reset_kpis()

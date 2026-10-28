@@ -40,7 +40,7 @@ class Recorder:
     def __init__(self, prise: float = 3.0, reject: tuple = (), propose_first: float | None = None,
                  recit: str | None = "Le lac a donné, mais la parole n'a pas tenu.", confiance: dict | None = None,
                  sanction: str = "oui", elect: dict | None = None, debrief: dict | None = None, route: list | None = None,
-                 speech: dict | None = None):
+                 speech: dict | None = None, lake: str | None = None):
         self.recit = recit                        # récit de l'ancien ; None : une réponse sans récit
         self.confiance = confiance                # le jugement de confiance renvoyé dans chaque réplique (None : aucun)
         self.sanction = sanction                  # le vote sur chaque proposition d'exclure ou de réautoriser
@@ -48,6 +48,7 @@ class Recorder:
         self.debrief = debrief or {}              # le jugement d'un villageois absent du conseil
         self.route = route                        # la route que choisit le capitaine de la patrouille : [(cible, jours)] (None : illisible)
         self.speech = speech or {}                # champs ajoutés à chaque réplique (ex. {"patrouille": "installer"})
+        self.lake = lake                          # le lac que chaque pêcheur dit choisir pour sa prise (plusieurs lacs)
         self.requests: list[dict] = []
         self.propose_first, self.proposed = propose_first, False
         self.reject = reject                      # formats de réponse refusés par ce fournisseur (HTTP 400), ex. ("json_schema",)
@@ -73,7 +74,8 @@ class Recorder:
                     self.wfile.write(err)
                     return
                 if '"prise"' in user:
-                    content = json.dumps({"prise": prise, "justification": "Je reste raisonnable."})
+                    content = json.dumps({"justification": "Je reste raisonnable.",
+                                          **({"lac": outer.lake} if outer.lake else {}), "prise": prise})
                 elif "Pour qui votes-tu" in user:                       # élection de l'élu du village
                     voter = re.match(r"Tu es (\S+)", body["messages"][0]["content"]).group(1)
                     cands = re.findall(r"^- (F\d+) : (.*)$", user, re.M)

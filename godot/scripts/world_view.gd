@@ -641,7 +641,22 @@ func on_event(ev: Dictionary) -> void:
 					var h := str(a["info"].get("hamlet", ""))
 					var dk: Dictionary = deco["docks"].get(h, {})
 					var spot := _fishing_spot(a, str(p.get("zone", "")))
-					if dk.is_empty():
+					var to_lake := _lake_named(str(p.get("zone", "")), -1)
+					if bool(p.get("away", false)) and to_lake >= 0 and not dk.is_empty():
+						# parti dans un autre lac : il ramène la barque à terre, marche jusqu'à sa rive, et revient de même
+						_mark(id, "loin de chez lui", Color("#e2bd6a"), 4.0)
+						var shore_to := lake_point(_angle_of(dk["shore"], to_lake), 1.04, to_lake)
+						var fwd: Array = _land_route(dk["shore"], shore_to)
+						var trip: Array = [[dk["shore"], 0.0]]
+						for q in fwd:
+							trip.append([q, 0.0])
+						trip.append([spot, 1.6])
+						for i in range(fwd.size() - 1, -1, -1):
+							trip.append([fwd[i], 0.0])
+						trip.append([dk["shore"], 0.0])
+						trip.append([a["home"], 0.0])
+						a["path"] = trip
+					elif dk.is_empty():
 						a["path"] = [[spot, 1.4], [a["home"], 0.0]]
 					else:
 						a["path"] = [[dk["shore"], 0.0], [dk["tip"], 0.0], [spot, 1.6], [dk["tip"], 0.0],

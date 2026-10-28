@@ -46,6 +46,18 @@
     "lake": {
       "type": "string"
     },
+    "away": {
+      "type": "boolean"
+    },
+    "home_lake": {
+      "type": "string"
+    },
+    "travel_days": {
+      "type": "number"
+    },
+    "travel_cost": {
+      "type": "number"
+    },
     "yield": {
       "type": "number"
     },

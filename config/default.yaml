@@ -52,6 +52,11 @@ economy:
   # Ce que le lac laisse prendre : un bateau rapporte au plus sa cale, et au plus cette part du poisson qu'il y a dans son lac, partagée
   # entre les bateaux du lac en proportion de leur cale (voir `World.hold_of`). Un lac qui se vide laisse donc de moins en moins prendre.
   hold_fraction: 0.5
+  # Pêcher dans un autre lac que celui de son village (voir `World.lake_options`) : `travel_days` jours de route pour traverser toute
+  # la carte, à l'aller ; chaque sortie dure alors 1 + 2 × route jours au lieu d'un (la prise s'en ressent : 1 / (1 + 2 × route)) ;
+  # et la route coûte `travel_cost` écus par jour de mer, à chaque sortie
+  travel_days: 1.5
+  travel_cost: 10
   # La pêche n'est pas toujours bonne : la prise visée est étalée sur `outings` sorties, et chacune rapporte selon le temps du jour
   # (le même pour tout le lac, plus rude pour les petits bateaux), la saison de l'année et les événements (voir `climate`),
   # l'expérience du pêcheur (plus dure quand le lac est bas) et sa chance. La chance varie de ±`luck` (écart-type) autour de 1 :

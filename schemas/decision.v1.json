@@ -113,6 +113,12 @@
         "number",
         "null"
       ]
+    },
+    "lake": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

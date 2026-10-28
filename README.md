@@ -530,6 +530,20 @@ anciens pour ses pêcheurs) et nomme les autres. La partie ne s'arrête (extinct
 vides (ou effondrés). Le « large » de chaque lac est une zone de pêche (`large-Orsane`), où un interdit de pêche sort en cachette ; la
 carte pose jusqu'à quatre lacs avec leurs villages autour, une jauge chacun. `config/lakes.yaml` en donne trois.
 
+**Un lac de prédilection, et d'autres si l'on a de bonnes raisons.** Un pêcheur pêche d'ordinaire dans le lac de son village, mais rien
+ne l'y oblige : à chaque saison, avant sa prise, il peut choisir un autre lac (champ `lac` de la réponse d'une IA, dit **avant** le nombre ;
+`policies.lake_choice_rule` pour un agent à règles, le faux LLM faisant de même). Son invite lui montre les autres lacs : ce qu'il en croit
+d'ici (avec deux fois plus d'erreur que sur le sien), la route, ce qu'elle lui laisserait de prise et ce qu'elle lui coûterait, et ce que
+le lac lui laisserait viser là-bas. **La route est une contrainte, que le moteur applique** : un lac est à une distance de l'autre
+(`lakes.LAKE_CENTERS`, `economy.travel_days` jours pour traverser la carte, 1,5 par défaut, à l'aller) ; chaque sortie dure alors
+1 + 2 × route jours au lieu d'un, donc il ne ramène que `1 / (1 + 2 × route)` de ce que la même sortie rapporterait chez lui (47 % pour
+une route de 0,6 jour) ; et la route coûte `economy.travel_cost` écus par jour de mer à chaque sortie (68 écus la saison pour 0,6 jour,
+6 sorties). Il pêche alors dans le « large » du lac visé (`catch.away`, `home_lake`, `travel_days`, `travel_cost`), avec ceux de là-bas :
+plus il y a de visiteurs, plus la pression monte. Le moteur ne pose aucun seuil : c'est la réflexion du pêcheur (ou le caractère d'un agent
+à règles : la famille ancienne, attachée à son lac, veut un lac bien meilleur ; le nouveau venu endetté va où l'on pêche ; tous partent
+d'un lac vide) qui décide, route comprise. Sur la carte, il rentre sa barque, marche jusqu'à l'autre lac et revient de même ; le fil le dit
+(« pêche dans le lac de Vellmor, à 0.6 j de route : 68 écus »). Le menu règle la route (jours, écus) quand il y a plusieurs lacs.
+
 **Une vallée tirée au hasard.** `population.random: true` (`config/random.yaml`) : le nombre de villages (3 à 6), de pêcheurs (2 à 5 par
 village, 24 au plus), de lacs (1 à 3) et leur richesse en poisson (par pêcheur), leur part pleine au départ et leur repeuplement, la flotte
 (petits bateaux, mixte, gros ; la taille de chaque bateau se tire ensuite pêcheur par pêcheur, selon son caractère) et le nombre de

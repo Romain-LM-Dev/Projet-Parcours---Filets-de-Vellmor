@@ -73,13 +73,16 @@ PAYLOADS: dict[str, dict] = {
         {"model": STR_OR_NULL, "tier": STR_OR_NULL, "rule": STR_OR_NULL, "llm_call_id": STR_OR_NULL,
          "value": {"type": ["number", "null"]}, "observed": {"type": "object"}, "out_of_role": BOOL,
          "system": {"enum": ["S1", "S2"]},
-         "declared": NUM_OR_NULL},      # prise : ce que le pêcheur compte déclarer à l'ancien
+         "declared": NUM_OR_NULL,       # prise : ce que le pêcheur compte déclarer à l'ancien
+         "lake": STR_OR_NULL},          # prise, plusieurs lacs : le lac où il a choisi de pêcher, s'il n'est pas le sien
     ),
     "catch": obj({"agent": STR, "hamlet": STR, "requested": NUM, "landed": NUM, "stock_observed": NUM,
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
                   "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM},
                  {"zone": STR, "secret": BOOL,        # où il a pêché ; en cachette (interdit de pêche)
                   "lake": STR,         # (plusieurs lacs) le lac où il a pêché
+                  # ailleurs que dans le lac de son village : la route (jours, aller), ce qu'elle a coûté (écus), le lac de son village
+                  "away": BOOL, "home_lake": STR, "travel_days": NUM, "travel_cost": NUM,
                   "yield": NUM,        # ce que la pêche a rapporté par rapport à la prise visée (`requested`), tout compris
                   "luck": NUM,         # dont la chance du pêcheur (moyenne de ses sorties)
                   # ses sorties : le jour, le temps (calme, ordinaire, agité, tempête), la chance, le rendement et les tonnes rapportées

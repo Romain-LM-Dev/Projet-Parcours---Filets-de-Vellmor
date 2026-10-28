@@ -207,6 +207,41 @@ def projected(stock: float, capacity: float, r: float) -> float:
     return stock + r * stock * (1 - stock / capacity)
 
 
+# Combien de fois mieux (en tonnes nettes de la route) il faut que ce soit ailleurs pour que ce caractère quitte son lac : la famille
+# ancienne est attachée au sien, le nouveau venu, qui a des dettes, va où l'on pêche.
+LEAVE = {"ancienne_famille": 1.6, "taiseux": 1.4, "beau_parleur": 1.25, "nouveau_venu": 1.15}
+
+
+def lake_choice_rule(archetype: str, s: dict) -> tuple[str | None, str]:
+    """Le lac d'un agent à règles : le sien, sauf si un autre lui rapporterait nettement plus (ce que le lac lui laisse prendre là-bas,
+    réduit par le trajet, moins ce que la route coûte, en tonnes) ; il le quitte aussi s'il est vide et qu'ailleurs on peut encore pêcher.
+    Renvoie le nom du lac choisi (None : le sien) et pourquoi."""
+    options = s.get("lake_options") or []
+    if not options or s.get("banned"):
+        return None, ""
+    here = float(s["boat_capacity"])
+    price = max(float(s.get("price", 100.0)), 1e-9)
+
+    def net(o: dict) -> float:
+        return float(o["hold"]) * float(o["factor"]) - float(o["cost"]) / price
+
+    best = max(options, key=lambda o: (net(o), o["name"]))
+    if here <= 0.05 and net(best) > 0.05:
+        return best["name"], f"son lac est vide, {best['label']} a encore du poisson"
+    if net(best) > LEAVE.get(archetype, 1.4) * max(here, 0.05):
+        return best["name"], (f"{best['label']} lui rapporterait {net(best):.1f} t, route comprise, contre {here:.1f} t chez lui")
+    return None, ""
+
+
+def at_lake(s: dict, option: dict | None) -> dict:
+    """L'état tel qu'il se présente à ce pêcheur dans cet autre lac (None : le sien) : ce qu'il en croit, sa capacité, ceux qui y pêchent
+    déjà (plus lui), ce que le lac lui laisse viser. Sert à décider combien pêcher là-bas."""
+    if option is None:
+        return s
+    return {**s, "stock_estimate": option["est"], "capacity": option["capacity"], "n_fishers": option["fishers"] + 1,
+            "boat_capacity": option["hold"]}
+
+
 def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
     """`s` : état de la veillée vu par l'agent (stock estimé, propositions, prises visibles, etc.).
     À la veillée, on raisonne sur la saison prochaine, donc sur le stock attendu après repeuplement."""

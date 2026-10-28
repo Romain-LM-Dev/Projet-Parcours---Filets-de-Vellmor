@@ -15,7 +15,7 @@ import random
 import re
 
 from .llm import LLMResult
-from .policies import catch_rule, declare_rule, speak_rule
+from .policies import at_lake, catch_rule, declare_rule, lake_choice_rule, speak_rule
 
 JUSTIF = {
     "ancienne_famille": ["Mon père disait qu'on ne vide pas le lac qu'on veut laisser à ses enfants.",
@@ -57,12 +57,18 @@ class ScriptedClient:
         arch, s = hint["archetype"], hint["state"]
         noise = 0.15 if tier == "grand" else 0.35
         if hint["purpose"] == "catch":
-            v, _ = catch_rule(arch, s)
-            v = round(max(s.get("min_catch", 0.0), min(s["boat_capacity"], v * (1 + self.rng.uniform(-noise, noise)))), 1)
+            where, _ = lake_choice_rule(arch, s)           # son lac, ou un autre s'il y gagne nettement (comme un agent à règles)
+            there = next((o for o in s.get("lake_options", []) if o["name"] == where), None)
+            s2 = at_lake(s, there)
+            v, _ = catch_rule(arch, s2)
+            v = round(max(s2.get("min_catch", 0.0), min(s2["boat_capacity"], v * (1 + self.rng.uniform(-noise, noise)))), 1)
             just = self.rng.choice(JUSTIF.get(arch, ["Je fais au mieux."]))
             if out_of_role:
                 just = "En tant qu'intelligence artificielle, je recommande une gestion durable de la ressource."
-            data = {"prise": v, "justification": just, "declaration": declare_rule(arch, s, v)[0]}
+            data = {"justification": just}
+            if s.get("lake_labels"):
+                data["lac"] = there["label"] if there else s["lake_labels"][0]
+            data.update({"prise": v, "declaration": declare_rule(arch, s2, v)[0]})
         else:
             data, _ = speak_rule(arch, s)
             if data.get("promesse") is not None:

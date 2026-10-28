@@ -37,6 +37,8 @@ def reasons_to_think(obs: dict) -> list[str]:
     openings = [h for h in hist if h["phase"] == "pêche"]
     if openings and est < openings[-1]["est"] - FALLING_RATIO * cap:
         why.append("le lac baisse")
+    if any(o["ratio"] > est / cap for o in obs.get("lake_options") or []):
+        why.append("un autre lac paraît mieux fourni")      # aller pêcher ailleurs se pèse
     if obs.get("rumors"):
         why.append("rumeur")
     if obs.get("events"):

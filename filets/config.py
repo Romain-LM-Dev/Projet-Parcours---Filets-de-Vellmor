@@ -92,6 +92,10 @@ def normalize(cfg: dict) -> dict:
     patrol = cfg["scenario"].get("patrol") or {}
     if not isinstance(patrol.get("count", 1), int) or isinstance(patrol.get("count", 1), bool) or not 0 <= patrol.get("count", 1) <= 4:
         raise ValueError("le nombre de patrouilles doit être un entier entre 0 et 4")
+    for key, hi in (("travel_days", 10.0), ("travel_cost", 1000.0)):
+        v = cfg["economy"].get(key, 0.0)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= hi:
+            raise ValueError(f"economy.{key} doit être un nombre entre 0 et {hi:g}")
     hold = cfg["economy"].get("hold_fraction", 0.5)
     if isinstance(hold, bool) or not isinstance(hold, (int, float)) or not 0.05 <= hold <= 1.0:
         raise ValueError("economy.hold_fraction doit être un nombre entre 0,05 et 1")

@@ -12,6 +12,22 @@ LAKE_NAMES = ["Vellmor", "Orsane", "Brémol", "Ysaude"]
 MAX_LAKES = len(LAKE_NAMES)
 
 
+# Où sont les lacs sur la carte (centres normalisés, comme `LAKE_BOXES` de world_view.gd : un test les compare), selon leur nombre :
+# la distance entre deux lacs est celle de leurs centres.
+LAKE_CENTERS = {
+    1: [(0.5, 0.535)],
+    2: [(0.31, 0.56), (0.69, 0.56)],
+    3: [(0.29, 0.42), (0.71, 0.42), (0.5, 0.69)],
+    4: [(0.29, 0.42), (0.71, 0.42), (0.29, 0.72), (0.71, 0.72)],
+}
+
+
+def lake_distance(n_lakes: int, i: int, j: int, days_per_map: float) -> float:
+    """Jours de route, à l'aller, du lac `i` au lac `j` : leur distance sur la carte, `days_per_map` jours pour la traverser."""
+    (x1, y1), (x2, y2) = LAKE_CENTERS[max(1, min(n_lakes, MAX_LAKES))][i], LAKE_CENTERS[max(1, min(n_lakes, MAX_LAKES))][j]
+    return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5 * days_per_map
+
+
 def lake_label(name: str) -> str:
     return f"Lac d'{name}" if name[:1] in "AEIOUYÉÈÊ" else f"Lac de {name}"
 

@@ -79,6 +79,9 @@ var spin_patrols: SpinBox
 var spin_hold: SpinBox                 # part du poisson d'un lac qu'un bateau peut prendre en une saison
 var row_cap: Control                   # les deux lignes du lac unique (masquées quand on règle chaque lac à part)
 var row_growth: Control
+var row_travel: Control                # la route entre les lacs (avec plusieurs lacs seulement)
+var spin_travel_days: SpinBox
+var spin_travel_cost: SpinBox
 var lakes_box: VBoxContainer           # une ligne par lac : son poisson, son stock de départ, son repeuplement
 var lakes_state: Array = []            # les lacs de la vallée : {name, label, villages, capacity, cap_cat, n_cat, stock_ratio, growth_rate}
 var lake_spins: Array = []
@@ -407,6 +410,23 @@ func _build_left(body: Control) -> void:
 	lakes_box.add_theme_constant_override("separation", 4)
 	lakes_box.visible = false
 	col.add_child(lakes_box)
+	var travel := HBoxContainer.new()
+	travel.add_theme_constant_override("separation", 6)
+	spin_travel_days = _spin(0, 10, 0.1, 1.5, 70)
+	spin_travel_days.tooltip_text = "Jours de route, à l'aller, pour traverser toute la carte d'un lac à l'autre. Un pêcheur qui va pêcher dans un autre lac que celui de son village passe plus de temps en route : sa sortie dure 1 + 2 × la route jours, et sa prise s'en ressent."
+	spin_travel_cost = _spin(0, 1000, 1, 10, 70)
+	spin_travel_cost.suffix = "écus"
+	spin_travel_cost.tooltip_text = "Ce que la route coûte, par jour de mer, à chaque sortie (aller et retour)."
+	for sp in [spin_travel_days, spin_travel_cost]:
+		sp.value_changed.connect(func(_v: float) -> void:
+			if not _updating:
+				_refresh_all(false))
+	travel.add_child(spin_travel_days)
+	travel.add_child(_lbl("j", 12, "ui", Art.MUTED))
+	travel.add_child(spin_travel_cost)
+	travel.add_child(_lbl("/ jour de mer", 12, "ui", Art.MUTED))
+	row_travel = _row(col, "Route", travel)
+	row_travel.visible = false
 	spin_hold = _spin(5, 100, 5, 50, 84)
 	spin_hold.suffix = "%"
 	spin_hold.tooltip_text = "Ce que le lac laisse prendre : un bateau rapporte au plus sa cale, et au plus cette part du poisson de son lac, partagée entre les bateaux du lac selon leur taille. Un lac qui se vide laisse donc prendre de moins en moins ; 100 % : tout le poisson est à portée."
@@ -744,6 +764,8 @@ func reset_all() -> void:
 	spin_patrols.value = maxi(1, int(d.get("patrols", 1)))
 	spin_patrols.editable = chk_patrol.button_pressed
 	spin_hold.value = roundf(float(d.get("hold_fraction", 0.5)) * 100.0)
+	spin_travel_days.value = float(d.get("travel_days", 1.5))
+	spin_travel_cost.value = float(d.get("travel_cost", 10.0))
 	opt_genmode.select(0)
 	chk_visible.button_pressed = bool(d.get("catches_visible", true))
 	_select_meta(opt_llm, str(d.get("llm", "scripted")))
@@ -1282,6 +1304,7 @@ func _refresh_lake() -> void:
 	row_growth.visible = not rows
 	btn_cap_auto.disabled = capacity_auto
 	lakes_box.visible = rows
+	row_travel.visible = lakes_state.size() > 1
 	if rows:
 		_refresh_lake_rows(d)
 		return
@@ -1416,6 +1439,7 @@ func build_config() -> Dictionary:
 		"lake": _lake_request(),
 		"patrols": int(spin_patrols.value) if chk_patrol.button_pressed else 0,
 		"hold_fraction": float(spin_hold.value) / 100.0,
+		"travel_days": float(spin_travel_days.value), "travel_cost": float(spin_travel_cost.value),
 		"stop_on_extinction": chk_stop_empty.button_pressed,
 		"population": {"elder": chk_elder.button_pressed, "elder_kind": "llm" if opt_elder.selected == 0 else "rule",
 			"fishers": list},

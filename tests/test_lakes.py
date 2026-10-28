@@ -108,7 +108,7 @@ def test_a_catch_empties_only_the_lake_of_the_fisher_and_events_say_which(tmp_pa
     assert {tuple(lk["villages"]) for lk in start["lakes"]} == {("Ostrel", "Bramois"), ("Tilque", "Hennad")}
     for e in kinds(events, "catch"):
         p = e["payload"]
-        assert p["lake"] == world.lake_of(world.agents[p["agent"]]).name
+        assert p["lake"] == world.lake_of(world.agents[p["agent"]]).name or p.get("away")      # le sien, ou un autre où il est allé
     updates = kinds(events, "lake_update")
     assert all(set(u["payload"]["lakes"]) == {"Vellmor", "Orsane"} for u in updates)
     assert all(u["payload"]["stock"] == pytest.approx(sum(u["payload"]["lakes"].values()), abs=0.01) for u in updates)
@@ -277,6 +277,7 @@ def test_the_catalog_describes_the_lakes_the_patrols_and_their_limits():
     assert cat["lakes"][0]["villages"] == cat["hamlets"] and cat["lake_names"] == LAKE_NAMES
     assert cat["defaults"]["lakes"] == 1 and cat["defaults"]["patrols"] == 1 and cat["defaults"]["hold_fraction"] == 0.5
     assert cat["limits"]["lakes"] == [1, 4] and cat["limits"]["patrols"] == [0, 4]
+    assert cat["defaults"]["travel_days"] == 1.5 and cat["defaults"]["travel_cost"] == 10.0
 
 
 def test_the_menu_can_ask_for_a_parametric_or_a_random_valley(tmp_path):
@@ -312,9 +313,12 @@ def test_a_request_with_lakes_patrols_and_a_limit_is_checked_and_applied(tmp_pat
     assert validate_request(good) == []
     cfg = build_game_config(cfg_for(tmp_path), good)
     assert cfg["lake"]["lakes"] == TWO_LAKES and cfg["scenario"]["patrol"]["count"] == 2 and cfg["economy"]["hold_fraction"] == 0.7
+    far = build_game_config(cfg_for(tmp_path), request(population=pop, travel_days=2.5, travel_cost=30))["economy"]
+    assert far["travel_days"] == 2.5 and far["travel_cost"] == 30.0 and cfg["economy"]["travel_days"] == 1.5
     assert build_game_config(cfg_for(tmp_path), request(population=pop, patrols=0))["scenario"]["patrol"]["enabled"] is False
     assert build_game_config(cfg_for(tmp_path), request(population=pop, patrol=False))["scenario"]["patrol"] ==         {**cfg_for(tmp_path)["scenario"]["patrol"], "enabled": False, "count": 0}
     for change, what in (({"patrols": 9}, "patrouilles"), ({"patrols": -1}, "patrouilles"), ({"hold_fraction": 2}, "bateau"),
+                         ({"travel_days": 50}, "route entre les lacs"), ({"travel_cost": -3}, "coût de la route"),
                          ({"lake": {"lakes": [{"name": "A", "villages": ["Ostrel"]}]}}, "rattaché"),
                          ({"lake": {"lakes": [{"name": "A", "capacity": 5000000, "villages": ["Ostrel", "Bramois", "Tilque", "Hennad"]}]}},
                           "capacité"),

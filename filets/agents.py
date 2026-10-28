@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from . import prompts, routing
 from .llm import detect_drift, extract_json, to_number
 from .memory import MemoryStore
-from .policies import catch_rule, declare_rule, elect_rule, speak_rule, trust_rule
+from .policies import at_lake, catch_rule, declare_rule, elect_rule, lake_choice_rule, speak_rule, trust_rule
 from .profiles import Profile
 
 log = logging.getLogger("filets.agents")
@@ -37,6 +37,7 @@ class Agent:
     outings: dict[int, list[dict]] = field(default_factory=dict)   # ses sorties de chaque saison (voir `World.outings`)
     form: float = 0.0                                              # sa chance de la saison (elle se prolonge d'une saison à l'autre)
     temper: float = 1.0                                            # sa sévérité : plus de 1, il pardonne moins (tirée une fois)
+    lake_choice: dict[int, str] = field(default_factory=dict)      # le lac où il a pêché à chaque saison (le sien, ou un autre)
 
     @property
     def id(self) -> str:
@@ -82,7 +83,8 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
     reflex = system == "S1"
     hint = {"purpose": purpose, "archetype": agent.archetype, "state": state, "system": system,
             "schema": schema or (prompts.REFLEX_SCHEMA if reflex else prompts.answer_schema(
-                purpose, brief, agent.is_fisher, [world.first_name(a.id) for a in world.fishers if a.id != agent.id])),
+                purpose, brief, agent.is_fisher, [world.first_name(a.id) for a in world.fishers if a.id != agent.id],
+                state.get("lake_labels") if purpose == "catch" else None)),
             "seed": _seed(world, agent, purpose, state)}                  # le schéma est imposé aux fournisseurs qui le savent
     if max_tokens:
         hint["max_tokens"] = max_tokens
@@ -136,16 +138,21 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
     common = {"agent": agent.id, "agent_kind": p.kind, "decision_type": "catch", "info_horizon": round(horizon, 6),
               "retrieved": retrieved, "used_event_ids": used,
               "observed": {"stock_estimate": state["stock_estimate"], "stock_true": state["stock_true"],
-                           "quota": state["quota"]}}
+                           "quota": state["quota"],
+                           **({k: state[k] for k in ("lake_estimates", "lake_stocks") if k in state})}}
     if p.kind == "rule":
-        v, rule = catch_rule(agent.archetype, state)
-        said, drule = declare_rule(agent.archetype, state, v)
-        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {rule} ; {drule}.", "rule": rule,
+        where, why_lake = lake_choice_rule(agent.archetype, state)         # son lac, ou un autre s'il y gagne nettement
+        there = next((o for o in state.get("lake_options", []) if o["name"] == where), None)
+        s_here = at_lake(state, there)
+        v, rule = catch_rule(agent.archetype, s_here)
+        said, drule = declare_rule(agent.archetype, s_here, v)
+        lake_text = f" ; il pêche dans {prompts.lake_ref(there['label'])} : {why_lake}" if there else ""
+        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {rule} ; {drule}{lake_text}.", "rule": rule,
                                              "value": v, "declared": said, "fallback": False, "model": None, "tier": None,
-                                             "llm_call_id": None}, actor=agent.id)
+                                             "llm_call_id": None, **({"lake": where} if where else {})}, actor=agent.id)
         _note_observation(obs, dec)
         agent.last_decision = dec
-        return Outcome(v, {"prise": v, "declaration": said}, dec)
+        return Outcome(v, {"prise": v, "declaration": said, "lake": where}, dec)
 
     brief = prompts.is_brief(world.cfg["llm"])
     system, why = routing.choose_system(obs, "catch") if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
@@ -163,7 +170,11 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
     common = {**common, "system": system}                        # sans routage adaptatif, tout est système 2
     if data is not None and v is None:
         world.incident(agent.id, "invalid_value", f"prise absente : {str(data)[:150]}", "règle de repli", res.call_id)
-    lo, hi = state.get("min_catch", 0.0), state["boat_capacity"]      # une sortie rapporte au moins la prise minimale
+    chosen = None                                  # le lac que l'IA a choisi, s'il n'est pas le sien (système 2 seulement)
+    if data and system == "S2":
+        label = str(data.get("lac", "")).strip()
+        chosen = next((o for o in state.get("lake_options", []) if o["label"] == label), None)
+    lo, hi = state.get("min_catch", 0.0), (chosen["hold"] if chosen else state["boat_capacity"])    # une sortie rapporte au moins la prise minimale
     if v is not None and not (lo <= v <= hi):
         if not (lo - 0.05 <= v <= hi + 0.05):          # un arrondi de quelques kilos n'est pas une valeur invalide
             world.incident(agent.id, "invalid_value", f"prise {v} hors de [{lo:g}, {hi:g}]", "bornage", res.call_id)
@@ -176,13 +187,15 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
     # la déclaration à l'ancien : la vérité par défaut (réflexe, repli, champ absent) ; jamais plus que la prise
     said = to_number(data.get("declaration")) if data and system == "S2" and not fallback else None
     said = v if said is None else round(min(max(said, 0.0), v), 1)
+    where = chosen["name"] if chosen and not fallback else None
     dec = world.events.emit("decision", {**common, "justification": just or "(sans justification)", "rule": rule,
                                          "value": v, "declared": said, "fallback": fallback, "model": res.model,
                                          "tier": res.tier, "llm_call_id": res.call_id,
-                                         "out_of_role": flags.get("out_of_role", False)}, actor=agent.id)
+                                         "out_of_role": flags.get("out_of_role", False),
+                                         **({"lake": where} if where else {})}, actor=agent.id)
     _note_observation(obs, dec)
     agent.last_decision = dec
-    return Outcome(v, {"prise": v, "declaration": said}, dec)
+    return Outcome(v, {"prise": v, "declaration": said, "lake": where}, dec)
 
 
 async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outcome:

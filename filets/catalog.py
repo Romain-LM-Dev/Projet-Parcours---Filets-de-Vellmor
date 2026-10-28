@@ -194,6 +194,7 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
             "villages": len(hamlets), "fishers": len(base), "lakes": len(lakes), "mode_generation": "params",
             "patrols": int(patrol.get("count", 1)) if patrol.get("enabled", True) else 0,
             "hold_fraction": float(cfg["economy"].get("hold_fraction", 0.5)),
+            "travel_days": float(cfg["economy"].get("travel_days", 1.5)), "travel_cost": float(cfg["economy"].get("travel_cost", 10.0)),
             "climate": bool((cfg.get("climate") or {}).get("enabled", True)),
             "event_rate": float((cfg.get("climate") or {}).get("event_rate", 0.3)),
             "luck": float(cfg["economy"].get("luck", 0.0)),

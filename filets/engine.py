@@ -67,6 +67,11 @@ def validate_request(req: dict) -> list[str]:
     lo, hi = LIMITS["patrols"]
     if not isinstance(patrols, int) or isinstance(patrols, bool) or not lo <= patrols <= hi:
         errs.append(f"le nombre de patrouilles doit être un entier entre {lo} et {hi}")
+    for key, hi, label in (("travel_days", 10, "la route entre les lacs (en jours)"),
+                           ("travel_cost", 1000, "le coût de la route (en écus par jour de mer)")):
+        v = req.get(key, 0)
+        if not (isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= hi):
+            errs.append(f"{label} doit être un nombre entre 0 et {hi}")
     hold = req.get("hold_fraction", 0.5)
     if not (isinstance(hold, (int, float)) and not isinstance(hold, bool) and 0.05 <= hold <= 1.0):
         errs.append("la part du poisson qu'un bateau peut prendre doit être un nombre entre 0,05 et 1")
@@ -163,7 +168,9 @@ def build_game_config(base_cfg: dict, req: dict) -> dict:
                        "elder_kind": pop.get("elder_kind", "llm")},
         "climate": {"enabled": req.get("climate", True), "event_rate": float(req.get("event_rate", 0.3))},
         "economy": {"luck": float(req.get("luck", base_cfg["economy"].get("luck", 0.0))),
-                    "hold_fraction": float(req.get("hold_fraction", base_cfg["economy"].get("hold_fraction", 0.5)))},
+                    "hold_fraction": float(req.get("hold_fraction", base_cfg["economy"].get("hold_fraction", 0.5))),
+                    "travel_days": float(req.get("travel_days", base_cfg["economy"].get("travel_days", 1.5))),
+                    "travel_cost": float(req.get("travel_cost", base_cfg["economy"].get("travel_cost", 10.0)))},
     }
     if llm["config"]:
         preset = load_config(llm["config"])["llm"]

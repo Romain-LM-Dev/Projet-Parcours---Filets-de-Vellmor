@@ -78,5 +78,21 @@ func _initialize() -> void:
 		var spot: Vector2 = w._fishing_spot(a)
 		check(w.lake_rn(spot) < 1.0 and w._lake_at(spot) == w._lake_of_hamlet(str(a["info"].get("hamlet", ""))),
 			"%s pêche sur son lac" % str(a["info"].get("name", id)))
+	# un pêcheur parti dans l'autre lac : sa route passe à terre jusqu'au bord du lac visé et se pose sur son eau
+	w.size = Vector2(1000, 700)
+	await process_frame
+	w.animate = true
+	var visitor := ""
+	for id in w.agents:
+		if str(w.agents[id]["info"].get("role", "")) != "ancien":
+			visitor = str(id)
+			break
+	var target: int = (w._lake_of_hamlet(str(w.agents[visitor]["info"].get("hamlet", ""))) + 1) % w.lakes.size()
+	w.on_event({"type": "catch", "sim_time": 1.0, "payload": {"agent": visitor, "zone": "large-" + str(w.lakes[target]["name"]),
+		"away": true, "lake": str(w.lakes[target]["name"]), "landed": 1.0, "secret": false}})
+	var trip: Array = w.agents[visitor]["path"]
+	var wet := trip.filter(func(s): return w.lake_rn(s[0]) < 1.0 and w._lake_at(s[0]) == target)
+	check(trip.size() >= 5 and wet.size() >= 1, "le pêcheur parti ailleurs marche jusqu'à l'autre lac et pêche sur son eau (%d étapes)" % trip.size())
+	check(float(w.agents[visitor]["path"][0][1]) == 0.0 and trip[trip.size() - 1][0] == w.agents[visitor]["home"], "et rentre chez lui")
 	print("LAKESWORLDTEST fails=%d lakes=%d" % [fails, n_lakes])
 	quit(1 if fails else 0)
