@@ -49,8 +49,11 @@
     "luck": {
       "type": "number"
     },
-    "day": {
-      "type": "number"
+    "outings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
     }
   },
   "required": [

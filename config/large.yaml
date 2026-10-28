@@ -1,0 +1,8 @@
+# Grande vallée : quatre villages de quatre ou cinq pêcheurs (18 pêcheurs), en alternative à la vallée de base de default.yaml
+# (deux pêcheurs par village). Un élu parle alors pour trois ou quatre voisins. Le lac, lui, garde le même stock par tête
+# (lake.capacity: auto, 225 t). Se combine avec le choix du moteur d'IA : .\start.cmd -Config config/large.yaml -Ollama
+extends: default.yaml
+run: {label: large}
+population:
+  villages: 4
+  fishers: 18

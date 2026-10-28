@@ -185,7 +185,8 @@ def lake_block(obs: dict) -> str:
     if not hist:
         return head
     when = {"pêche": "ouverture de la pêche", "veillée": "veillée, la pêche faite"}
-    seen = "; ".join(f"{h['label'].rsplit(' ', 1)[0]} ({when.get(h['phase'], h['phase'])}) ≈ {h['est']:.0f} t" for h in hist)
+    seen = "; ".join(f"{h.get('when') or h['label'].rsplit(' ', 1)[0]} ({when.get(h['phase'], h['phase'])}) ≈ {h['est']:.0f} t"
+                     for h in hist)
     return f"{head}\nCe que tu as constaté du lac jusqu'ici : {seen}; maintenant ≈ {est:.0f} t ({lake_trend(est, cap, hist)})."
 
 
@@ -335,8 +336,15 @@ def answer_schema(purpose: str, brief: bool = False, fisher: bool = True, ids: l
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
+def time_lines(obs: dict) -> list[str]:
+    """Où l'on en est, en toutes lettres : le moment, ce que fait la saison à cet instant, et son calendrier (quand la pêche
+    ferme, quand a lieu la veillée) : chaque action a ainsi sa place dans le temps."""
+    phase = f" : {obs['phase']}" if obs.get("phase") else ""
+    return [f"Nous sommes en {obs['label']}{phase}.", *([obs["calendar"]] if obs.get("calendar") else [])]
+
+
 def context_block(obs: dict, brief: bool = False) -> str:
-    parts = [f"Nous sommes le {obs['label']} (saison {obs['season']})."]
+    parts = time_lines(obs)
     parts.append(lake_block(obs))
     if day_line(obs):
         parts.append(day_line(obs))
@@ -409,7 +417,7 @@ def veillee_block(obs: dict) -> str:
     sans les archives, ni le détail du lac saison par saison, ni celui des finances. Environ moitié moins de tokens que le
     contexte d'une prise : la parole coûtait 80 % des tokens d'une partie."""
     est, cap = obs["stock_estimate"], obs.get("capacity")
-    parts = [f"Nous sommes le {obs['label']} (saison {obs['season']})."]
+    parts = time_lines(obs)
     if cap:
         trend = lake_trend(est, cap, obs.get("stock_history") or [])
         parts.append(f"Le lac, tel que tu le vois : environ {est:.0f} t sur {cap:.0f} ({100 * est / cap:.0f} %, "

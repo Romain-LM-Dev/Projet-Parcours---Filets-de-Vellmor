@@ -17,6 +17,15 @@
           },
           "to_day": {
             "type": "number"
+          },
+          "follow": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "days": {
+            "type": "number"
           }
         },
         "required": [
@@ -28,6 +37,9 @@
       }
     },
     "by": {
+      "type": "string"
+    },
+    "why": {
       "type": "string"
     }
   },

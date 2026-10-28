@@ -154,7 +154,7 @@ def play_with_announcement(tmp_path, run_id, text, seasons=3, population=FOUR, e
 
 
 def season_of(user_prompt: str) -> int:
-    return int(re.search(r"\(saison (\d+)\)", user_prompt).group(1))
+    return int(re.search(r"Nous sommes en saison (\d+)", user_prompt).group(1))
 
 
 # ---------------------------------------------------------------- ce que reçoit l'IA

@@ -440,7 +440,8 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 			var k: int = idx.get(h, 0)
 			idx[h] = k + 1
 			var n: int = per_hamlet[h]
-			# une couronne autour du hameau ; au-delà de six habitants, une deuxième couronne plus large
+			# une couronne autour du hameau, plus large dès quatre habitants (leurs noms se chevauchaient) ; au-delà de six
+			# habitants, une deuxième couronne plus large
 			var ring := 1.0
 			var slot := k
 			var count: int = mini(n, 6)
@@ -449,7 +450,8 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 				slot = k - 6
 				count = n - 6
 			var ang := -PI / 2.0 + TAU * float(slot) / float(max(count, 1)) + (0.5 if ring == 1.0 else 0.25)
-			home = hamlet_pos.get(h, Vector2(0.5, 0.5)) + Vector2(cos(ang) * 0.027, sin(ang) * 0.032) * ring
+			var wide := 1.0 if (n <= 3 or ring > 1.0) else 1.85
+			home = hamlet_pos.get(h, Vector2(0.5, 0.5)) + Vector2(cos(ang) * 0.027 * wide, sin(ang) * 0.032 * (1.0 + (wide - 1.0) * 0.6)) * ring
 		agents[id] = {"id": id, "info": a, "home": home, "pos": home, "path": [], "hold": 0.0, "heading": 0.0,
 			"wake_t": 0.0, "fishing": 0.0}
 		order.append(id)

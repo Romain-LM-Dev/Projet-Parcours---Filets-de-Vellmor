@@ -163,6 +163,10 @@ qu'un « Démarrer » cliqué trop tôt n'est pas perdu.
 | `python -m filets ingest [--pg]` | importe les runs enregistrés dans SQLite, ou dans PostgreSQL (`--pg`) |
 | `python -m filets schemas` | exporte les schémas d'événements dans `schemas/` |
 
+**Deux vallées de base.** `config/default.yaml` : quatre villages de deux pêcheurs (8). `config/large.yaml` : les mêmes quatre
+villages à quatre ou cinq pêcheurs (18, un lac de 225 t, le même stock par tête) : un élu y parle pour trois ou quatre voisins.
+`python -m filets serve --config config/large.yaml`, ou `.\start.cmd -Config config/large.yaml` (avec `-Ollama` pour une IA locale).
+
 Exemples : `--set scenario.communication=hamlet`, `--set scenario.catches_visible=false`,
 `--set population.rule_fraction=0.5`, `--set time.sim_hours_per_second=1`.
 
@@ -262,6 +266,13 @@ commence au printemps) :
 | J25 18:00 | veillée chez l'ancien : le **conseil de la vallée** (l'ancien et l'élu de chaque village), des veillées par village, ou aucune ; 1 à 3 tours de parole à tour de rôle (synchrone) ou une parole de chacun, de son côté (asynchrone) ; une parole pas prête à la fermeture est une « réplique perdue » |
 | J29 | fin de veillée : une proposition soutenue par **au moins la moitié des présents au conseil** devient règle pour la saison suivante |
 | J29 21:36 | repeuplement logistique (selon la saison de l'année et les événements), bilan, promesses tenues ou trahies |
+
+**Le temps, en toutes lettres.** Le temps simulé reste un nombre de jours (il ordonne les événements et borne ce que chacun savait à
+tel instant), mais ce que lisent les agents est du texte, et chaque événement le porte (`sim_text`, à côté de `sim_label` et `sim_time`) :
+« saison 2 (été), jour 25, le soir (18 h) » (`World.when` ; la saison de l'année seulement avec le climat). Chaque invite commence par
+où l'on en est, ce que fait la saison à cet instant (« la pêche est ouverte, encore 16 jours », « veillée chez l'ancien ») et le
+calendrier d'une saison (quand la pêche ferme, quand a lieu la veillée) ; les souvenirs (« [saison 1, jour 29, la nuit (0 h)] ») et le
+suivi du lac (« saison 1, jour 0 (ouverture de la pêche) ≈ 103 t ») disent leur date de la même façon.
 
 Lac : capacité `12,5 t × nombre de pêcheurs` (même stock par tête quand on change d'échelle) ou limite choisie dans le menu,
 croissance logistique de taux `r` (1 par défaut, réglable dans le menu), rendement durable maximal `r·K/4` par saison, atteint quand on
@@ -739,7 +750,8 @@ godot/             projet Godot 4 : main.gd (interface, barre de pilotage, inspe
                    legend.gd, shaders/valley.gdshader, fonts/, tests/ (feed_test.gd, menu_test.gd, main_feed_test.gd)
 install.ps1, start.ps1, stop.ps1 (et .cmd)   installation, démarrage et arrêt sous Windows
 corpus/            base de connaissances fictive de la vallée
-config/            default, baseline (sans LLM), no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
+config/            default (vallée de base : 4 villages, 8 pêcheurs), large (grande vallée : 4 villages, 18 pêcheurs), baseline (sans LLM),
+                   no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
                    ollama_open (3B + tev1), colibri (Qwen3.6 35B), groq, data (PostgreSQL + pgvector, stockage objet)
 docs/              architecture.md : architecture, temps, communication, tokens, asynchrone, stockage
 schemas/           schémas JSON versionnés des événements

@@ -46,7 +46,8 @@ ENVELOPE = obj(
         "wall_clock": STR,        # horodatage ISO, pour l'historique
         "payload": {"type": "object"},
     },
-    {"actor": STR_OR_NULL, "replay": BOOL, "replayed_at": STR},
+    {"actor": STR_OR_NULL, "replay": BOOL, "replayed_at": STR,
+     "sim_text": STR},      # le temps en toutes lettres (« saison 2 (été), jour 25, le soir (18 h) »)
 )
 
 PAYLOADS: dict[str, dict] = {

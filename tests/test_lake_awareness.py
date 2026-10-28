@@ -126,7 +126,7 @@ def name_to_id(world):
 
 def parse(request, world):
     who = re.search(r"Tu es (.+?), ", request["system"]).group(1)
-    season = int(re.search(r"\(saison (\d+)\)", request["user"]).group(1))
+    season = int(re.search(r"Nous sommes en saison (\d+)", request["user"]).group(1))
     return name_to_id(world)[who], season, ("catch" if '"prise"' in request["user"] else "speak")
 
 
@@ -170,11 +170,12 @@ def test_what_a_fisher_read_of_past_seasons_is_what_he_estimated_then(tmp_path):
         if kind != "catch" or season < 3:
             continue
         for s in range(1, season):
-            m = re.search(rf"S{s} · J\d+ \(ouverture de la pêche\) ≈ (\d+) t", r["user"])
+            m = re.search(rf"saison {s}, jour \d+ \(ouverture de la pêche\) ≈ (\d+) t", r["user"])
             assert m, f"la saison {s} manque dans le contexte de {agent} (saison {season})"
             assert int(m.group(1)) == round(own[(agent, s)]), (agent, s)
             checked += 1
-        assert f"S{season} · J" not in r["user"].split("maintenant")[0].split("Ce que tu as constaté")[-1].replace(f"S{season} · J25", "")
+        past = r["user"].split("maintenant")[0].split("Ce que tu as constaté")[-1].replace(f"saison {season}, jour 25", "")
+        assert f"saison {season}, jour" not in past
     assert checked
 
 
@@ -194,8 +195,8 @@ def test_memories_carry_their_date(tmp_path):
     later = [r["user"] for r in requests if parse(r, world)[1] == 3 and '"prise"' in r["user"]]
     assert later
     section = [u.split("Tes souvenirs qui reviennent :")[1].split("Ce qu'on raconte")[0] for u in later]
-    assert all(re.search(r"- \(S\d+ · J\d+ \d\d:\d\d\) ", s) for s in section)
-    assert all(not re.search(r"^- (?!\(S)", s, re.M) for s in section if "aucun souvenir précis" not in s)
+    assert all(re.search(r"- \[saison \d+, jour \d+, [^\]]+ \(\d+ h[^\]]*\)\] ", s) for s in section)
+    assert all(not re.search(r"^- (?!\[saison)", s, re.M) for s in section if "aucun souvenir précis" not in s)
 
 
 # ---------------------------------------------------------------- les agents à règles ne demandent pas plus que le lac visible

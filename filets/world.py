@@ -47,9 +47,9 @@ from pathlib import Path
 
 from . import prompts
 from .agents import (Agent, _ask_llm, ballot, ballot_election, debrief_villager, decide_catch, patrol_decision, speak)
-from .climate import EVENTS, Climate
+from .climate import CYCLE, EVENTS, Climate
 from .policies import patrol_vote, sanction_vote
-from .clock import SimClock
+from .clock import SimClock, day_words
 from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
 from .events import EventFactory, Recorder
@@ -186,6 +186,7 @@ class World:
         if record:
             (self.run_dir / "config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2, default=str))
         self.events = EventFactory(run_id, self.clock, bus, self.recorder)
+        self.events.when = self.when
         L = cfg["lake"]
         self.capacity = L["capacity_resolved"]
         self.lake = Lake(self.capacity, L["initial_ratio"], L["growth_rate"], L["collapse_ratio"], L["observation_noise"])
@@ -716,6 +717,41 @@ class World:
                 "valley": [(self.first_name(a.id), self.reputation(a.id)) for a in others
                            if not 0.4 <= self.reputation(a.id) < 0.6]}
 
+    def when(self, t: float | None = None, short: bool = False) -> str:
+        """Le moment en toutes lettres, tel que les agents le lisent : « saison 2 (été), jour 25, le soir (18 h) ». Le temps simulé
+        reste un nombre de jours (l'ordre des événements, ce que chacun savait à tel instant) ; ceci est sa lecture.
+        `short` : sans l'heure (« saison 2, jour 25 »)."""
+        t = self.clock.now() if t is None else t
+        season = self.clock.season_of(t)
+        year = CYCLE[(season - 1) % len(CYCLE)]["name"] if getattr(self, "climate", None) and self.climate.enabled else None
+        if short:
+            return f"saison {season}, jour {int(t - self.clock.season_start(season))}"
+        return self.clock.text(t, year)
+
+    def phase_text(self, t: float | None = None) -> str:
+        """Ce que fait la saison à cet instant : la pêche est ouverte (et pour combien de jours), la veillée, le repeuplement."""
+        t = self.clock.now() if t is None else t
+        d, T = t - self.clock.season_start(self.clock.season_of(t)), self.T
+        if d < T["fishing_open_day"]:
+            return "la saison commence, la pêche n'est pas encore ouverte"
+        if d < T["fishing_close_day"]:
+            left = max(1, round(T["fishing_close_day"] - d))
+            return f"la pêche est ouverte, encore {left} jour{'s' if left > 1 else ''}"
+        if d < T["assembly_day"]:
+            return "la pêche est finie, la veillée chez l'ancien approche"
+        if d < T["assembly_close_day"]:
+            return "veillée chez l'ancien"
+        if d < T["regrowth_day"]:
+            return "la veillée est finie, le lac va se repeupler"
+        return "le lac se repeuple, la saison s'achève"
+
+    def calendar_text(self) -> str:
+        """Le calendrier d'une saison, dit une fois pour toutes aux agents : quand chaque chose a lieu."""
+        T = self.T
+        return (f"Une saison compte {T['season_days']:g} jours, numérotés depuis 0 : la pêche est ouverte du jour "
+                f"{int(T['fishing_open_day'])} au jour {int(T['fishing_close_day'])} ; la veillée chez l'ancien a lieu au "
+                f"{day_words(T['assembly_day'])} ; le lac se repeuple à la fin de la saison.")
+
     def sky_phrase(self, days: list[str]) -> str:
         """Le temps des jours de pêche, en mots : « 3 jours calmes, 8 jours ordinaires, 2 jours de tempête »."""
         return ", ".join(f"{days.count(k)} jour{'s' if days.count(k) > 1 else ''} {w + 's' if w[0] != 'd' and days.count(k) > 1 else w}"
@@ -808,8 +844,8 @@ class World:
         entry = None
         if (purpose == "catch" or rnd == 1) and not any(e["season"] == season and e["phase"] == phase
                                                         for e in agent.stock_seen):
-            entry = {"season": season, "phase": phase, "t": horizon, "label": self.clock.label(horizon), "est": est,
-                     "event_id": None}
+            entry = {"season": season, "phase": phase, "t": horizon, "label": self.clock.label(horizon),
+                     "when": self.when(horizon, short=True), "est": est, "event_id": None}
             agent.stock_seen.append(entry)
         history = [e for e in agent.stock_seen if e is not entry and e["t"] <= horizon]
         return entry, history[-6:]
@@ -884,7 +920,8 @@ class World:
                                  "text": r["text"][:160]})
         used += [r["id"] for r in retrieved if r["source"] != "corpus"]
         obs = {
-            "label": self.clock.label(horizon), "season": season, "stock_estimate": est, "role": p.role,
+            "label": self.when(horizon), "phase": self.phase_text(horizon), "calendar": self.calendar_text(),
+            "season": season, "stock_estimate": est, "role": p.role,
             "capacity": self.capacity, "collapse_ratio": self.lake.collapse_ratio, "stock_history": history,
             "n_fishers": len(self.fishers), "_entry": entry, "villages": self.hamlets,
             "wealth": wealth, "upkeep": upkeep, "debt_payment": p.debt_payment,
@@ -904,7 +941,7 @@ class World:
             # chaque souvenir porte sa date : une parole de la veillée d'il y a deux saisons (« le lac a l'air bien rempli »)
             # ne doit pas passer pour l'état du lac d'aujourd'hui
             "pinned": [m.text for m in pinned],
-            "memories": [f"({self.clock.label(m.t)}) {m.text}" for m, _ in mems],
+            "memories": [f"[{self.when(m.t)}] {m.text}" for m, _ in mems],
             "documents": [f"[{d.title}] {d.text}" for d, _ in docs],
             "rumors": [r["text"] for r in rumors],
         }
@@ -2368,7 +2405,7 @@ class AsyncRunner:
         finally:
             self.thinking.pop(("fish", a.id), None)
         if self.c.now() > close_t:
-            w.incident(a.id, "missed_window", f"décision prise à {self.c.label()}, après la fermeture de la pêche",
+            w.incident(a.id, "missed_window", f"décision prise en {w.when()}, après la fermeture de la pêche",
                        "sortie perdue")
             return
         w.apply_catch(a, o.value, o.decision, h, declared=o.data.get("declaration"))

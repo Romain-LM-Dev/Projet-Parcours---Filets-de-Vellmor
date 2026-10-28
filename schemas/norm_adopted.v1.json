@@ -27,6 +27,9 @@
     },
     "author": {
       "type": "string"
+    },
+    "delegates": {
+      "type": "object"
     }
   },
   "required": [

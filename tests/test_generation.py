@@ -94,3 +94,22 @@ def test_every_village_of_the_valley_has_a_market_register():
         assert mine and village in mine[0].text and "100 écus" in mine[0].text and "{{" not in "".join(p.text for p in mine)
         assert not [p for p in four.passages if p.visible_to == [village]]
         assert [p.text for p, _ in six.search("registre du marché ventes", village, 0.0, 3) if village in p.text]
+
+
+def test_the_large_valley_is_a_second_base_with_four_or_five_fishers_per_village(tmp_path):
+    """`config/large.yaml` : les mêmes quatre villages, à quatre ou cinq pêcheurs (18), à côté de la vallée de base (deux par village)."""
+    from helpers import play
+
+    base, large = build_catalog(load_config(None)), build_catalog(load_config("config/large.yaml"))
+    assert (base["defaults"]["villages"], base["defaults"]["fishers"]) == (4, 8)
+    assert (large["defaults"]["villages"], large["defaults"]["fishers"]) == (4, 18)
+    per_village = collections.Counter(s["hamlet"] for s in large["base_population"])
+    assert set(per_village) == set(large["hamlets"]) and set(per_village.values()) == {4, 5}
+    assert large["defaults"]["capacity_per_fisher"] == base["defaults"]["capacity_per_fisher"]      # le même stock par tête
+    cfg = load_config("config/large.yaml")
+    cfg["output"]["runs_dir"], cfg["time"]["fast"], cfg["run"]["seasons"] = str(tmp_path / "runs"), True, 2
+    cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
+    events = play(tmp_path, cfg=cfg)
+    start = next(e for e in events if e["type"] == "run_start")["payload"]
+    assert start["population"]["fishers"] == 18 and start["lake"]["capacity"] == 225.0
+    assert len([e for e in events if e["type"] == "election"]) == 8                 # un élu par village et par saison

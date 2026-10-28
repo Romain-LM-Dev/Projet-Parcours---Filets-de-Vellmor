@@ -33,6 +33,28 @@ def fmt_sim(t: float, season_days: float) -> str:
     return f"S{season} · J{day} {minutes // 60:02d}:{minutes % 60:02d}"
 
 
+# Les moments de la journée, tels qu'un villageois les dit (la borne est l'heure de fin, exclue).
+PERIODS = ((6, "la nuit"), (12, "le matin"), (14, "à midi"), (18, "l'après-midi"), (22, "le soir"), (24, "la nuit"))
+
+
+def day_words(day_f: float) -> str:
+    """Un instant d'une saison en mots : 25,75 → « jour 25, le soir (18 h) » (les jours sont numérotés depuis 0)."""
+    day = int(day_f)
+    minutes = int(round((day_f - day) * 24 * 60))
+    if minutes >= 24 * 60:
+        day, minutes = day + 1, 0
+    hour, minute = divmod(minutes, 60)
+    period = next(word for limit, word in PERIODS if hour < limit)
+    return f"jour {day}, {period} ({hour} h{f' {minute:02d}' if minute else ''})"
+
+
+def fmt_text(t: float, season_days: float, year: str | None = None) -> str:
+    """Le temps simulé en toutes lettres, comme les agents le lisent : « saison 2 (été), jour 25, le soir (18 h) ». `year` : la
+    saison de l'année (printemps, été…), quand le climat en donne une."""
+    season = int(t // season_days) + 1
+    return f"saison {season}{f' ({year})' if year else ''}, {day_words(t - (season - 1) * season_days)}"
+
+
 class SimClock:
     def __init__(self, season_days: float, sim_hours_per_second: float, idle_speedup: float, fast: bool):
         self.season_days = season_days
@@ -97,6 +119,9 @@ class SimClock:
 
     def label(self, t: float | None = None) -> str:
         return fmt_sim(self._now if t is None else t, self.season_days)
+
+    def text(self, t: float | None = None, year: str | None = None) -> str:
+        return fmt_text(self._now if t is None else t, self.season_days, year)
 
     def season_of(self, t: float | None = None) -> int:
         return int((self._now if t is None else t) // self.season_days) + 1

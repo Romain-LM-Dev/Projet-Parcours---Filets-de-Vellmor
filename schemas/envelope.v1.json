@@ -45,6 +45,9 @@
     },
     "replayed_at": {
       "type": "string"
+    },
+    "sim_text": {
+      "type": "string"
     }
   },
   "required": [

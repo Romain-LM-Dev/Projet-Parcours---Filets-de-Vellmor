@@ -35,6 +35,7 @@ class EventFactory:
         self.recorder = recorder
         self.seq = 0
         self.index: dict[str, dict] = {}   # event_id -> événement (vérification de cohérence temporelle)
+        self.when = None                   # le moment en toutes lettres (`World.when`) ; à défaut, celui de l'horloge
         self.deadletters = 0
 
     def emit(self, etype: str, payload: dict, actor: str | None = None, sim_time: float | None = None) -> dict:
@@ -48,6 +49,7 @@ class EventFactory:
             "seq": self.seq,
             "sim_time": round(t, 6),
             "sim_label": self.clock.label(t),
+            "sim_text": (self.when or self.clock.text)(round(t, 6)),      # lu sur le même instant que `sim_time`
             "season": self.clock.season_of(t),
             "processed_at": round(self.clock.wall_elapsed(), 4),
             "wall_clock": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),

@@ -57,6 +57,12 @@ Le monde a son propre temps, **simulé**, en jours : une saison dure 30 jours. C
 
 Le calendrier d'une saison : J0 06:00 ouverture de la pêche ; J20 fermeture ; J25 18:00 veillée ; J29 fin de veillée et vote ; J29,9 repeuplement et bilan.
 
+Le temps simulé est un nombre de jours (`sim_time`) : c'est lui qui ordonne les événements et borne ce que chacun savait (`info_horizon`). Il se
+lit aussi en toutes lettres : `World.when(t)` donne « saison 2 (été), jour 25, le soir (18 h) » (`clock.fmt_text`), `World.phase_text(t)` ce que
+fait la saison à cet instant, `World.calendar_text()` le calendrier. Chaque événement porte ce texte (`sim_text`) ; chaque invite
+(`prompts.time_lines`), chaque souvenir et chaque ligne du suivi du lac aussi, si bien qu'un agent sait quand il agit, ce qu'il reste de pêche et
+quand aura lieu la veillée, sans déchiffrer une étiquette codée (`sim_label`, « S2 · J25 18:00 », ne sert plus qu'à l'interface).
+
 Deux manières de le faire avancer, au choix à chaque saison :
 
 * **Synchrone** : tous les pêcheurs décident sur le même instantané du monde, puis agissent ensemble. La lenteur d'une IA ne change rien au temps du monde. Les attentes ne servent qu'à l'affichage (au plus 4 s par étape, divisées par la vitesse). À la veillée, on parle **à tour de rôle** : l'horloge avance d'un tour à l'autre et chacun entend ceux qui ont parlé avant lui (dialogues dépendants).

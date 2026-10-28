@@ -89,7 +89,7 @@ def test_a_neighbour_who_saw_the_boat_exposes_the_lie_and_the_cheater_keeps_quie
                 and e["payload"]["subject"] == elwen.id]
     assert opinions and all(p["by"] == mathis and p["delta"] < 0 for p in opinions)
     # désormais, chacun connaît l'estimation de sa prise, et le sait menteur
-    later = [r["user"] for r in requests if f"(saison {found['season'] + 1})" in r["user"]]
+    later = [r["user"] for r in requests if f"Nous sommes en saison {found['season'] + 1}," in r["user"]]
     assert later and all(f"Elwen {d['estimated']:g} t (en avait déclaré {d['declared']:g} : mensonge établi)" in u
                          for u in later)
 
