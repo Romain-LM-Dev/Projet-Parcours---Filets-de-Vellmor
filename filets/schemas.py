@@ -60,7 +60,10 @@ PAYLOADS: dict[str, dict] = {
         "llm_tiers": {"type": "object"},
     }, {"label": STR, "population": {"type": "object"}, "boats": {"type": "object"},
         # les lacs de la vallée : nom, capacité, stock de départ, repeuplement, villages et pêcheurs
-        "lakes": {"type": "array", "items": {"type": "object"}}}),
+        "lakes": {"type": "array", "items": {"type": "object"}},     # (chacun avec ses parcelles `cells` : [i, j, profondeur, chance])
+        "map": {"type": "object"}}),     # la maille des lacs (`grid`) et la place de chaque village dans le sol (`hamlets`)
+    # le remplissage de chaque parcelle de chaque lac (dans l'ordre de `cells`), après le repeuplement
+    "lake_cells": obj({"lakes": {"type": "object"}}),
     "run_end": obj({"reason": STR, "seasons_completed": INT}),
     # `conditions` : la saison de l'année, ses facteurs (pêche, repeuplement) et les événements en cours (voir `climate.py`)
     "season_start": obj({"stock": NUM}, {"mode": {"enum": ["sync", "async"]}, "conditions": {"type": "object"},
@@ -86,7 +89,9 @@ PAYLOADS: dict[str, dict] = {
                   "yield": NUM,        # ce que la pêche a rapporté par rapport à la prise visée (`requested`), tout compris
                   "luck": NUM,         # dont la chance du pêcheur (moyenne de ses sorties)
                   # ses sorties : le jour, le temps (calme, ordinaire, agité, tempête), la chance, le rendement et les tonnes rapportées
-                  "outings": {"type": "array", "items": {"type": "object"}}}),
+                  "outings": {"type": "array", "items": {"type": "object"}},
+                  "cell": {"type": "array", "items": INT},     # la parcelle du lac où il a pêché (i, j sur la maille des lacs)
+                  "spot": NUM}),       # ce que ce coin a rendu : sa chance, et le poisson qu'y ont laissé les autres barques
     # ce que le pêcheur déclare à l'ancien en rentrant : les autres ne connaissent que `declared` ; la vraie prise (`landed`)
     # n'est connue que de lui et du joueur
     "report": obj({"agent": STR, "hamlet": STR, "declared": NUM, "landed": NUM, "catch_event_id": STR}),

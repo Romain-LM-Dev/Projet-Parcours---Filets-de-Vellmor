@@ -38,6 +38,8 @@ class Agent:
     form: float = 0.0                                              # sa chance de la saison (elle se prolonge d'une saison à l'autre)
     temper: float = 1.0                                            # sa sévérité : plus de 1, il pardonne moins (tirée une fois)
     lake_choice: dict[int, str] = field(default_factory=dict)      # le lac où il a pêché à chaque saison (le sien, ou un autre)
+    spot: int | None = None                                        # son coin de pêche : une parcelle de sa rive (voir `World.spot_of`)
+    spots: dict[int, float] = field(default_factory=dict)          # ce que chaque coin de sa rive lui a rendu (1 : comme le lac)
 
     @property
     def id(self) -> str:

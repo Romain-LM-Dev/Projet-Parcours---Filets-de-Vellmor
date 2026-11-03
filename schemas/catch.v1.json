@@ -69,6 +69,15 @@
       "items": {
         "type": "object"
       }
+    },
+    "cell": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "spot": {
+      "type": "number"
     }
   },
   "required": [

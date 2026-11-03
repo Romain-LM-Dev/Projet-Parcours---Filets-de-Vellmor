@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "lakes": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "lakes"
+  ],
+  "additionalProperties": false
+}

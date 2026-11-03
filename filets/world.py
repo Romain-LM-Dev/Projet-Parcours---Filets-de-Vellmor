@@ -54,7 +54,7 @@ from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
 from .events import EventFactory, Recorder
 from .lake import Lake
-from .lakes import lake_distance, resolve_lakes
+from .lakes import GRID, lake_distance, lake_parcels, resolve_lakes, village_positions
 from .memory import MemoryBank, MemoryStore, VectorMemory
 from .objects import archive_run, make_objects
 from .profiles import Profile, build_population, villages_of
@@ -223,11 +223,23 @@ class World:
         # les lacs : chacun son poisson, son repeuplement et ses villages (par défaut un seul, celui de Vellmor)
         self.lakes: dict[str, Lake] = {}
         self.lake_of_hamlet: dict[str, str] = {}
-        for d in resolve_lakes(L, self.hamlets, Counter(a.profile.hamlet for a in self.fishers)):
+        resolved = resolve_lakes(L, self.hamlets, Counter(a.profile.hamlet for a in self.fishers))
+        shapes = lake_parcels(len(resolved), int(self.cfg["run"]["seed"]))     # la maille de chaque lac, tirée de la graine
+        for d, parcels in zip(resolved, shapes):
             self.lakes[d["name"]] = Lake(d["capacity"], d["initial_ratio"], d["growth_rate"], L["collapse_ratio"],
-                                         L["observation_noise"], d["name"], d["label"])
+                                         L["observation_noise"], d["name"], d["label"], parcels)
             for village in d["villages"]:
                 self.lake_of_hamlet[village] = d["name"]
+        # où sont les villages dans le sol, et la rive de chacun : les parcelles de son lac plus proches de lui que des autres villages
+        names = list(self.lakes)
+        self.village_xy = village_positions(self.hamlets, {h: names.index(n) for h, n in self.lake_of_hamlet.items()}, len(names))
+        self.sectors: dict[str, dict[str, list[int]]] = {}
+        for name, lake in self.lakes.items():
+            mine = [h for h, n in self.lake_of_hamlet.items() if n == name]
+            sec: dict[str, list[int]] = {h: [] for h in mine}
+            for k, p in enumerate(lake.parcels):
+                sec[min(mine, key=lambda h: self._parcel_dist(p, h))].append(k)
+            self.sectors[name] = sec
         self.lake = next(iter(self.lakes.values()))       # le premier : le seul, dans la vallée de base
         self.multi = len(self.lakes) > 1
         self.capacity = sum(lake.capacity for lake in self.lakes.values())
@@ -423,6 +435,38 @@ class World:
         stock = lake.stock if stock is None else stock
         boat = self.boat_cap[agent.id]
         return min(boat, self.hold_fraction * max(0.0, stock) * boat / (self.lake_boats[lake.name] or 1.0))
+
+    def _parcel_dist(self, p: dict, hamlet: str) -> float:
+        hx, hy = self.village_xy[hamlet]
+        return math.hypot((p["i"] + 0.5) / GRID - hx, (p["j"] + 0.5) / GRID - hy)
+
+    def spot_of(self, agent: Agent, lake: Lake, zone: str, season: int) -> int:
+        """La parcelle où ce pêcheur jette ses filets cette saison : une règle de sa propre expérience, que le moteur ne fait
+        qu'appliquer. Au large (en cachette, ou dans un autre lac), un coin profond. Sur la rive d'un autre village (en cachette),
+        un coin de cette rive. Sur sa rive : la première fois, un coin près de son village ; ensuite il garde son coin s'il a rendu
+        comme le lac, sinon il va au meilleur coin de sa rive qu'il connaisse, ou en essaie un qu'il ne connaît pas encore."""
+        rng = random.Random(f"{self.cfg['run']['seed']}|spot|{agent.id}|{season}|{lake.name}|{zone}")
+        if zone not in self.lake_of_hamlet:
+            deep = max(p["depth"] for p in lake.parcels)
+            return rng.choice([k for k, p in enumerate(lake.parcels) if p["depth"] >= deep / 2])
+        sector = self.sectors[lake.name].get(zone) or list(range(len(lake.parcels)))
+        if zone != agent.profile.hamlet:
+            return rng.choice(sector)
+        cur, seen = agent.spot, agent.spots
+        if cur is None or cur not in sector:
+            near = sorted(sector, key=lambda k: self._parcel_dist(lake.parcels[k], zone))
+            return near[rng.randrange(max(1, len(near) // 3))]
+        if seen.get(cur, 1.0) >= 0.95:
+            return cur
+        better = [k for k, v in seen.items() if k in sector and v > seen[cur] + 0.05]
+        if better:
+            return max(better, key=lambda k: seen[k])
+        return rng.choice([k for k in sector if k not in seen] or sector)
+
+    def lake_cells(self):
+        """Le remplissage de chaque parcelle (son poisson sur ce qu'elle tient pleine), pour la carte."""
+        self.events.emit("lake_cells", {"lakes": {name: [round(c / cc, 2) if cc > 0 else 0.0 for c, cc in zip(lk.cells, lk.cap_cells)]
+                                                  for name, lk in self.lakes.items()}})
 
     def lake_update(self, cause: str, delta: float, lake: Lake | None = None):
         payload = {"stock": round(self.lake_stock(), 3), "capacity": self.capacity, "cause": cause, "delta": round(delta, 3)}
@@ -1213,14 +1257,22 @@ class World:
         # temps, la chance, la saison de l'année, les événements) sans jamais dépasser sa part de la cale ; puis, en synchrone, le
         # rationnement si la flotte demande plus que le lac
         outs = self.outings(agent, season, stock_at_action, lake)
+        # son coin de pêche (une parcelle du lac) : sa chance, et ce que les autres barques y ont déjà pris
+        cell = self.spot_of(agent, lake, zone, season)
+        spot = 1.0
+        if float(self.econ.get("luck", 0.0)) > 0:
+            spot = round(lake.parcels[cell]["luck"] * min(1.3, max(0.5, lake.fill_near(cell))), 3)
         # ce que le lac lui laisse prendre : sa part du poisson qu'il y avait à l'ouverture de la saison (le même pour tous, quel que
         # soit l'ordre des retours ; ceux qui rentrent tard peuvent trouver le lac déjà vidé par les autres)
         hold = self.hold_of(agent, self.season_stock[lake.name] if stock_at_action is None else stock_at_action, lake)
-        wanted = [min(requested * o["yield"], hold) / len(outs) * ration for o in outs]
-        landed = round(lake.take(sum(wanted)), 3)
+        wanted = [min(requested * o["yield"] * spot, hold) / len(outs) * ration for o in outs]
+        landed = round(lake.take(sum(wanted), cell), 3)
+        if zone == agent.profile.hamlet:
+            agent.spot, agent.spots[cell] = cell, spot
         tonnes = [round(landed * w / sum(wanted), 3) if landed else 0.0 for w in wanted]
         tonnes[-1] = round(landed - sum(tonnes[:-1]), 3)
         factor, luck = (sum(o[k] for o in outs) / len(outs) for k in ("yield", "luck"))
+        factor *= spot
         ev = self.events.emit("catch", {
             "agent": agent.id, "hamlet": agent.profile.hamlet, "requested": requested, "landed": landed,
             "stock_observed": stock_observed, "stock_before": round(before, 3), "stock_after": round(lake.stock, 3),
@@ -1229,6 +1281,7 @@ class World:
             "stock_at_horizon": obs.get("lake_stocks", {}).get(lake.name, obs["stock_true"]),
             "stock_at_action": round(before if stock_at_action is None else stock_at_action, 3),
             "zone": zone, "secret": secret, "yield": round(factor, 3), "luck": round(luck, 3),
+            "cell": [lake.parcels[cell]["i"], lake.parcels[cell]["j"]], "spot": spot,
             "outings": [{**o, "tonnes": t} for o, t in zip(outs, tonnes)],
             **({"away": True, "home_lake": home.name, "travel_days": round(days, 2), "travel_cost": round(self.travel_cost(days), 1)}
                if away else {}),
@@ -1264,6 +1317,10 @@ class World:
         if away:
             note = (f"Je suis allé pêcher dans {prompts.lake_ref(lake.label)}, à {days:.1f} jour de route de chez moi : la route m'a coûté "
                     f"{self.travel_cost(days):.0f} écus et du temps de pêche. ") + note
+        if spot <= 0.85:
+            note += " Mon coin de pêche a peu donné : la prochaine fois, j'en essaierai un autre."
+        elif spot >= 1.15:
+            note += " Mon coin de pêche a bien donné."
         if abs(factor - 1.0) >= 0.15 and requested > 0:
             note += f" J'en visais {requested:g} : {day_word(factor)} pêche."
         elif landed + 1e-6 < requested * ration or ration < 1:
@@ -2095,6 +2152,7 @@ class World:
         for lake in self.lakes.values():
             delta = lake.regrow(self.conditions.get("growth", 1.0))          # la saison de l'année et les événements
             self.lake_update("regrowth", delta, lake)
+        self.lake_cells()
         tol = self.scn["promise_tolerance"]
         now = self.clock.now()
         for a in self.fishers:
@@ -2287,7 +2345,9 @@ class World:
                      "sustainable_yield": round(sum(lk.r * lk.capacity / 4.0 for lk in self.lakes.values()), 3)},
             "lakes": [{"name": lk.name, "label": lk.label, "capacity": lk.capacity, "stock": round(lk.stock, 3),
                        "growth_rate": lk.r, "villages": [h for h, n in self.lake_of_hamlet.items() if n == lk.name],
-                       "fishers": self.lake_fishers[lk.name]} for lk in self.lakes.values()],
+                       "fishers": self.lake_fishers[lk.name],
+                       "cells": [[p["i"], p["j"], p["depth"], p["luck"]] for p in lk.parcels]} for lk in self.lakes.values()],
+            "map": {"grid": GRID, "hamlets": {h: [round(x, 4), round(y, 4)] for h, (x, y) in self.village_xy.items()}},
             "agents": [{**a.profile.public(), "wealth": a.wealth, "offset_days": a.offset_days}
                        for a in self.agents.values()],
             "hamlets": self.hamlets, "boats": {k: dict(v) for k, v in self.boats.items()},
@@ -2366,6 +2426,8 @@ class World:
                 for lake in self.lakes.values():
                     self.lake_update("event", lake.shock(self.climate.shock()), lake)
         self.season_stock = {name: lake.stock for name, lake in self.lakes.items()}
+        for lake in self.lakes.values():
+            lake.open_season()
         self.publish_status()
         self.scheduled_injections(season)
 

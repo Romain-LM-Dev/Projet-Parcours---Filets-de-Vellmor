@@ -4,6 +4,7 @@
 ## Arguments (après `--`) : --url=ws://127.0.0.1:8765   --selftest=SECONDES (imprime un bilan et quitte)
 ##   --autostart=SECONDES   lance la partie proposée par défaut dans le menu (essais automatiques)
 ##   --menu-shot=chemin.png capture le menu de démarrage une fois affiché
+##   --zoom=2.5 --mesh       (captures) la carte zoomée sur son centre, ses mailles montrées
 extends Control
 
 const WS := preload("res://scripts/ws_client.gd")
@@ -73,6 +74,8 @@ var shot_path := ""
 var shots: Array = []          # --shots=4,9,15 --shotdir=/chemin : captures à ces secondes
 var shot_dir := ""
 var autostart := -1.0
+var view_zoom := 1.0           # --zoom, --mesh : la carte telle qu'on veut la capturer
+var view_mesh := false
 var autostart_at := -1.0
 var menu_shot := ""
 
@@ -122,6 +125,10 @@ func _ready() -> void:
 			autostart = float(arg.substr(12))
 		elif arg.begins_with("--menu-shot="):
 			menu_shot = arg.substr(12)
+		elif arg.begins_with("--zoom="):
+			view_zoom = float(arg.substr(7))
+		elif arg == "--mesh":
+			view_mesh = true
 	ws.process_priority = -100           # les messages sont lus avant tout le reste de l'image, détecteur de silence compris
 	add_child(ws)
 	ws.message.connect(_on_message)
@@ -1200,7 +1207,7 @@ func _reset(ev: Dictionary) -> void:
 			"last_decision_label": "", "wealth": float(a.get("wealth", 0)), "incidents": 0,
 			"declared": {}, "reputation": 0.5, "trust_from": {}, "lies_found": 0, "banned": false}
 	world.reset_world(p.get("agents", []), float(run["capacity"]), float(p.get("season_days", 30.0)), p.get("hamlets", []),
-		p.get("lakes", []))
+		p.get("lakes", []), p.get("map", {}))
 	patrol_texts.clear()
 	lake_labels.clear()
 	for lk in p.get("lakes", []):
@@ -1545,6 +1552,13 @@ func _process(delta: float) -> void:
 		await get_tree().process_frame
 		get_viewport().get_texture().get_image().save_png(shot)
 		print("MENUSHOT ", shot)
+	if (view_zoom > 1.0 or view_mesh) and world.size.x > 10 and el > 1.0:
+		world.zoom_at(world.size / 2.0, view_zoom)
+		if view_mesh:
+			world.show_mesh = true
+			world.mat.set_shader_parameter("mesh", true)
+		view_zoom = 1.0
+		view_mesh = false
 	if not shots.is_empty() and el > float(shots[0]):
 		var sec: float = shots.pop_front()
 		get_viewport().get_texture().get_image().save_png("%s/shot_%05.1f.png" % [shot_dir, sec])

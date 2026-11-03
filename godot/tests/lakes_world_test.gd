@@ -49,11 +49,21 @@ func _initialize() -> void:
 	for h in w.hamlet_pos:
 		var q: Vector2 = w.hamlet_pos[h]
 		check(q.x > 0.05 and q.x < 0.95 and q.y > 0.1 and q.y < 0.95, "le village %s est sur la carte : %s" % [h, q])
-		check(w.lake_rn(q) > 1.0, "le village %s n'est pas dans l'eau (%s)" % [h, w.lake_rn(q)])
+		check(not w.is_water(q), "le village %s n'est pas dans l'eau (%s)" % [h, w.water_at(q)])
 	for k in w.lakes.size():
 		var name := str(w.lakes[k]["name"])
 		var cap := float(w.lakes[k]["capacity"])
 		check(last.has(name) and is_equal_approx(float(w.lakes[k]["ratio"]), float(last[name]) / cap), "le niveau du lac %s suit le moteur" % name)
+	# les lacs sont les parcelles du moteur : autant que dans run_start, et l'eau est là où elles sont
+	for k in w.lakes.size():
+		var cells: Array = events[0]["payload"]["lakes"][k]["cells"]
+		check(w.lake_cells[k].size() == cells.size() and cells.size() > 20, "le lac %d a les %d parcelles du moteur" % [k, cells.size()])
+		var dry := 0
+		for c in cells:
+			var q: Vector2 = w._parcel_pos(Vector2i(int(c[0]), int(c[1])))
+			if int(c[2]) >= 1 and (not w.is_water(q) or w._lake_at(q) != k):
+				dry += 1
+		check(dry == 0, "les parcelles du lac %d loin de la rive sont dans son eau (%d à sec)" % [k, dry])
 	var villages_by_lake := {}
 	for h in w.hamlet_lake:
 		villages_by_lake[w.hamlet_lake[h]] = true
@@ -76,7 +86,7 @@ func _initialize() -> void:
 		if str(a["info"].get("role", "")) == "ancien":
 			continue
 		var spot: Vector2 = w._fishing_spot(a)
-		check(w.lake_rn(spot) < 1.0 and w._lake_at(spot) == w._lake_of_hamlet(str(a["info"].get("hamlet", ""))),
+		check(w.is_water(spot) and w._lake_at(spot) == w._lake_of_hamlet(str(a["info"].get("hamlet", ""))),
 			"%s pêche sur son lac" % str(a["info"].get("name", id)))
 	# un pêcheur parti dans l'autre lac : sa route passe à terre jusqu'au bord du lac visé et se pose sur son eau
 	w.size = Vector2(1000, 700)
@@ -91,8 +101,21 @@ func _initialize() -> void:
 	w.on_event({"type": "catch", "sim_time": 1.0, "payload": {"agent": visitor, "zone": "large-" + str(w.lakes[target]["name"]),
 		"away": true, "lake": str(w.lakes[target]["name"]), "landed": 1.0, "secret": false}})
 	var trip: Array = w.agents[visitor]["path"]
-	var wet := trip.filter(func(s): return w.lake_rn(s[0]) < 1.0 and w._lake_at(s[0]) == target)
+	var wet := trip.filter(func(s): return w.is_water(s[0]) and w._lake_at(s[0]) == target)
 	check(trip.size() >= 5 and wet.size() >= 1, "le pêcheur parti ailleurs marche jusqu'à l'autre lac et pêche sur son eau (%d étapes)" % trip.size())
 	check(float(w.agents[visitor]["path"][0][1]) == 0.0 and trip[trip.size() - 1][0] == w.agents[visitor]["home"], "et rentre chez lui")
+	# une prise sur une parcelle : la barque va pêcher sur cette parcelle-là
+	var fisher := ""
+	for id in w.agents:
+		if str(w.agents[id]["info"].get("role", "")) != "ancien" and str(id) != visitor:
+			fisher = str(id)
+			break
+	var home_k: int = w._lake_of_hamlet(str(w.agents[fisher]["info"].get("hamlet", "")))
+	var deep: Dictionary = w.lake_cells[home_k][w.lake_cells[home_k].size() / 2]
+	w.on_event({"type": "catch", "sim_time": 1.0, "payload": {"agent": fisher, "zone": str(w.agents[fisher]["info"].get("hamlet", "")),
+		"landed": 1.0, "secret": false, "cell": [deep["c"].x, deep["c"].y]}})
+	var held: Array = w.agents[fisher]["path"].filter(func(s): return float(s[1]) > 0.0)
+	check(held.size() == 1 and (held[0][0] as Vector2).distance_to(w._parcel_pos(deep["c"])) < 1.5 / w.PARCELS,
+		"la barque pêche sur la parcelle du moteur")
 	print("LAKESWORLDTEST fails=%d lakes=%d" % [fails, n_lakes])
 	quit(1 if fails else 0)

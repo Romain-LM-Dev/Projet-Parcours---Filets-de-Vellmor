@@ -49,7 +49,8 @@ def test_a_fisher_always_goes_out_at_least_once_and_that_outing_brings_the_whole
     assert world.T["fishing_open_day"] <= out["day"] < world.T["fishing_close_day"]
     p = world.apply_catch(a, 3.0, decision(), 0.0)["payload"]
     assert p["landed"] > 0 and [o["tonnes"] for o in p["outings"]] == [p["landed"]]
-    assert p["yield"] == pytest.approx(out["yield"], abs=0.001) and p["luck"] == pytest.approx(out["luck"], abs=0.001)
+    # (le rendement compte aussi le coin de pêche : sa parcelle du lac)
+    assert p["yield"] == pytest.approx(out["yield"] * p["spot"], abs=0.002) and p["luck"] == pytest.approx(out["luck"], abs=0.001)
     notes = [m.text for m in a.memory.items if m.kind == "peche"]
     assert any("Sur 1 sortie : " in t for t in notes) and not any("sorties" in t for t in notes)       # (au singulier)
 
@@ -272,5 +273,11 @@ def test_scripted_fishers_fish_the_same_in_sync_and_async(tmp_path):
     assert caught_sync.keys() == caught_asyn.keys() and len(caught_sync) == 3 * len(sync.fishers)
     same_aim = [k for k in caught_sync if caught_sync[k]["requested"] == caught_asyn[k]["requested"]]
     assert len(same_aim) >= len(sync.fishers)                                       # au moins la première saison, où personne n'a rien appris
-    assert all(caught_sync[k]["landed"] == caught_asyn[k]["landed"] and caught_sync[k]["outings"] == caught_asyn[k]["outings"]
-               for k in same_aim)
+    def days(c):            # les sorties sans leurs tonnes : le jour, le temps, la chance, le rendement
+        return [{x: v for x, v in o.items() if x != "tonnes"} for o in c["outings"]]
+    assert all(days(caught_sync[k]) == days(caught_asyn[k]) for k in same_aim)
+    # la même prise : à la première saison, où les coins de pêche (les parcelles du lac) sont encore intacts ; ensuite, chaque coin
+    # garde la trace de ce que les autres y ont pris, et ils n'ont pas tous visé pareil dans les deux modes
+    first = [k for k in same_aim if k[1] == 1]
+    assert first and all(caught_sync[k]["landed"] == caught_asyn[k]["landed"]
+                                                and caught_sync[k]["outings"] == caught_asyn[k]["outings"] for k in first)

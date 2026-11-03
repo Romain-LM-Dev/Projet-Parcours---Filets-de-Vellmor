@@ -326,7 +326,27 @@ village (sa rive) et le large. En ligne de commande : `python -m filets run --ag
 villages ou de pêcheurs, la flotte ou la graine** (ou cliquer sur **Générer la vallée**) envoie `generate_world` au moteur, qui répond par un catalogue dont seule la
 vallée change ; le joueur retouche ensuite chaque fiche. Les deux nombres suivent la liste (ajouter ou retirer un pêcheur les met à jour), il y a
 toujours un pêcheur au moins par village, et un refus du moteur s'affiche dans le menu.
-La carte de Godot pose les villages autour du lac (les quatre coins pour la vallée de base, puis les flancs).
+Le moteur pose les villages autour de leur lac (les quatre coins pour la vallée de base, puis les flancs ; avec plusieurs lacs, sur la
+rive extérieure de chacun, jamais dans l'eau ni contre la maison de l'ancien) et la carte de Godot les reprend (`run_start.map`).
+
+**Le monde en mailles.** La vallée (le carré du sol) se découpe en trois mailles, chacune adaptée à ce qu'elle porte :
+
+* **les lacs : 30 × 30 parcelles** (`lakes.GRID`). Chaque lac est une tache de parcelles tirée de la graine autour de son centre, au
+  bord ondulé : il a l'air d'un lac, et deux lacs demandés en font deux. Chaque parcelle a **son poisson** (plus au fond qu'au bord) et
+  **sa chance** (des coins plus ou moins bons, 1 en moyenne sur le lac). Une barque pêche **autour de sa parcelle** : elle y vide le
+  poisson d'abord, puis celui des voisines. Le repeuplement du lac entier ne change pas (la même logistique) ; il va aux parcelles selon
+  ce qui leur manque, et une part du poisson regagne ses coins. Le rendement d'une sortie compte la chance de la parcelle et ce que les
+  saisons passées y ont laissé (à l'ouverture de la saison : l'ordre des retours n'y change rien). **Chaque pêcheur choisit son coin**
+  sur la rive de son village, d'après sa propre expérience : un coin près de chez lui la première fois, il le garde s'il a rendu
+  comme le lac, sinon il va au meilleur coin qu'il connaisse ou en essaie un nouveau ; il s'en souvient (« Mon coin de pêche a peu
+  donné »). En cachette ou dans un autre lac, il pêche au large, sur une parcelle profonde. Événements : `catch.cell`, `catch.spot`,
+  `run_start.lakes[].cells`, `lake_cells` (le poisson de chaque parcelle après le repeuplement) ;
+* **les maisons : 24 × 24 lots**, une maison par lot autour de la place de son village, et c'est **un obstacle** ;
+* **les personnages : 120 × 120 pas**, bien plus fins : ils se faufilent entre les maisons et contournent l'eau (recherche de chemin
+  sur la grille) ; les barques ne vont que sur l'eau, jusqu'à la parcelle que le moteur a donnée. Les chemins de terre suivent les
+  mêmes pas.
+
+Sur la carte, **G** montre les trois mailles (les maisons en rouge, la chance des parcelles du vert au rouge).
 
 Population (cycle de quatre archétypes de la fiche, répartis dans les villages) :
 famille ancienne prudente, nouveau venu endetté, taiseux qui relève ses filets en cachette, beau
@@ -635,8 +655,11 @@ et ses effets sont des événements séparés : `proposal`, `support`, `promise`
 
 Vue de dessus de la vallée, dessinée entièrement en code (aucune image externe) :
 
-* **le lac** est un shader : son eau se trouble et se couvre d'herbiers quand le stock passe sous la
-  moitié, et **le nombre de poissons qu'on voit nager suit le stock** ; la prairie jaunit après une sécheresse ;
+* **la carte remplit tout le cadre** : la vallée en losange touche ses quatre bords, la forêt s'étend au-delà. On s'y promène comme
+  dans Age of Empires : **la molette zoome** vers le pointeur (jusqu'à ×4), **le clic droit** (ou celui du milieu) fait glisser la
+  carte, **les flèches** et le bord de la carte la font défiler, **Origine** recadre sur toute la vallée, **G** montre les mailles ;
+* **le lac** est un shader, dessiné d'après ses parcelles : son eau se trouble et se couvre d'herbiers là où le poisson manque
+  (les coins trop pêchés se voient), et **le nombre de poissons qu'on voit nager suit le stock** ; la prairie jaunit après une sécheresse ;
 * **les pêcheurs** partent de leur hameau, prennent le ponton, sortent en barque jusqu'à leur coin de
   pêche, jettent le filet (« +3,2 t »), puis rentrent ;
 * **le jour et la nuit** suivent l'heure simulée. La veillée se tient le soir : la carte s'assombrit,

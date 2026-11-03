@@ -79,6 +79,9 @@
       "items": {
         "type": "object"
       }
+    },
+    "map": {
+      "type": "object"
     }
   },
   "required": [
