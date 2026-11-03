@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-  Arrête ce que start.ps1 a lancé : le moteur, les services Kafka, le serveur Colibri s'il l'a démarré, puis les
+  Arrête ce que start.ps1 a lancé : le moteur, les services Kafka, puis les
   conteneurs (Kafka, et PostgreSQL et le stockage objet s'ils tournent).
 
 .PARAMETER KeepKafka
@@ -41,17 +41,6 @@ Get-CimInstance Win32_Process -Filter "Name like 'python%'" -ErrorAction Silentl
         taskkill /PID $_.ProcessId /T /F *> $null
         Write-Host "Processus FILETS $($_.ProcessId) arrêté."
     }
-
-# Colibri, seulement s'il a été démarré par start.ps1 -Colibri (un serveur lancé à la main, ou pour un autre usage, reste)
-$colibriMark = Join-Path $PSScriptRoot '.filets-colibri'
-if (Test-Path $colibriMark) {
-    $coli = (Get-Content $colibriMark -TotalCount 1).Trim()
-    if ($coli -and (Test-Path $coli)) {
-        py -3 $coli stop *> $null
-        Write-Host 'Serveur Colibri arrêté.'
-    }
-    Remove-Item $colibriMark -Force
-}
 
 if (-not $KeepKafka -and (Get-Command docker -ErrorAction SilentlyContinue)) {
     docker info *> $null

@@ -33,7 +33,6 @@ Ce document explique comment les morceaux du jeu se parlent et où vont les donn
 | **Stockage objet S3** | Avec `config/data.yaml` : les fichiers bruts, à savoir les documents du corpus et l'archive de chaque partie (`events.jsonl`, `indicators.jsonl`, `config.json`, `summary.json`). MinIO dans `docker-compose.yml`, ou tout service S3 (AWS…). |
 | **Godot** | Affiche, ne décide rien : menu, carte de la vallée, fil des interactions, inspecteur d'agent, barre de pilotage. |
 | **Ollama** | Serveur de modèles locaux. Seul le moteur lui parle. |
-| **Colibri** (option) | Autre serveur de modèles locaux, pour les grands modèles à mélange d'experts (Qwen3.6 35B, `config/colibri.yaml`) : mêmes API (`/v1/chat/completions`, `/v1/systemone`), un seul modèle pour la réflexion et les décisions simples. Seul le moteur lui parle. |
 
 Sans Kafka (`serve` seul, ou les tests), un bus en mémoire (`LocalBus`) a la même interface et le moteur ouvre lui-même l'API : c'est le mode des essais rapides. Sans `config/data.yaml`, le RAG reste en mémoire (BM25) et l'historique dans SQLite : aucun service à lancer.
 

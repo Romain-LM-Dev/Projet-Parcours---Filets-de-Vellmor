@@ -51,12 +51,6 @@ LLM_OPTIONS = [
      "reflection": "rapide",
      "detail": "Qwen 2.5 sur votre machine : grand modèle 7B, petit 1,5B. Sur une carte de 6 Go ils ne tiennent pas "
                "ensemble : chaque passage de l'un à l'autre coûte une trentaine de secondes. Lent."},
-    # shortcut: async_speed estimé (comme le 7B), pas mesuré ; à mesurer une fois le modèle téléchargé
-    {"id": "colibri", "label": "Colibri · Qwen3.6 35B", "config": "config/colibri.yaml", "async_speed": 0.125,
-     "reflection": "adaptive",
-     "detail": "Un modèle bien plus capable (35 milliards de paramètres, 3 actifs par mot) servi par Colibri, qui va "
-               "chercher ses experts dans la carte graphique, la RAM ou le disque. Il réfléchit, parle, et répond aussi "
-               "aux réflexes et aux votes sans écrire de texte. Demande .\\start.ps1 -Colibri."},
     {"id": "groq", "label": "Groq (API gratuite)", "config": "config/groq.yaml", "async_speed": 0.5, "reflection": "rapide",
      "detail": "Grand modèle sur Groq (clé GROQ_API_KEY requise), petit modèle sur Ollama."},
 ]

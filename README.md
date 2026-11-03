@@ -21,7 +21,6 @@ montre tout en direct.
     │   └──── Kafka (filets.commands : démarrer, pause, vitesse, mode, injections) ◄──┘
     ├─ catalogue (menu)                                 Godot (menu, scène, pilotage, inspecteur)
     ├─ Ollama : Qwen (réflexion), tev1 (décisions simples), embeddinggemma (plongements)
-    ├─ ou Colibri (option) : Qwen3.6 35B pour la réflexion et les décisions simples
     └─ RAG : PostgreSQL + pgvector (corpus, souvenirs) · stockage objet S3 (documents, archives des parties)
 ```
 
@@ -39,7 +38,6 @@ Sous Windows, deux scripts font tout (voir `install.ps1` et `start.ps1`, ou leur
                               # le moteur en salon (Docker Desktop est lancé au besoin) ; on règle la partie dans le menu
 .\start.cmd -Light            # léger, sans Docker ni Ollama : le moteur seul avec le faux LLM
 .\start.cmd -OllamaProfile quality   # Ollama « qualité » (7B + 1,5B) : meilleur, mais bien plus lent
-.\start.cmd -Colibri          # Qwen3.6 35B servi par Colibri à la place de Qwen 2.5 (voir « Colibri » plus bas)
 .\stop.cmd                    # ferme le moteur, les services et les conteneurs (les données sont gardées)
 ```
 
@@ -227,26 +225,6 @@ Réglages du serveur Ollama (variables d'environnement, non appliquées par le j
 réponse. Qwen garde la réflexion et les paroles. Il demande **Ollama 0.40.4 ou plus** (`winget upgrade Ollama.Ollama`, Ollama
 fermé) puis `ollama pull tev1:0.8b` ; sans lui, la partie se lance quand même et ces décisions passent par Qwen 1,5B. Détails :
 [docs/architecture.md § 4](docs/architecture.md#4-économie-de-tokens--système-1-et-système-2).
-
-**Colibri : un modèle bien plus capable sur la même machine (`config/colibri.yaml`, menu « Colibri · Qwen3.6 35B »).**
-[Colibri](https://github.com/JustVugg/colibri) fait tourner de grands modèles à mélange d'experts : il garde la partie dense en
-mémoire et va chercher les experts là où ils sont (carte graphique, RAM, puis disque). Qwen3.6-35B-A3B (35 milliards de
-paramètres, 3 actifs par mot, 23 Go) tourne ainsi avec une carte de 6 Go et 16 Go de RAM. Un seul modèle sert tout : la réflexion
-et les paroles (API compatible OpenAI), et les réflexes et les votes par `POST /v1/systemone`, au même format que tev1, où il lit
-la probabilité de chaque option au lieu d'écrire. Le serveur garde une place de cache par conversation et décode quatre agents à
-la fois (`COLI_KV_SLOTS=4`, réglé par `start.ps1`). Il n'est **pas plus rapide mot à mot** que Qwen 3B, qui tient entier dans la
-carte : il est bien plus rapide que tout modèle de ce niveau sur une telle machine, et la vitesse conseillée en asynchrone (× 1/8)
-reste à mesurer.
-
-* Installation, une fois, en dehors de ce dépôt : le plus simple est de demander à son assistant d'IA « `Set up colibri on this
-  machine following docs/AI_SETUP.md from https://github.com/JustVugg/colibri` » (il demande avant de télécharger le modèle), ou
-  `git clone https://github.com/JustVugg/colibri`, puis `START-HERE.bat`. Sur une carte NVIDIA RTX 30 ou plus récente, ajouter le
-  paquet CUDA de la même version (`colibri-<version>-windows-x86_64-cuda.zip`, à décompresser à côté des moteurs, dans
-  `%LOCALAPPDATA%\colibri\runtime\colibri-<version>`), puis relancer `py -3 c\coli setup --yes --no-start` : il choisit CUDA.
-* Écrire le dossier de Colibri dans le fichier `colibri.path` (propre à la machine, ignoré par git), ou passer `-ColibriPath`.
-* `.\start.cmd -Colibri` démarre le serveur s'il ne tourne pas (`py -3 <colibri>\c\coli start --background`), décharge les modèles
-  de langage d'Ollama pour libérer la RAM (Ollama garde le plongement du RAG) et présélectionne Colibri dans le menu ;
-  `.\stop.cmd` l'arrête s'il l'a démarré. Avant la partie, le moteur vérifie que Colibri répond et sert `qwen3.6-colibri`.
 
 Pour une API (Groq, OpenRouter `:free`, Gemini, Mistral, GitHub Models) : copiez `.env.example` en
 `.env`, exportez la clé, et adaptez `config/groq.yaml`. Toutes ces offres parlent le format OpenAI ;
@@ -794,7 +772,7 @@ corpus/            base de connaissances fictive de la vallée
 config/            default (vallée de base : 4 villages, 8 pêcheurs), large (grande vallée : 4 villages, 18 pêcheurs), lakes (trois lacs,
                    six villages, deux patrouilles), random (vallée tirée de la graine), baseline (sans LLM),
                    no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
-                   ollama_open (3B + tev1), colibri (Qwen3.6 35B), groq, data (PostgreSQL + pgvector, stockage objet)
+                   ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, stockage objet)
 docs/              architecture.md : architecture, temps, communication, tokens, asynchrone, stockage
 schemas/           schémas JSON versionnés des événements
 analysis/          requêtes SQL du rapport (queries.sql pour SQLite, queries_pg.sql pour PostgreSQL)
@@ -808,8 +786,6 @@ tests/             tests de cohérence
   prudent », agents trop conciliants : cf. pistes de la fiche).
 * Évaluer la récupération (`filets retrieval`) : comparer BM25 et pgvector sur les mêmes décisions annotées.
 * Valider le modèle de décision tev1 sur une vraie partie (Ollama 0.40.4) : part des réflexes, confiance, écart aux prises de Qwen.
-* Mesurer Colibri (Qwen3.6 35B) sur une vraie partie : vitesse (CUDA ou Vulkan, `Q36_DN_GPU=1`), réponses hors délai, et régler
-  sa vitesse conseillée en asynchrone (`catalog.LLM_OPTIONS`, estimée à × 1/8).
 * Mesure d'énergie (CodeCarbon pour Ollama, EcoLogits pour les API) à ajouter au bilan de coût.
 * Le protocole expérimental : hypothèses, 5 runs × 2 configurations au moins, baseline (E1, E2).
 * Exploiter les mesures déjà instrumentées pour l'excellence : décalage événement → indicateur sous
