@@ -80,7 +80,7 @@ def test_each_fisher_fishes_a_corner_of_his_own_shore_and_leaves_a_bad_one(tmp_p
     start = kinds(events, "run_start")[0]["payload"]
     lake = world.lake
     assert len(start["lakes"][0]["cells"]) == len(lake.parcels) and set(start["map"]["hamlets"]) == set(world.hamlets)
-    assert start["map"]["grid"] == GRID and kinds(events, "lake_cells")
+    assert start["map"]["grid"] == world.grid >= GRID and start["map"]["size"] == world.world_size and kinds(events, "lake_cells")
     cell_of = {(p["i"], p["j"]): k for k, p in enumerate(lake.parcels)}
     moved = 0
     for c in kinds(events, "catch"):
@@ -100,5 +100,5 @@ def test_each_fisher_fishes_a_corner_of_his_own_shore_and_leaves_a_bad_one(tmp_p
     # le coin de chaque rive : plus près de son village que des autres
     hx, hy = world.village_xy[world.hamlets[0]]
     for k in world.sectors[lake.name][world.hamlets[0]]:
-        d = math.hypot((lake.parcels[k]["i"] + 0.5) / GRID - hx, (lake.parcels[k]["j"] + 0.5) / GRID - hy)
+        d = math.hypot((lake.parcels[k]["i"] + 0.5) / world.grid - hx, (lake.parcels[k]["j"] + 0.5) / world.grid - hy)
         assert all(d <= world._parcel_dist(lake.parcels[k], h) + 1e-9 for h in world.hamlets)

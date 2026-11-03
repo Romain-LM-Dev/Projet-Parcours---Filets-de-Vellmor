@@ -1,5 +1,6 @@
-"""Le récit de l'ancien : à la fin de chaque saison, il raconte au joueur ce que la vallée a vécu (onglet « Récit de l'ancien »
-de Godot). Son IA rédige à partir des seuls faits relevés dans le journal ; sans IA, ou sans réponse, le récit reprend les faits."""
+"""Le récit du narrateur : à la fin de chaque saison, un narrateur externe et omniscient raconte au joueur ce que la vallée a vécu
+(onglet « Récit du narrateur » de Godot). Son IA rédige à partir des seuls faits relevés dans le journal (la vérité de la saison) ;
+sans IA, ou sans réponse, le récit reprend les faits."""
 from __future__ import annotations
 
 import asyncio
@@ -11,6 +12,7 @@ from filets.cli import verify
 from filets.world import World
 from helpers import cfg_for, play, read_events
 from test_rumors import FOUR, Recorder
+from test_trust import QUIET, elwen_of, game
 
 
 def kinds(events, kind):
@@ -26,43 +28,40 @@ def test_each_finished_season_is_told_once_after_its_end(tmp_path, mode):
     for n in told:
         end = next(e for e in kinds(events, "season_end") if e["season"] == n["payload"]["season"])
         assert n["seq"] > end["seq"] and n["payload"]["source"] == "faits" and n["payload"]["facts"]
-        assert n["payload"]["text"].startswith(f"Ce que j'ai vu à la saison {n['payload']['season']}.")
+        assert n["payload"]["text"].startswith(f"Saison {n['payload']['season']}.")
     assert verify(f"recit-{mode}", cfg_for(tmp_path))          # schéma du nouvel événement, ordre, cohérence temporelle
 
 
-def test_the_story_only_tells_what_the_journal_holds(tmp_path):
+def test_the_story_tells_the_true_catches_and_the_lake_stock(tmp_path):
     events = play(tmp_path, run_id="faits", seasons=2, time__mode="sync")
     for n in kinds(events, "narration"):
         season = n["payload"]["season"]
-        # l'ancien ne connaît que les déclarations (le joueur, lui, voit aussi les vraies prises)
-        total = round(sum(e["payload"]["declared"] for e in kinds(events, "report") if e["season"] == season), 2)
-        catches = next(f for f in n["payload"]["facts"] if f.startswith("Prises déclarées à l'ancien :"))
-        assert f"(en tout {total:g} t)" in catches
+        # le narrateur sait la vérité : les vraies prises, à côté des déclarations
+        real = round(sum(e["payload"]["landed"] for e in kinds(events, "catch") if e["season"] == season), 3)
+        said = round(sum(e["payload"]["declared"] for e in kinds(events, "report") if e["season"] == season), 2)
+        assert f"Prises réelles : {real:g} t ; prises déclarées : {said:g} t." in n["payload"]["facts"]
         stock = next(e for e in kinds(events, "season_end") if e["season"] == season)["payload"]["stock"]
         assert any(f"{stock:.0f} t après le repeuplement" in f for f in n["payload"]["facts"])
+        assert len(n["payload"]["facts"]) <= 14
 
 
-def test_an_adopted_rule_says_which_rule_it_replaces(tmp_path):
-    events = play(tmp_path, run_id="regles", seasons=4, time__mode="sync")
-    adopted = [f for n in kinds(events, "narration") for f in n["payload"]["facts"] if f.startswith("À la veillée, ")]
-    assert adopted[0].startswith("À la veillée, première règle adoptée : pas plus de ")
-    for before, after in zip(adopted, adopted[1:]):
-        old, new = (float(f.split("pas plus de ")[1].split(" t")[0]) for f in (before, after))
-        kind = "règle reconduite" if new == old else "règle plus stricte adoptée" if new < old else "règle assouplie"
-        assert after.startswith(f"À la veillée, {kind} : ") and (new == old or f"(au lieu de {old:g} t)" in after)
+def test_the_narrator_knows_a_lie_nobody_discovered(tmp_path):
+    world, events, _ = game(tmp_path, "menteur", QUIET)
+    elwen = elwen_of(world)
+    lie = next(e["payload"] for e in kinds(events, "report")
+               if e["payload"]["agent"] == elwen.id and e["payload"]["landed"] - e["payload"]["declared"] > 0.05)
+    assert not kinds(events, "lie_discovered")
+    facts = " ".join(f for n in kinds(events, "narration") for f in n["payload"]["facts"])
+    assert (f"Elwen a déclaré {lie['declared']:g} t mais a pêché {lie['landed']:g} t (sans que personne ne le sache)." in facts)
 
 
-def test_the_story_tells_the_weather_the_patrol_and_who_sat_at_the_council(tmp_path):
+def test_the_story_tells_the_weather_event_and_the_patrol(tmp_path):
     events = play(tmp_path, run_id="conseil", seasons=2, time__mode="sync", climate__enabled=True,
                   scenario__patrol={"cost": 15, "from_season": 1})
     facts = [f for n in kinds(events, "narration") for f in n["payload"]["facts"]]
-    sky = next(f for f in facts if f.startswith("Temps de la pêche : "))
-    assert sum(int(part.split()[0]) for part in sky.split(" : ")[1].split(" (")[0].split(", ")) == 20      # chaque jour de pêche
-    assert any(f.startswith("La patrouille du lac a fait route vers ") for f in facts)
-    assert any(f.startswith("Au conseil de la vallée siégeaient : ") for f in facts)
-    assert any(" élus sur " in f for f in facts if f.startswith("À la veillée"))                  # au conseil, ce sont les élus
-    votes = [f for f in facts if "la patrouille du lac, dès la saison" in f]
-    assert all(" dès la saison 2 " in f or " dès la saison 3 " in f for f in votes)
+    assert any(f.startswith("La patrouille a fait route vers ") for f in facts)
+    assert any(f.startswith("Saison de l'année : ") for f in facts)
+    assert any(f.startswith("À la veillée, ") for f in facts)
 
 
 def elder_game(tmp_path, run_id, recit):
@@ -74,21 +73,22 @@ def elder_game(tmp_path, run_id, recit):
     world = World(cfg, LocalBus(), run_id)
     asyncio.run(world.run())
     rec.close()
-    return read_events(tmp_path, run_id), rec.requests
+    return read_events(tmp_path, run_id), rec.requests + rec.narrations
 
 
-def test_an_ai_elder_tells_the_season_in_its_own_voice_from_the_facts(tmp_path):
-    events, requests = elder_game(tmp_path, "ancien-ia", "Le lac a donné, mais la parole n'a pas tenu.")
+def test_an_external_narrator_tells_the_season_from_the_facts(tmp_path):
+    events, requests = elder_game(tmp_path, "narrateur-ia", "Le lac a donné, mais la parole n'a pas tenu.")
     [n] = kinds(events, "narration")
-    assert n["payload"]["source"] == "ancien" and n["payload"]["text"] == "Le lac a donné, mais la parole n'a pas tenu."
+    assert n["payload"]["source"] == "narrateur" and n["payload"]["text"] == "Le lac a donné, mais la parole n'a pas tenu."
     asked = next(r for r in requests if '"recit"' in r["user"])
-    assert all(f in asked["user"] for f in n["payload"]["facts"]) and "N'invente rien" in asked["user"]
+    assert all(f in asked["user"] for f in n["payload"]["facts"]) and "n'invente rien" in asked["user"]
     assert asked["temperature"] == 0.3 != next(r for r in requests if '"prise"' in r["user"])["temperature"]
     call = next(e["payload"] for e in kinds(events, "llm_call") if e["payload"]["purpose"] == "narration")
-    assert call["call_id"] == n["payload"]["llm_call_id"] and n["actor"] == call["agent"]
+    assert call["call_id"] == n["payload"]["llm_call_id"] and call["agent"] == "narrateur" and call["tier"] == "grand"
+    assert not n["actor"]
 
 
-def test_without_an_answer_the_elder_falls_back_to_the_facts(tmp_path):
-    events, _ = elder_game(tmp_path, "ancien-muet", None)
+def test_without_an_answer_the_narrator_falls_back_to_the_facts(tmp_path):
+    events, _ = elder_game(tmp_path, "narrateur-muet", None)
     [n] = kinds(events, "narration")
-    assert n["payload"]["source"] == "faits" and n["payload"]["text"].startswith("Ce que j'ai vu à la saison 1.")
+    assert n["payload"]["source"] == "faits" and n["payload"]["text"].startswith("Saison 1.")

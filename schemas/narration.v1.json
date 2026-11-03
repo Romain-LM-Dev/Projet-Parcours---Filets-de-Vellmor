@@ -9,6 +9,7 @@
     },
     "source": {
       "enum": [
+        "narrateur",
         "ancien",
         "faits"
       ]

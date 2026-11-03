@@ -31,7 +31,7 @@ var lbl_clock: Label
 var lbl_status: Label
 var ind_labels := {}
 var feed: RichTextLabel
-var narration: RichTextLabel    # le récit de chaque saison par l'ancien (onglet « Récit de l'ancien »)
+var narration: RichTextLabel    # le récit de chaque saison par le narrateur externe (onglet « Récit du narrateur »)
 var trust_view: RichTextLabel   # jauges de confiance, vraies prises et déclarations (onglet « Confiance »)
 var trust_dirty := false
 var trust_mode := "avg"          # « avg » : la confiance moyenne des autres ; « from » : celle qu'un personnage accorde aux autres
@@ -472,7 +472,7 @@ func _build_ui() -> void:
 	feed.scroll_following = true
 	feed_box.add_child(feed)
 	narration = _rich()
-	narration.name = "Récit de l'ancien"
+	narration.name = "Récit du narrateur"
 	narration.scroll_following = true
 	tabs.add_child(narration)
 	var trust_box := VBoxContainer.new()
@@ -1011,9 +1011,9 @@ func _on_event(ev: Dictionary) -> void:
 				_feed("\n" + lab + _tag("VEILLÉE", "#7f95ff") + " [b]%s[/b] se réunit" % _scope(str(p.get("scope", ""))).capitalize(), [])
 		"narration":
 			var season := int(p.get("season", 0))
-			var how := "" if str(p.get("source", "")) == "ancien" else "  [color=#6f7896][font_size=11](d'après les faits)[/font_size][/color]"
+			var how := "" if str(p.get("source", "")) != "faits" else "  [color=#6f7896][font_size=11](d'après les faits)[/font_size][/color]"
 			narration.append_text("[font=res://fonts/alegreya-latin-700-normal.woff2][font_size=17][color=#e2bd6a]Saison %d[/color][/font_size][/font]%s\n[i]%s[/i]\n\n" % [season, how, _esc(str(p.get("text", "")))])
-			_feed(lab + _tag("RÉCIT", "#e2bd6a") + " l'ancien raconte la saison %d  [color=#6f7896](onglet « Récit de l'ancien »)[/color]" % season, [])
+			_feed(lab + _tag("RÉCIT", "#e2bd6a") + " le narrateur raconte la saison %d  [color=#6f7896](onglet « Récit du narrateur »)[/color]" % season, [])
 		"utterance":
 			var sp := str(p.get("speaker", ""))
 			var to := str(p.get("to", "tous"))
@@ -1242,7 +1242,7 @@ func _reset(ev: Dictionary) -> void:
 	lbl_weather.text = ""
 	feed.clear()
 	narration.clear()
-	narration.append_text("[color=#8f97b2]À la fin de chaque saison, l'ancien raconte ici ce que la vallée a vécu.[/color]\n\n")
+	narration.append_text("[color=#8f97b2]À la fin de chaque saison, le narrateur raconte ici ce que la vallée a vécu, y compris ce que ses habitants ignorent.[/color]\n\n")
 	inspector.text = "Cliquez sur un pêcheur pour l'inspecter."
 	_render_rules()
 	_render_trust()

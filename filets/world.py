@@ -54,13 +54,13 @@ from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
 from .events import EventFactory, Recorder
 from .lake import Lake
-from .lakes import GRID, lake_distance, lake_parcels, resolve_lakes, village_positions, world_size
+from .lakes import grid_of, lake_distance, lake_parcels, resolve_lakes, village_positions, world_size
 from .memory import MemoryBank, MemoryStore, VectorMemory
 from .objects import archive_run, make_objects
 from .profiles import Profile, build_population, villages_of
 from .rag import Retriever, VectorRetriever
 from .schemas import validate_command
-from .llm import LLMRouter, to_number
+from .llm import LLMRouter, extract_json, to_number
 from .vectors import PgVectorStore, make_embedder, postgres_dsn
 
 log = logging.getLogger("filets.world")
@@ -224,7 +224,10 @@ class World:
         self.lakes: dict[str, Lake] = {}
         self.lake_of_hamlet: dict[str, str] = {}
         resolved = resolve_lakes(L, self.hamlets, Counter(a.profile.hamlet for a in self.fishers))
-        shapes = lake_parcels(len(resolved), int(self.cfg["run"]["seed"]))     # la maille de chaque lac, tirée de la graine
+        # la taille de la vallée (plus de villages et de lacs, plus de terre), et la maille de chaque lac, tirée de la graine
+        self.world_size = world_size(len(self.hamlets), len(resolved))
+        self.grid = grid_of(self.world_size)
+        shapes = lake_parcels(len(resolved), int(self.cfg["run"]["seed"]), self.world_size)
         for d, parcels in zip(resolved, shapes):
             self.lakes[d["name"]] = Lake(d["capacity"], d["initial_ratio"], d["growth_rate"], L["collapse_ratio"],
                                          L["observation_noise"], d["name"], d["label"], parcels)
@@ -232,7 +235,8 @@ class World:
                 self.lake_of_hamlet[village] = d["name"]
         # où sont les villages dans le sol, et la rive de chacun : les parcelles de son lac plus proches de lui que des autres villages
         names = list(self.lakes)
-        self.village_xy = village_positions(self.hamlets, {h: names.index(n) for h, n in self.lake_of_hamlet.items()}, len(names))
+        self.village_xy = village_positions(self.hamlets, {h: names.index(n) for h, n in self.lake_of_hamlet.items()}, len(names),
+                                            self.world_size)
         self.sectors: dict[str, dict[str, list[int]]] = {}
         for name, lake in self.lakes.items():
             mine = [h for h, n in self.lake_of_hamlet.items() if n == name]
@@ -438,7 +442,7 @@ class World:
 
     def _parcel_dist(self, p: dict, hamlet: str) -> float:
         hx, hy = self.village_xy[hamlet]
-        return math.hypot((p["i"] + 0.5) / GRID - hx, (p["j"] + 0.5) / GRID - hy)
+        return math.hypot((p["i"] + 0.5) / self.grid - hx, (p["j"] + 0.5) / self.grid - hy)
 
     def spot_of(self, agent: Agent, lake: Lake, zone: str, season: int) -> int:
         """La parcelle où ce pêcheur jette ses filets cette saison : une règle de sa propre expérience, que le moteur ne fait
@@ -2313,27 +2317,121 @@ class World:
             facts.append(f"{self.first_name(acc['accuser'])} a accusé {self.first_name(acc['accused'])} de trop pêcher.")
         return facts
 
+    def narrator_facts(self, season: int, limit: int = 14) -> list[str]:
+        """Ce que sait le narrateur externe et omniscient : la VÉRITÉ de la saison (vraies prises, mensonges et pêches en
+        cachette, découverts ou non, stock réel de chaque lac), à côté de ce que la vallée a décidé. Faits courts et chiffrés,
+        par ordre d'importance, plafonnés pour ne pas noyer un petit modèle. (`season_facts` reste le point de vue de l'ancien.)"""
+        evs = [e for e in self.events.index.values() if e["season"] == season]
+        of = lambda t: [e["payload"] for e in evs if e["type"] == t]       # noqa: E731
+        both = lambda names: names[0] if len(names) == 1 else ", ".join(names[:-1]) + " et " + names[-1]   # noqa: E731
+        fn = self.first_name
+        catches = of("catch")
+        lake_of = lambda c: c.get("lake") or next(iter(self.lakes))        # noqa: E731
+        real: dict[str, float] = {}
+        for c in catches:
+            real[c["agent"]] = round(real.get(c["agent"], 0.0) + c["landed"], 3)
+        said: dict[str, float] = {}
+        for r in of("report"):
+            said[r["agent"]] = round(said.get(r["agent"], 0.0) + r["declared"], 2)
+        found = {d["agent"] for d in of("lie_discovered")}
+        starts = next((p for p in of("season_start")), {})
+        facts: list[str] = []
+        for lake in self.lakes.values():                                   # 1. chaque lac : stock réel et son évolution
+            start = starts.get("lakes", {}).get(lake.name) if self.multi else starts.get("stock")
+            taken = sum(c["landed"] for c in catches if lake_of(c) == lake.name)
+            villages = [h for h, n in self.lake_of_hamlet.items() if n == lake.name]
+            level = prompts.lake_level(lake.stock, lake.capacity, lake.collapse_ratio)
+            facts.append((f"{lake.label} (villages : {', '.join(villages)}) : " if self.multi else "Le lac : ")
+                         + (f"{start:.0f} t au début, " if start is not None else "")
+                         + f"{taken:g} t pêchées, {lake.stock:.0f} t après le repeuplement sur {lake.capacity:.0f} t "
+                           f"({100 * lake.stock / lake.capacity:.0f} % : {level}).")
+        if said:                                                           # 2. déclaré contre réel
+            facts.append(f"Prises réelles : {sum(real.values()):g} t ; prises déclarées : {sum(said.values()):g} t.")
+        for aid, got in real.items():                                      # 3. les mensonges, découverts ou non
+            if aid in said and got > said[aid] + 0.05:
+                facts.append(f"{fn(aid)} a déclaré {said[aid]:g} t mais a pêché {got:g} t "
+                             + ("(mensonge découvert)." if aid in found else "(sans que personne ne le sache)."))
+        for c in catches:                                                  # 4. pêches en cachette (interdit de pêche)
+            if c["secret"]:
+                facts.append(f"{fn(c['agent'])}, interdit de pêche, a pêché en cachette {c['landed']:g} t "
+                             + ("(pris sur le fait)." if c["agent"] in found else "(sans que personne ne le sache)."))
+        for c in catches:                                                  # 5. partis pêcher dans un autre lac
+            if c.get("away"):
+                facts.append(f"{fn(c['agent'])} est parti pêcher dans {self.lakes[lake_of(c)].label} ({c['landed']:g} t).")
+        tol, rules = self.scn["quota_tolerance"], {}
+        for a in self.fishers:                                             # 6. règles en vigueur et qui les a dépassées
+            norm = self.applicable_norm(a, season, self.clock.now())
+            if norm is not None:
+                over = rules.setdefault((norm.scope, norm.quota), [])
+                if real.get(a.id, 0.0) > norm.quota + tol:
+                    over.append(f"{fn(a.id)} ({real[a.id]:g} t)")
+        for (scope, quota), over in rules.items():
+            whose = "de la vallée" if scope == "valley" else f"du hameau de {scope.split(':', 1)[1]}"
+            facts.append(f"Règle {whose} : pas plus de {quota:g} t par pêcheur ; "
+                         + ("tous l'ont tenue." if not over else f"dépassée par {both(over)}."))
+        adopted = of("norm_adopted")                                       # 7. la veillée
+        for n in adopted:
+            whose = "" if n["scope"] == "valley" else f" pour le hameau de {n['scope'].split(':', 1)[1]}"
+            facts.append(f"À la veillée, règle adoptée{whose} : pas plus de {n['quota']:g} t par pêcheur dès la saison "
+                         f"{n['effective_season']} ({len(n['supporters'])} soutiens).")
+        if of("assembly_start") and not adopted:
+            facts.append(f"À la veillée, {len(of('proposal'))} proposition(s), aucune adoptée.")
+        for acc in of("accusation"):                                       # 8. accusations justes ou injustes
+            just = self.cheated(acc["accused"], season)
+            facts.append(f"{fn(acc['accuser'])} a accusé {fn(acc['accused'])} de trop pêcher : "
+                         + ("accusation juste." if just else "accusation injuste."))
+        for r in of("sanction_result"):                                    # 9. exclusions, patrouille votée
+            verdict = "voté" if r["adopted"] else "refusé"
+            votes = f"({len(r['for'])} voix sur {r['voters']})"
+            if r["action"] in PATROL_ACTIONS:
+                what = "d'installer" if r["action"] == "patrouille" else "de retirer"
+                facts.append(f"Le conseil a {verdict} {what} la patrouille {votes}.")
+            else:
+                what = "d'interdire de pêche" if r["action"] == "exclure" else "de laisser pêcher à nouveau"
+                facts.append(f"La vallée a {verdict} {what} {fn(r['target'])} {votes}.")
+        if self.banned:
+            facts.append("Interdits de pêche : " + both([fn(b) for b in self.banned]) + ".")
+        route = next((p["legs"] for p in of("patrol_route")), None)        # 10. patrouille, climat, événements
+        if route:
+            facts.append("La patrouille a fait route vers " + ", puis ".join(self.leg_text(leg) for leg in route) + ".")
+        for ev in of("world_event"):
+            facts.append(f"Événement : {ev['label']} ({ev['text']}).")
+        cond = next((p.get("conditions") for p in of("season_start")), None) or {}
+        if cond.get("climate"):
+            facts.append(f"Saison de l'année : {cond['climate']}.")
+        for inj in of("injection"):
+            if inj["injection_type"] == "drought":
+                facts.append("Une sécheresse a frappé le lac : son stock a baissé d'un coup.")
+        low = [c for c in catches if c.get("spot", 1.0) < 0.6]             # 11. coins de pêche trop pêchés
+        if low:
+            facts.append(f"{len(low)} pêcheur(s) sont revenus d'un coin de pêche trop pêché : "
+                         + both(sorted({fn(c['agent']) for c in low})) + ".")
+        return facts[:limit]
+
     async def narrate(self, season: int) -> None:
-        """À la fin de la saison, l'ancien raconte au joueur ce que la vallée a vécu (onglet « Récit de l'ancien » de Godot).
-        Son IA le rédige à partir des seuls faits relevés ; sans IA, ou si elle ne répond pas, le récit reprend les faits."""
-        facts = self.season_facts(season)
-        elder = self.elder
+        """À la fin de la saison, un narrateur externe et omniscient raconte au joueur ce que la vallée a vécu (onglet « Récit
+        du narrateur » de Godot). Il n'est pas un agent : il passe par le grand modèle s'il y en a un (hors faux LLM) ; sans IA,
+        ou si elle ne répond pas, le récit reprend les faits."""
+        facts = self.narrator_facts(season)
         text, source, call_id = "", "faits", None
-        if elder is not None and elder.profile.kind == "llm" and elder.profile.tier and \
-                self.cfg["llm"]["tiers"][elder.profile.tier]["provider"] != "scripted":
-            data, res, _ = await _ask_llm(self, elder, "narration",
-                                          prompts.narration_messages(elder.profile, facts, self.capacity, self.hamlets,
-                                                                     self.world_text(elder) if self.multi else None),
-                                          {"round": 0},
-                                          schema=prompts.NARRATION_SCHEMA, max_tokens=prompts.NARRATION_MAX_TOKENS,
-                                          temperature=prompts.NARRATION_TEMPERATURE)
-            text = str((data or {}).get("recit", "")).strip()[:600]
+        tier = self.cfg["llm"]["tiers"].get("grand")
+        if tier and tier["provider"] != "scripted":
+            hint = {"purpose": "narration", "archetype": "narrateur", "state": {"round": 0}, "system": "S2",
+                    "schema": prompts.NARRATION_SCHEMA, "max_tokens": prompts.NARRATION_MAX_TOKENS,
+                    "temperature": prompts.NARRATION_TEMPERATURE,
+                    "seed": zlib.crc32(f"{self.cfg['run']['seed']}|narrateur|{season}".encode()) & 0x7FFFFFFF}
+            res = await self.router.complete("narrateur", "grand", "narration", prompts.narration_messages(facts), hint)
+            data = extract_json(res.text) if res.status == "ok" else None
+            text = str((data or {}).get("recit", "")).strip()[:700]
             if text:
-                source, call_id = "ancien", res.call_id
+                source, call_id = "narrateur", res.call_id
+            else:
+                self.incident("narrateur", "no_response" if res.status != "ok" else "unparseable",
+                              res.detail or (res.text or "")[:200], "récit tiré des faits", res.call_id)
         if not text:
-            text = f"Ce que j'ai vu à la saison {season}. " + " ".join(facts)
+            text = f"Saison {season}. " + " ".join(facts)
         self.events.emit("narration", {"season": season, "text": text, "source": source, "facts": facts,
-                                       "llm_call_id": call_id}, actor=elder.id if elder else None)
+                                       "llm_call_id": call_id})
 
     # ------------------------------------------------------------ démarrage / fin
     def start(self):
@@ -2347,7 +2445,7 @@ class World:
                        "growth_rate": lk.r, "villages": [h for h, n in self.lake_of_hamlet.items() if n == lk.name],
                        "fishers": self.lake_fishers[lk.name],
                        "cells": [[p["i"], p["j"], p["depth"], p["luck"]] for p in lk.parcels]} for lk in self.lakes.values()],
-            "map": {"grid": GRID, "size": world_size(len(self.hamlets), len(self.lakes)), "hamlets": {h: [round(x, 4), round(y, 4)] for h, (x, y) in self.village_xy.items()}},
+            "map": {"grid": self.grid, "size": self.world_size, "hamlets": {h: [round(x, 4), round(y, 4)] for h, (x, y) in self.village_xy.items()}},
             "agents": [{**a.profile.public(), "wealth": a.wealth, "offset_days": a.offset_days}
                        for a in self.agents.values()],
             "hamlets": self.hamlets, "boats": {k: dict(v) for k, v in self.boats.items()},

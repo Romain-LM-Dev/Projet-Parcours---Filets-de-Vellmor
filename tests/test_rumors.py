@@ -41,7 +41,7 @@ class Recorder:
                  recit: str | None = "Le lac a donné, mais la parole n'a pas tenu.", confiance: dict | None = None,
                  sanction: str = "oui", elect: dict | None = None, debrief: dict | None = None, route: list | None = None,
                  speech: dict | None = None, lake: str | None = None):
-        self.recit = recit                        # récit de l'ancien ; None : une réponse sans récit
+        self.recit = recit                        # récit du narrateur ; None : une réponse sans récit
         self.confiance = confiance                # le jugement de confiance renvoyé dans chaque réplique (None : aucun)
         self.sanction = sanction                  # le vote sur chaque proposition d'exclure ou de réautoriser
         self.elect = elect or {}                  # l'élection : prénom de l'électeur -> prénom du candidat (sinon le premier)
@@ -49,7 +49,8 @@ class Recorder:
         self.route = route                        # la route que choisit le capitaine de la patrouille : [(cible, jours)] (None : illisible)
         self.speech = speech or {}                # champs ajoutés à chaque réplique (ex. {"patrouille": "installer"})
         self.lake = lake                          # le lac que chaque pêcheur dit choisir pour sa prise (plusieurs lacs)
-        self.requests: list[dict] = []
+        self.requests: list[dict] = []           # les demandes des personnages (décisions, paroles, votes…)
+        self.narrations: list[dict] = []         # celles du narrateur, qui n'est pas un personnage
         self.propose_first, self.proposed = propose_first, False
         self.reject = reject                      # formats de réponse refusés par ce fournisseur (HTTP 400), ex. ("json_schema",)
         outer = self
@@ -62,7 +63,7 @@ class Recorder:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 user = body["messages"][-1]["content"]
                 fmt = body.get("response_format")
-                outer.requests.append({"user": user, "system": body["messages"][0]["content"],
+                (outer.narrations if '"recit"' in user else outer.requests).append({"user": user, "system": body["messages"][0]["content"],
                                        "max_tokens": body.get("max_tokens"), "response_format": fmt, "seed": body.get("seed"),
                                        "model": body.get("model"), "temperature": body.get("temperature")})
                 if fmt and fmt.get("type") in outer.reject:
@@ -91,7 +92,7 @@ class Recorder:
                 elif '"vote"' in user:                                  # bulletin de vote : la première proposition de la liste
                     ids = re.findall(r"^- (P\d+) :", user, re.M)
                     content = json.dumps({"vote": ids[0] if ids else "aucune"})
-                elif '"recit"' in user:                                 # récit de la saison par l'ancien
+                elif '"recit"' in user:                                 # récit de la saison par le narrateur
                     content = json.dumps({"recit": outer.recit} if outer.recit else {"autre": "rien"})
                 elif '" ou "non"' in user:                              # vote sur des propositions d'exclure, de réautoriser
                     content = json.dumps({x: outer.sanction for x in re.findall(r'"(X\d+)": "oui" ou "non"', user)})

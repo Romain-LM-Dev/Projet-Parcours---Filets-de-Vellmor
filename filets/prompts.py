@@ -593,18 +593,20 @@ NARRATION_MAX_TOKENS = 260
 NARRATION_TEMPERATURE = 0.3      # un récit fidèle plutôt qu'inventif : à 0,7, un petit modèle enjolive (« le lac à son apogée »)
 
 
-def narration_messages(p, facts: list[str], capacity: float, villages=(), world: str | None = None) -> list[dict]:
-    """Le récit de la saison par l'ancien, pour le joueur : quelques phrases avec sa voix, à partir des seuls faits relevés
-    dans le journal de la partie (il n'invente rien, il raconte)."""
-    ask = ("La saison vient de finir. Voici ce qui s'est passé, tel qu'on l'a vu au marché et à la veillée :\n"
+def narration_messages(facts: list[str]) -> list[dict]:
+    """Le récit de la saison par un narrateur externe et omniscient, pour le joueur : il sait tout (les vraies prises, les
+    mensonges non découverts) et résume la situation à partir des seuls faits de la liste, sans rien inventer."""
+    who = ("Tu es le narrateur d'une histoire de pêcheurs au bord d'un lac. Tu n'es pas un personnage de la vallée : tu vois et "
+           "tu sais tout, y compris ce que les villageois ignorent. Réponds uniquement par un objet JSON.")
+    ask = ("La saison vient de finir. Voici ce qui s'est vraiment passé :\n"
            + "\n".join(f"- {f}" for f in facts)
-           + "\n\nRaconte cette saison en 2 à 4 phrases, avec ta voix d'ancien, comme au coin du feu, et ce que tu en penses. "
-             "N'invente rien : ne parle que de ce qui est dans cette liste. S'il n'y est question ni de promesses, ni de "
-             "règle, ni d'accusation, n'en parle pas. Pour le lac, reprends le mot de la liste, sans l'exagérer ; pour une "
-             "règle, dis si c'est la première, une règle reconduite, plus stricte ou assouplie, comme la liste le dit. "
-             "Le temps de la pêche peut expliquer de maigres prises : tu peux le dire. Quand tu cites quelqu'un, reprends son nom et ce que la liste dit de lui, sans le confondre avec un autre. Des phrases simples et complètes, en bon français. "
-             "Réponds en JSON : {\"recit\": \"<ton récit>\"}")
-    return [{"role": "system", "content": persona(p, capacity, True, villages, world)}, {"role": "user", "content": ask}]
+           + "\n\nRésume cette saison en 3 à 5 phrases, à la troisième personne, comme un narrateur. Reste fidèle aux chiffres "
+             "de la liste et n'invente rien : ne parle que de ce qui y est. Tu peux dire ce que les personnages ignorent "
+             "(« sans que personne ne le sache, … »). S'il n'y est question ni de règle, ni d'accusation, n'en parle pas. "
+             "Pour un lac, reprends le mot de la liste, sans l'exagérer. Quand tu cites quelqu'un, reprends son nom et ce que la "
+             "liste dit de lui, sans le confondre avec un autre. Des phrases simples et complètes, en bon français. "
+             "Réponds en JSON : {\"recit\": \"<le récit>\"}")
+    return [{"role": "system", "content": who}, {"role": "user", "content": ask}]
 
 
 def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:

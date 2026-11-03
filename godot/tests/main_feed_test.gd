@@ -91,7 +91,7 @@ func _initialize() -> void:
 	check(other_incidents == 0 or joined.count("INCIDENT") == other_incidents, "les autres incidents gardent la ligne « INCIDENT »")
 
 	# le récit de l'ancien : un onglet à côté du fil, un récit par saison terminée, signalé dans le fil
-	check(m.tabs.get_tab_title(1) == "Récit de l'ancien", "l'onglet « Récit de l'ancien » suit le fil : " + m.tabs.get_tab_title(1))
+	check(m.tabs.get_tab_title(1) == "Récit du narrateur", "l'onglet « Récit du narrateur » suit le fil : " + m.tabs.get_tab_title(1))
 	check(narrations.size() > 0, "le run de test contient des récits de l'ancien")
 	var told: String = m.narration.get_parsed_text()
 	for n in narrations:

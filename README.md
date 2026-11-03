@@ -412,7 +412,7 @@ autres ont déclaré la saison dernière (« entre 2 et 6 t, 4,0 t pour le pêch
 
 **Seuls le pêcheur et le joueur connaissent la vraie prise.** En rentrant, chaque pêcheur **déclare** sa prise à l'ancien
 (événement `report` : `declared`, et `landed`, la vraie). Les autres ne connaissent que la déclaration : c'est elle qui figure dans
-leurs décisions, dans le récit de l'ancien et dans le jugement de la vallée. Une IA décide de sa déclaration dans le même appel que sa
+leurs décisions, et dans le jugement de la vallée (le narrateur externe du récit de fin de saison, lui, sait la vraie prise). Une IA décide de sa déclaration dans le même appel que sa
 prise (champ `declaration`, aucun token de plus) ; un réflexe déclare la vérité ; parmi les agents à règles, le taiseux déclare la
 règle quand il pêche au-delà (sauf si l'un de ses mensonges vient d'éclater). `scenario.catches_visible` dit si les déclarations sont
 lues à toute la vallée ou au seul hameau (menu : « Les déclarations à l'ancien sont lues à toute la vallée »).
@@ -670,9 +670,9 @@ Vue de dessus de la vallée, dessinée entièrement en code (aucune image extern
 * l'horloge (soleil ou lune, phase en cours) est en haut à gauche, la jauge du lac (avec le repère de
   la moitié) en bas ; survoler un pion affiche son nom complet et son archétype ;
 * **chaque pêcheur a la couleur de son hameau** (pion, barque, nom) ; l'ancien a la sienne ;
-* à droite, l'onglet **Récit de l'ancien**, à côté du fil des interactions : à la fin de chaque saison, l'ancien raconte en
-  quelques phrases ce que la vallée a vécu (prises, état du lac, règle tenue ou dépassée, vote, promesses, accusations).
-  Son IA le rédige à partir des seuls faits relevés dans le journal ; sans IA, le récit reprend ces faits (événement
+* à droite, l'onglet **Récit du narrateur**, à côté du fil des interactions : à la fin de chaque saison, un narrateur externe et omniscient raconte en
+  quelques phrases ce que la vallée a vécu, vérité comprise (vraies prises, mensonges même non découverts, stock de chaque lac, règles et qui les dépasse, vote, accusations).
+  Le grand modèle le rédige à partir des seuls faits relevés dans le journal (hors agent, sans voix de l'ancien) ; sans IA, le récit reprend ces faits (événement
   `narration`, rejoué comme les autres).
 
 Les pions et les liens gardent partout le même code : couleur = archétype, rond = agent LLM (anneau
