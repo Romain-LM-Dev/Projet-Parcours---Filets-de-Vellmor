@@ -255,7 +255,7 @@ if ($NoEngine) {
 }
 if ($Auto) {
     Step 'Partie immédiate (sans menu)'
-    if (-not $Config) { $Config = if $Ollama { $OllamaConfig } else { 'config/default.yaml' } }
+    if (-not $Config) { $Config = if ($Ollama) { $OllamaConfig } else { 'config/default.yaml' } }
     $engineArgs = @('-m', 'filets', 'run', '--config', $Config, '--mode', $Mode)
     if ($Kafka) { $engineArgs += @('--bus', 'kafka') } else { $engineArgs += '--ws' }
 } else {
@@ -263,7 +263,7 @@ if ($Auto) {
     if (-not $Config) { $Config = 'config/default.yaml' }
     $engineArgs = @('-m', 'filets', 'serve', '--config', $Config, '--mode', $Mode)
     if ($Kafka)  { $engineArgs += @('--bus', 'kafka') }
-    if $Ollama { $engineArgs += @('--llm', $OllamaLlm) }
+    if ($Ollama) { $engineArgs += @('--llm', $OllamaLlm) }
 }
 if ($PSBoundParameters.ContainsKey('Agents'))  { $engineArgs += @('--agents',  $Agents) }
 if ($PSBoundParameters.ContainsKey('Villages')) { $engineArgs += @('--villages', $Villages) }
