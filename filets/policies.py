@@ -25,7 +25,46 @@ def clamp(x: float, hi: float, lo: float = 0.0) -> float:
     return round(max(lo, min(hi, x)), 1)
 
 
+def obeys(archetype: str, s: dict) -> bool:
+    """Respecte-t-il les règles qui limitent sa pêche (zone réservée, lac au repos, nombre de sorties, taille de bateau) ?
+    La famille ancienne et le beau parleur oui ; le nouveau venu tant qu'il peut payer sa saison avec ses économies ; le taiseux
+    les contourne, sauf si l'un de ses mensonges vient d'être découvert (comme pour sa déclaration, `declare_rule`)."""
+    if archetype == "taiseux":
+        return bool(s.get("exposed"))
+    if archetype == "nouveau_venu":
+        return float(s.get("wealth", 0.0)) >= float(s.get("upkeep", 0.0)) + float(s.get("debt_payment", 0.0))
+    return True
+
+
+def rule_choices(archetype: str, s: dict) -> tuple[dict, str]:
+    """Ce qu'un agent à règles répond aux règles de pêche qui le visent : `place` (« large » s'il quitte sa rive réservée, « rive »
+    s'il y pêche quand même) et `outings` (le nombre de sorties qu'il fait). Et pourquoi, en mots."""
+    out, why = {}, ""
+    if s.get("banned"):
+        return out, why
+    ob = obeys(archetype, s)
+    if s.get("shore_closed"):
+        out["place"] = "large" if ob else "rive"
+        why += " ; sa rive est réservée : " + ("il pêche au large" if ob else "il y pêche quand même")
+    if s.get("outings_cap"):
+        out["outings"] = int(s["outings_cap"]) if ob else int(s.get("outings_n", s["outings_cap"]))
+        why += f" ; la règle limite les sorties à {int(s['outings_cap'])} : " + ("il s'y tient" if ob else "il en fait autant qu'avant")
+    return out, why
+
+
 def catch_rule(archetype: str, s: dict) -> tuple[float, str]:
+    v, why = _catch_base(archetype, s)
+    if s.get("banned") or not obeys(archetype, s):
+        return v, why
+    if s.get("lake_closed") or (s.get("shore_closed") and s.get("large_closed")):
+        return 0.0, "règle : sa zone de pêche est fermée, il reste à quai"
+    limit = s.get("boat_limit")
+    if limit is not None and v > limit:
+        return round(limit, 1), why + " ; bornée par la taille de bateau permise"
+    return v, why
+
+
+def _catch_base(archetype: str, s: dict) -> tuple[float, str]:
     share = sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"])
     quota = s.get("quota")
     # personne ne demande plus que ce qu'il voit dans le lac, mais une sortie rapporte toujours la prise minimale
@@ -217,9 +256,13 @@ def lake_choice_rule(archetype: str, s: dict) -> tuple[str | None, str]:
     réduit par le trajet, moins ce que la route coûte, en tonnes) ; il le quitte aussi s'il est vide et qu'ailleurs on peut encore pêcher.
     Renvoie le nom du lac choisi (None : le sien) et pourquoi."""
     options = s.get("lake_options") or []
+    ob = obeys(archetype, s)
+    if ob:                                    # il ne va pas où la pêche est interdite (lac au repos, large réservé)
+        options = [o for o in options if not o.get("closed")]
     if not options or s.get("banned"):
         return None, ""
-    here = float(s["boat_capacity"])
+    shut = s.get("lake_closed") or (s.get("shore_closed") and s.get("large_closed"))
+    here = 0.0 if shut and ob else float(s["boat_capacity"])      # son lac lui est fermé : il n'y gagne rien
     price = max(float(s.get("price", 100.0)), 1e-9)
 
     def net(o: dict) -> float:
@@ -239,16 +282,87 @@ def at_lake(s: dict, option: dict | None) -> dict:
     if option is None:
         return s
     return {**s, "stock_estimate": option["est"], "capacity": option["capacity"], "n_fishers": option["fishers"] + 1,
-            "boat_capacity": option["hold"]}
+            "boat_capacity": option["hold"], "lake_closed": False, "shore_closed": False, "large_closed": False}
 
 
-def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
+def _round_half(x: float) -> float:
+    return round(x * 2) / 2
+
+
+def propose_rule(archetype: str, s: dict, rng=None) -> tuple[str, float, str | None, str] | None:
+    """La règle qu'un agent à règles propose, selon sa situation et son caractère : (type, valeur, cible, ce qu'il dit), ou None.
+    Un lac bas appelle un repos ; un coin trop pêché, une réserve ; de gros bateaux qui pèsent sur le lac, une taille maximale ;
+    des prises qui dépassent la règle d'un lac moyen, moins de sorties ; sinon un quota. La famille ancienne s'inquiète d'un lac
+    bas ou d'un coin vidé ; le nouveau venu ne vise que les gros bateaux ; le taiseux ne propose rien. `rng` (le faux LLM des tests) :
+    tirage pondéré par la situation parmi tout ce qui est possible, au lieu du premier choix du caractère. `s` : état de la veillée
+    (stock déjà projeté à la saison suivante)."""
+    if archetype not in ("ancien", "beau_parleur", "ancienne_famille", "nouveau_venu"):
+        return None
+    ratio = s["stock_estimate"] / max(s["capacity"], 1e-9)
+    kinds, hot, big, over = set(s.get("rule_kinds") or ()), s.get("hot_zone"), s.get("big_boats"), s.get("rule_over")
+    names, n_out = s.get("boat_names") or [], int(s.get("outings_n", 6))
+    zone = hot or s.get("own_zone")
+    lo = s.get("min_catch", 0.0)
+    q = max(lo, _round_half(sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"])))
+    cand: dict[str, tuple[float, str | None, str]] = {"quota": (q, None, f"Fixons-nous une règle : {q:g} tonnes chacun.")}
+    if "repos" not in kinds and s.get("lake_target"):
+        cand["repos"] = (1.0, s["lake_target"], "Le lac est trop bas : laissons-le au repos une saison, sans pêche.")
+    if "reserve" not in kinds and zone:
+        d = 2.0 if ratio < 0.5 else 1.0
+        cand["reserve"] = (d, zone, f"Interdisons la rive de {zone} pendant {d:g} saison{'s' if d > 1 else ''} : on y a trop pêché.")
+    if "sorties" not in kinds and n_out >= 2:
+        n = float(max(1, n_out // 2))
+        cand["sorties"] = (n, None, f"Limitons chacun à {n:g} sorties en mer par saison.")
+    if "bateau" not in kinds and len(names) >= 2:
+        cand["bateau"] = (float(len(names) - 1), None,
+                          f"Les plus gros bateaux prennent trop : limitons la taille à la {names[len(names) - 2]}.")
+    wanted = {"ancien": [("repos", ratio < 0.35), ("reserve", bool(hot)), ("sorties", ratio < 0.5 and (over or 0) >= 0.5),
+                         ("bateau", bool(big)), ("quota", True)],
+              "beau_parleur": [("reserve", bool(hot)), ("bateau", bool(big)), ("sorties", ratio < 0.5), ("quota", True)],
+              "ancienne_famille": [("repos", ratio < 0.4), ("reserve", bool(hot))],
+              "nouveau_venu": [("bateau", bool(big) and int(s.get("my_boat_rank", 1)) < len(names))]}[archetype]
+    if rng is not None and archetype in ("ancien", "beau_parleur"):
+        weight = {"repos": 5 if ratio < 0.35 else 2 if ratio < 0.5 else 0, "reserve": 5 if hot else 1,    # (jamais de repos sur un lac plein)
+                  "sorties": 3 if ratio < 0.5 or (over or 0) >= 0.4 else 1, "bateau": 5 if big else 1, "quota": 2}
+        kinds_ok = sorted(k for k in cand if weight[k] > 0)
+        kind = rng.choices(kinds_ok, [weight[k] for k in kinds_ok])[0]
+    else:
+        kind = next((k for k, ok in wanted if ok and k in cand), None)
+    if kind is None:
+        return None
+    value, target, said = cand[kind]
+    return kind, value, target, said
+
+
+def likes_rule(archetype: str, s: dict, kind: str, target: str | None, value: float) -> bool:
+    """Un agent à règles soutient-il cette proposition d'un autre type que le quota ? La famille ancienne, le beau parleur et le
+    taiseux (une règle de plus à contourner) oui ; le nouveau venu, endetté, seulement si elle ne le touche pas ou s'il peut se
+    le permettre."""
+    if archetype != "nouveau_venu":
+        return True
+    if kind == "bateau":
+        return int(s.get("my_boat_rank", 1)) <= value
+    if kind == "reserve":
+        return target != s.get("own_zone")
+    if kind == "repos":
+        return s["stock_estimate"] / max(s["capacity"], 1e-9) < 0.3
+    return obeys(archetype, s)
+
+
+def speak_rule(archetype: str, s: dict, rng=None) -> tuple[dict, str]:
     """`s` : état de la veillée vu par l'agent (stock estimé, propositions, prises visibles, etc.).
-    À la veillée, on raisonne sur la saison prochaine, donc sur le stock attendu après repeuplement."""
+    À la veillée, on raisonne sur la saison prochaine, donc sur le stock attendu après repeuplement. `rng` : voir `propose_rule`."""
     s = {**s, "stock_estimate": projected(s["stock_estimate"], s["capacity"], s["growth_rate"])}
     judged = trust_rule(archetype, s.get("facts") or {}, s.get("trust_ctx"))    # ce qu'il pense de ce qu'il vient d'apprendre
-    out = {"message": "", "destinataire": "tous", "proposition_quota": None, "soutien": None,
+    out = {"message": "", "destinataire": "tous", "proposition_type": None, "proposition_valeur": None,
+           "proposition_cible": None, "proposition_quota": None, "soutien": None,
            "promesse": None, "accuse": None, "confiance": judged, "exclure": None, "reautoriser": None, "patrouille": None}
+
+    def propose(kind: str, value: float, target: str | None, said: str):
+        out.update(proposition_type=kind, proposition_valeur=value, proposition_cible=target, message=said)
+        if kind == "quota":
+            out["proposition_quota"] = value        # (l'ancien champ, pour qui le lit encore)
+
     lies, wants = s.get("lies_recent", 0), PATROL_WANTS.get(archetype)
     if not s.get("patrol_enabled", True):
         pass
@@ -262,10 +376,26 @@ def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
     lo = s.get("min_catch", 0.0)          # un quota sous la prise minimale d'une sortie n'aurait pas de sens
     if archetype != "ancien":             # l'ancien relate les faits, il ne propose pas de sanction
         out.update(sanction_rule(archetype, s, judged))
+    # une proposition d'un autre type en tête (réserve, repos, sorties, taille de bateau) : on la soutient si elle convient
+    lr = s.get("leading_rule")            # (id, type, cible, valeur) ou None
+    if lr and lr[1] != "quota" and s.get("leading_rule_trust", 1.0) >= 0.3 and likes_rule(archetype, s, lr[1], lr[2], lr[3]):
+        out["soutien"] = lr[0]
+        if archetype == "ancien":
+            out["message"] = "Cette règle me paraît juste. Tenez-vous-y."
+            return out, "ancien : soutient la règle en tête (type " + lr[1] + ")"
+        planned, _ = catch_rule(archetype, {**s, "quota": s.get("quota")})
+        out["promesse"] = planned if archetype != "taiseux" else max(lo, round(planned / 1.4, 1))
+        out["message"] = f"Je soutiens cette règle et je pêcherai {out['promesse']:g} tonnes."
+        return out, f"{archetype} : soutient la règle en tête (type {lr[1]})"
     if archetype == "ancien":
-        q = max(lo, round(sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"]) * 2) / 2)
+        q = max(lo, _round_half(sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"])))
         if leading is None or leading[1] > q + 0.5:   # soutient toute proposition au moins aussi prudente que la sienne
-            out["proposition_quota"] = q
+            pr = propose_rule(archetype, s, rng) if not lr else None
+            if pr is not None and pr[0] != "quota":
+                propose(*pr)
+                return out, f"ancien : propose une règle de type {pr[0]} selon le lac et ses rives"
+            out["proposition_quota"] = out["proposition_valeur"] = q
+            out["proposition_type"] = "quota"
             out["message"] = f"Le lac a besoin de temps. Je propose que chacun s'en tienne à {q:g} tonnes la saison prochaine."
         else:
             out["soutien"] = leading[0]
@@ -281,13 +411,16 @@ def speak_rule(archetype: str, s: dict) -> tuple[dict, str]:
         return out, "taiseux : promet la référence, soutient la proposition en tête"
     out["promesse"] = planned
     accused = s.get("overfisher")
+    pr = None
+    # (la famille ancienne et le nouveau venu attendent d'avoir entendu les autres : ils ne proposent qu'au 2e tour, si rien n'est sur la table)
+    if not leading and not lr and not (archetype == "ancienne_famille" and accused and s["round"] > 1) and \
+            (archetype == "beau_parleur" or s["round"] > 1):
+        pr = propose_rule(archetype, s, rng if archetype == "beau_parleur" else None)
     if archetype == "ancienne_famille" and accused and s["round"] > 1:
         out["accuse"] = accused
         out["message"] = f"Certains ont pris bien plus que leur part. Je pêcherai {planned:g} tonnes, pas plus."
-    elif archetype == "beau_parleur" and leading is None:
-        q = max(lo, round(sustainable_share(s["stock_estimate"], s["capacity"], s["n_fishers"]) * 2) / 2)
-        out["proposition_quota"] = q
-        out["message"] = f"Fixons-nous une règle : {q:g} tonnes chacun, et tout le monde y gagnera."
+    elif pr is not None:
+        propose(*pr)
     else:
         out["message"] = f"Je compte pêcher {planned:g} tonnes la saison prochaine."
     if leading and (archetype != "nouveau_venu" or leading[1] >= 0.8 * (needs(s) + 1.0)):

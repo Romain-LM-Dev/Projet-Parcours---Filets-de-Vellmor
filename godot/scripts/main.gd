@@ -60,7 +60,10 @@ var run := {}
 var agents := {}            # id -> fiche
 var feed_lines: Array = []  # [{"text": bbcode, "ids": [..]}]
 var proposals := {}
-var norms: Array = []
+var norms: Array = []                # l'historique des règles adoptées
+var norms_now: Array = []            # les règles en vigueur (une par portée, type et cible)
+const BREACH_WORD := {"quota": "quota dépassé", "reserve": "pêche dans la zone réservée", "repos": "pêche dans le lac au repos",
+	"sorties": "trop de sorties en mer", "bateau": "trop de poisson pour la taille de bateau permise"}
 var selected := ""
 var inspector_dirty := false
 var feed_dirty := false
@@ -855,6 +858,9 @@ func _on_event(ev: Dictionary) -> void:
 					trip = "  [color=#e2bd6a](pêche dans le %s, à %.1f j de route : %d écus)[/color]" % [lk.substr(0, 1).to_lower() + lk.substr(1),
 						float(p.get("travel_days", 0)), int(round(float(p.get("travel_cost", 0))))]
 				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s%s%s" % [_who(id), float(p.get("landed", 0)), aim, trip, gap], [id])
+				if p.get("breach") is Array and not (p["breach"] as Array).is_empty():     # ce que seul le joueur voit
+					_feed(lab + _tag("RÈGLE ENFREINTE", "#ff8a5c") + " %s : %s  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
+						_who(id), _breach_text(p["breach"])], [id])
 		"report":
 			# la déclaration à l'ancien : les autres ne connaissent qu'elle ; un mensonge n'est visible que d'ici
 			var id := str(p.get("agent", ""))
@@ -1018,14 +1024,16 @@ func _on_event(ev: Dictionary) -> void:
 			var sp := str(p.get("speaker", ""))
 			var to := str(p.get("to", "tous"))
 			var dest := " [color=#6f7896]→ tous[/color]" if to == "tous" else " [color=#7f95ff]→[/color] " + _who(to)
-			_feed(lab + "%s%s  [i]« %s »[/i]" % [_who(sp), dest, _esc(str(p.get("text", "")))], [sp, to])
+			var broke := "" if not (p.get("breach") is Array and not (p["breach"] as Array).is_empty()) \
+				else "  [color=#ff8a7e](règle enfreinte : %s)[/color]" % _breach_text(p["breach"])
+			_feed(lab + "%s%s  [i]« %s »[/i]%s" % [_who(sp), dest, _esc(str(p.get("text", ""))), broke], [sp, to])
 		"proposal":
 			var pid := str(p.get("proposal_id", ""))
 			proposals[pid] = {"author": str(p.get("author", "")), "quota": float(p.get("quota", 0)), "supporters": [],
-				"scope": str(p.get("scope", ""))}
+				"scope": str(p.get("scope", "")), "text": _rule_text(p)}
 			world.remember_proposal(pid, str(p.get("author", "")))
-			_feed(lab + _tag("PROPOSITION", "#f2b23a") + " %s propose [b]%s[/b] : [b]%s t[/b] par pêcheur" % [_who(str(p.get("author", ""))), pid,
-				_num(p.get("quota", 0))], [str(p.get("author", ""))])
+			_feed(lab + _tag("PROPOSITION", "#f2b23a") + " %s propose [b]%s[/b] : [b]%s[/b]" % [_who(str(p.get("author", ""))), pid,
+				_esc(_rule_text(p))], [str(p.get("author", ""))])
 			_render_rules()
 		"support":
 			var pid := str(p.get("proposal_id", ""))
@@ -1063,8 +1071,10 @@ func _on_event(ev: Dictionary) -> void:
 				_who(str(p.get("accused", "")))], [str(p.get("accuser", "")), str(p.get("accused", ""))])
 		"norm_adopted":
 			norms.append(p)
-			_feed(lab + _tag("RÈGLE ADOPTÉE", "#58d08a") + " [b][color=#9ef0bd]%s : %s t par pêcheur dès la saison %d[/color][/b] · %d soutiens" % [
-				_scope(str(p.get("scope", ""))), _num(p.get("quota", 0)), int(p.get("effective_season", 0)),
+			_set_norm_now(p)
+			var until := "" if p.get("until_season") == null else ", jusqu'à la saison %d" % int(p.get("until_season"))
+			_feed(lab + _tag("RÈGLE ADOPTÉE", "#58d08a") + " [b][color=#9ef0bd]%s : %s dès la saison %d%s[/color][/b] · %d soutiens" % [
+				_scope(str(p.get("scope", ""))), _esc(_rule_text(p)), int(p.get("effective_season", 0)), until,
 				p.get("supporters", []).size()], p.get("supporters", []))
 			_render_rules()
 		"assembly_end":
@@ -1130,6 +1140,9 @@ func _on_event(ev: Dictionary) -> void:
 		"lake_collapsed":
 			_feed(lab + _tag("EFFONDREMENT", "#ff6a5c") + " [b]le lac s'effondre[/b]", [])
 		"season_end":
+			if p.has("norms_in_force"):         # plusieurs règles par portée : une entrée par (portée, type, cible)
+				norms_now = (p["norms_in_force"] as Array).duplicate()
+				_render_rules()
 			var w: Dictionary = p.get("wealth", {})
 			for id in w:
 				var a = _agent(str(id))
@@ -1198,6 +1211,7 @@ func _on_indicator(msg: Dictionary) -> void:
 			int(v.get("promises", 0)), float(v.get("promise_gap_t", 0))]
 		ind_sub["norme"].text = "accord %.0f %% × conformité %.0f %%" % [float(v.get("norm_agreement", 0)) * 100.0,
 			float(v.get("norm_compliance", 0)) * 100.0]
+		_norm_card()
 		ind_sub["accord"].text = "%d sur %d pêcheurs pour la règle" % [int(v.get("norm_supporters", 0)), int(v.get("fishers", 0))]
 		ind_sub["conformite"].text = "%d sur %d la respectent" % [int(v.get("norm_compliers", 0)), int(v.get("norm_concerned", 0))]
 		ind_labels["cv"].text = "%.2f" % float(v.get("catch_cv", 0))
@@ -1212,6 +1226,7 @@ func _reset(ev: Dictionary) -> void:
 	feed_lines.clear()
 	proposals.clear()
 	norms.clear()
+	norms_now.clear()
 	lost_this_season = 0
 	selected = ""
 	for a in p.get("agents", []):
@@ -1279,15 +1294,66 @@ func _render_rules() -> void:
 		s += "[color=#8f97b2]aucune[/color]\n"
 	for pid in proposals:
 		var pr: Dictionary = proposals[pid]
-		s += "%s · %s t · par %s · soutiens : %s\n" % [pid, _num(pr["quota"]), _who(pr["author"]),
+		s += "%s · %s · par %s · soutiens : %s\n" % [pid, _esc(str(pr.get("text", _num(pr["quota"]) + " t par pêcheur"))), _who(pr["author"]),
 			", ".join(PackedStringArray(pr["supporters"])) if not pr["supporters"].is_empty() else "aucun"]
+	s += "\n[color=#f3dca8][b]RÈGLES EN VIGUEUR[/b][/color] [color=#6f7896](par portée)[/color]\n"
+	if norms_now.is_empty():
+		s += "[color=#8f97b2]aucune[/color]\n"
+	var scopes := {}
+	for n in norms_now:
+		var sc := str(n.get("scope", ""))
+		if not scopes.has(sc):
+			scopes[sc] = []
+		scopes[sc].append(n)
+	for sc in scopes:
+		s += "[color=#e2bd6a]%s[/color]\n" % _scope(sc).capitalize()
+		for n in scopes[sc]:
+			s += "   %s · %s\n" % [_esc(_rule_text(n)), "sans échéance" if n.get("until_season") == null
+				else "jusqu'à la saison %d" % int(n["until_season"])]
 	s += "\n[color=#f3dca8][b]RÈGLES ADOPTÉES[/b][/color] [color=#6f7896](historique)[/color]\n"
 	if norms.is_empty():
 		s += "[color=#8f97b2]aucune[/color]\n"
 	for n in norms:
-		s += "%s t par pêcheur · %s · dès la saison %d · soutenue par %s\n" % [_num(n.get("quota", 0)), _scope(str(n.get("scope", ""))),
+		s += "%s · %s · dès la saison %d · soutenue par %s\n" % [_esc(_rule_text(n)), _scope(str(n.get("scope", ""))),
 			int(n.get("effective_season", 0)), ", ".join(PackedStringArray(n.get("supporters", [])))]
 	rules_view.text = s
+	_norm_card()
+
+
+## Le texte d'une règle (proposition, adoption, règle en vigueur) : celui du moteur, ou « N t par pêcheur » pour un vieux journal.
+func _rule_text(p: Dictionary) -> String:
+	var t := str(p.get("text", ""))
+	if t != "":
+		return t
+	return "%s t par pêcheur" % _num(p.get("quota", 0))
+
+
+func _breach_text(b: Array) -> String:
+	var out := PackedStringArray()
+	for k in b:
+		out.append(str(BREACH_WORD.get(str(k), str(k))))
+	return " et ".join(out)
+
+
+## Une règle adoptée remplace celle de même portée, type et cible.
+func _set_norm_now(n: Dictionary) -> void:
+	for i in norms_now.size():
+		var o: Dictionary = norms_now[i]
+		if str(o.get("scope", "")) == str(n.get("scope", "")) and str(o.get("kind", "quota")) == str(n.get("kind", "quota")) \
+				and str(o.get("target", "")) == str(n.get("target", "")):
+			norms_now[i] = n
+			return
+	norms_now.append(n)
+
+
+## La carte « Norme partagée » : les règles en vigueur, en mots.
+func _norm_card() -> void:
+	if not ind_sub.has("norme") or norms_now.is_empty():
+		return
+	var parts := PackedStringArray()
+	for n in norms_now:
+		parts.append(_rule_text(n))
+	ind_sub["norme"].text = ind_sub["norme"].text.get_slice("\n", 0).split(" · règles")[0] + "\n" + " ; ".join(parts)
 
 
 ## Une jauge en texte : vingt espaces sur fond coloré (la police du projet n'a pas de caractère « bloc »), la part pleine

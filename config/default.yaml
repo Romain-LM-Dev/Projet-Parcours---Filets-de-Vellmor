@@ -100,6 +100,8 @@ scenario:
   # les autres écoutent, et leur position se recueille au bulletin de vote (bien moins de tokens, moins de redites)
   quiet_listeners: true
   proposal_merge_tolerance: 0.75   # deux quotas proposés à moins de 0,75 t l'un de l'autre sont la même proposition
+  # (les autres types de règle — reserve, repos, sorties, bateau — ne se rejoignent que du même type et de la même cible ; leur écart
+  #  de valeur toléré est fixé dans filets/rules.py : VALUE_TOLERANCE. Aucune clé nouvelle.)
   vote_tolerance: 1.5         # au vote de clôture, on vote pour la proposition la plus proche de ce qu'on a dit, à 1,5 t près
   promise_tolerance: 0.5      # tonnes tolérées au-dessus d'une promesse
   quota_tolerance: 0.05       # au-dessus d'un quota adopté, un arrondi, pas une marge : 2,5 t sous une règle de 2 t la dépasse

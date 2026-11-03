@@ -81,6 +81,8 @@ var time_scale := 1.0               # vitesse des animations, calée sur celle d
 var effects: Array = []
 var bubbles := {}
 var badges := {}
+var rules: Array = []               # les règles en vigueur (norms_in_force, norm_adopted) : réserves et repos se voient sur la carte
+var cur_season := 0
 var _proposal_author := {}
 
 # temps et ambiance
@@ -1028,6 +1030,7 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 	for h in placed:
 		if hamlet_pos.has(str(h)):
 			hamlet_pos[str(h)] = Vector2(float(placed[h][0]), float(placed[h][1]))
+	rules.clear()
 	agents.clear()
 	order.clear()
 	effects.clear()
@@ -1102,6 +1105,7 @@ func on_event(ev: Dictionary) -> void:
 	var ty: String = str(ev.get("type", ""))
 	var p: Dictionary = ev.get("payload", {})
 	sim_time = float(ev.get("sim_time", sim_time))
+	cur_season = int(ev.get("season", cur_season))
 	match ty:
 		"season_start":
 			dry = max(0.0, dry - 0.5)
@@ -1266,7 +1270,11 @@ func on_event(ev: Dictionary) -> void:
 			elif animate:
 				effects.append({"kind": "wave", "a": sp, "ttl": 1.8, "max": 1.8})
 		"proposal":
-			badges[str(p.get("author", ""))] = "%s · %s t" % [str(p.get("proposal_id", "")), _num(p.get("quota", 0))]
+			badges[str(p.get("author", ""))] = "%s · %s" % [str(p.get("proposal_id", "")), _short(str(p.get("text", "")), 30)] \
+				if str(p.get("text", "")) != "" else "%s · %s t" % [str(p.get("proposal_id", "")), _num(p.get("quota", 0))]
+		"season_end":
+			if p.has("norms_in_force"):
+				rules = (p["norms_in_force"] as Array).duplicate()
 		"support":
 			var author := str(_proposal_author.get(str(p.get("proposal_id", "")), ""))
 			var who: String = str(p.get("agent", ""))
@@ -1276,7 +1284,9 @@ func on_event(ev: Dictionary) -> void:
 			_link(str(p.get("accuser", "")), str(p.get("accused", "")), Art.ACCUSE, 3.5, 7.0, "accuse")
 			_mark(str(p.get("accused", "")), "accusé", Art.ACCUSE, 7.0)
 		"norm_adopted":
-			_banner("Règle adoptée", "%s t par pêcheur dès la saison %d · %d soutiens" % [_num(p.get("quota", 0)),
+			_set_rule(p)
+			_banner("Règle adoptée", "%s dès la saison %d · %d soutiens" % [
+				_short(str(p.get("text", "")), 70) if str(p.get("text", "")) != "" else "%s t par pêcheur" % _num(p.get("quota", 0)),
 				int(p.get("effective_season", 0)), p.get("supporters", []).size()], Art.SUPPORT)
 			for s in p.get("supporters", []):
 				_mark(str(s), "pour", Art.SUPPORT, 4.5)
@@ -1605,7 +1615,68 @@ func _pick(pos: Vector2) -> String:
 
 
 # ================================================================== dessin dynamique
+## Une règle adoptée remplace celle de même portée, type et cible.
+func _set_rule(n: Dictionary) -> void:
+	for i in rules.size():
+		var o: Dictionary = rules[i]
+		if str(o.get("scope", "")) == str(n.get("scope", "")) and str(o.get("kind", "quota")) == str(n.get("kind", "quota")) \
+				and str(o.get("target", "")) == str(n.get("target", "")):
+			rules[i] = n
+			return
+	rules.append(n)
+
+
+## Les réserves (zone hachurée, bouées et étiquette) et les lacs au repos (eau voilée, étiquette), tant que la règle court.
+func _draw_rules(ci: CanvasItem) -> void:
+	for r in rules:
+		var kind := str(r.get("kind", "quota"))
+		if kind != "reserve" and kind != "repos":
+			continue
+		if r.get("until_season") != null and int(r["until_season"]) < cur_season:
+			continue
+		var tg := str(r.get("target", ""))
+		var c := Vector2.ZERO
+		var rad := Vector2(0.05, 0.05) / world_k * 1.5
+		var lbl := "réserve"
+		var col := Color("#ffb347")
+		if kind == "repos":
+			var k := 0
+			for i in lakes.size():
+				if str(lakes[i].get("name", "")) == tg:
+					k = i
+			c = lakes[k]["c"]
+			rad = lakes[k]["r"] * 1.05
+			lbl = "au repos"
+			col = Color("#9fc4e8")
+			_ground_ellipse(ci, c, rad, Color(0.62, 0.72, 0.85, 0.30), 48)
+		elif deco["docks"].has(tg):
+			c = deco["docks"][tg]["tip"]
+		else:
+			var k := _lake_named(tg, 0)
+			c = lakes[k]["c"]
+			rad = lakes[k]["r"] * 0.55
+			_ground_ellipse(ci, c, rad, Color(col, 0.10), 40)
+		if kind == "reserve" and deco["docks"].has(tg):
+			_ground_ellipse(ci, c, rad, Color(col, 0.16), 32)
+		# le contour en balises : une bouée tous les quinze degrés
+		for i in 24:
+			var a := TAU * float(i) / 24.0
+			var q := _px(c + Vector2(cos(a) * rad.x, sin(a) * rad.y))
+			if kind == "repos" and i % 2 == 1:
+				continue
+			ci.draw_circle(q, 3.0, Color(col, 0.95))
+			ci.draw_circle(q, 1.5, Color(1, 1, 1, 0.9))
+		if kind == "reserve":              # des hachures dans la zone
+			for i in range(-4, 5):
+				var d := float(i) / 4.0
+				var a0 := _px(c + Vector2(d - 0.45, d + 0.45) * rad * 0.7)
+				var b0 := _px(c + Vector2(d + 0.45, d - 0.45) * rad * 0.7)
+				ci.draw_line(a0, b0, Color(col, 0.55), 1.5)
+		Art.pill(ci, _px(c) + Vector2(0, -14), lbl, Color(0.08, 0.1, 0.16, 0.85), col, 11, "ui_bold", true)
+
+
 func _draw_under(ci: CanvasItem) -> void:
+	_draw_rules(ci)
 	if lakes.size() > 1:
 		for lk in lakes:
 			ci.draw_string(Art.font("title_italic"), _px(lk["c"]) + Vector2(-70, 5), str(lk["label"]), HORIZONTAL_ALIGNMENT_CENTER, 140,

@@ -162,13 +162,14 @@ def test_the_catch_is_not_always_the_target(tmp_path):
     assert statistics.pstdev(ratios) > 0.15 and min(ratios) < 0.8 and max(ratios) > 1.2         # il y a de bonnes et de mauvaises pêches
     for c in catches:
         outs = c["outings"]
-        assert len(outs) == world.econ["outings"] and sum(o["tonnes"] for o in outs) == pytest.approx(c["landed"], abs=0.005)
+        # (une règle du conseil sur les sorties en fait faire moins : voir test_rules.py)
+        assert 1 <= len(outs) <= world.econ["outings"] and sum(o["tonnes"] for o in outs) == pytest.approx(c["landed"], abs=0.005)
         # le rendement : celui des sorties, et celui du coin de pêche (sa parcelle du lac)
-        assert c["yield"] == pytest.approx(mean(outs, "yield") * c["spot"], abs=0.003)
+        assert c["yield"] == pytest.approx(mean(outs, "yield") * len(outs) / world.econ["outings"] * c["spot"], abs=0.003)
         assert c["luck"] == pytest.approx(mean(outs, "luck"), abs=0.002)
         if not c["rationed"] and c["stock_after"] > 0.01:      # chaque sortie rapporte sa part de la prise visée, dans la limite de la cale
             limit = world.hold_of(world.agents[c["agent"]], c["stock_at_action"])
-            expected = sum(min(c["requested"] * o["yield"] * c["spot"], limit) for o in outs) / len(outs)
+            expected = sum(min(c["requested"] * o["yield"] * c["spot"], limit) for o in outs) / world.econ["outings"]
             assert c["landed"] == pytest.approx(expected, abs=0.01)
 
 

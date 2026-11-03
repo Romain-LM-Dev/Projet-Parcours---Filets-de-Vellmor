@@ -76,6 +76,17 @@
         "type": "integer"
       }
     },
+    "breach": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "reserve",
+          "repos",
+          "sorties",
+          "bateau"
+        ]
+      }
+    },
     "spot": {
       "type": "number"
     }

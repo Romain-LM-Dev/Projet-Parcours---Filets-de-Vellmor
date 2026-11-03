@@ -43,6 +43,12 @@
         "string",
         "null"
       ]
+    },
+    "breach": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [

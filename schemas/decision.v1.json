@@ -119,6 +119,15 @@
         "string",
         "null"
       ]
+    },
+    "place": {
+      "enum": [
+        "rive",
+        "large"
+      ]
+    },
+    "outings": {
+      "type": "integer"
     }
   },
   "required": [

@@ -31,11 +31,13 @@ def reference(events):
     fishers = list(hamlet)
     catches = defaultdict(lambda: defaultdict(float))
     norms, outcomes = [], defaultdict(list)
+    broke = defaultdict(lambda: defaultdict(set))       # saison -> pêcheur -> règles de pêche enfreintes (quota : voir la prise)
     ends = {}
     for e in events:
         p = e["payload"]
         if e["type"] == "catch":
             catches[e["season"]][p["agent"]] += p["landed"]
+            broke[e["season"]][p["agent"]].update(p.get("breach") or [])
         elif e["type"] == "norm_adopted":
             norms.append(p)
         elif e["type"] == "promise_outcome":
@@ -45,17 +47,22 @@ def reference(events):
     res = {}
     for s, end in ends.items():
         c = {f: catches[s].get(f, 0.0) for f in fishers}
-        under = {}      # règle qui s'applique à chaque pêcheur cette saison : hameau d'abord, vallée sinon
+        under = {}      # règles qui s'appliquent à chaque pêcheur cette saison : la dernière de chaque type et cible (hameau avant vallée)
         for f in fishers:
-            for scope in (f"hamlet:{hamlet[f]}", "valley"):
-                cand = [n for n in norms if n["scope"] == scope and n["effective_season"] <= s]
-                if cand:
-                    under[f] = cand[-1]
-                    break
-        # au conseil des élus, un pêcheur soutient la règle si l'élu de son village l'a soutenue
-        supporters = sum(f in n["supporters"] or (n.get("delegates") or {}).get(hamlet[f]) in n["supporters"]
-                         for f, n in under.items())
-        compliers = sum(c[f] <= n["quota"] + TOL for f, n in under.items())
+            now = {}
+            for scope in ("valley", f"hamlet:{hamlet[f]}"):
+                for i, n in enumerate(norms):
+                    if n["scope"] == scope and n["effective_season"] <= s and s <= n.get("until_season", s):
+                        now[(n.get("kind", "quota"), n.get("target"))] = (i, n)
+            if now:
+                under[f] = sorted(now.values(), key=lambda t: t[0])
+        # au conseil des élus, un pêcheur soutient la règle (la dernière adoptée) si l'élu de son village l'a soutenue
+        supporters = sum(f in rs[-1][1]["supporters"] or (rs[-1][1].get("delegates") or {}).get(hamlet[f]) in rs[-1][1]["supporters"]
+                         for f, rs in under.items())
+
+        def kept(f, n):
+            return c[f] <= n["quota"] + TOL if n.get("kind", "quota") == "quota" else n["kind"] not in broke[s][f]
+        compliers = sum(all(kept(f, n) for _, n in rs) for f, rs in under.items())
         agreement = supporters / len(fishers)
         compliance = compliers / len(under) if under else 0.0
         vals = list(c.values())

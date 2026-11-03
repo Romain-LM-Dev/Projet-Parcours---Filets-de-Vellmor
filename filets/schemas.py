@@ -77,7 +77,9 @@ PAYLOADS: dict[str, dict] = {
          "value": {"type": ["number", "null"]}, "observed": {"type": "object"}, "out_of_role": BOOL,
          "system": {"enum": ["S1", "S2"]},
          "declared": NUM_OR_NULL,       # prise : ce que le pêcheur compte déclarer à l'ancien
-         "lake": STR_OR_NULL},          # prise, plusieurs lacs : le lac où il a choisi de pêcher, s'il n'est pas le sien
+         "lake": STR_OR_NULL,           # prise, plusieurs lacs : le lac où il a choisi de pêcher, s'il n'est pas le sien
+         "place": {"enum": ["rive", "large"]},      # prise, sa rive réservée : où il pêche (sa rive, ou le large de son lac)
+         "outings": INT},               # prise, sorties limitées par une règle : le nombre de sorties qu'il fait
     ),
     "catch": obj({"agent": STR, "hamlet": STR, "requested": NUM, "landed": NUM, "stock_observed": NUM,
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
@@ -91,6 +93,8 @@ PAYLOADS: dict[str, dict] = {
                   # ses sorties : le jour, le temps (calme, ordinaire, agité, tempête), la chance, le rendement et les tonnes rapportées
                   "outings": {"type": "array", "items": {"type": "object"}},
                   "cell": {"type": "array", "items": INT},     # la parcelle du lac où il a pêché (i, j sur la maille des lacs)
+                  # les règles de pêche enfreintes par cette prise (la vérité) : reserve, repos, sorties, bateau (voir `rules.py`)
+                  "breach": {"type": "array", "items": {"enum": ["reserve", "repos", "sorties", "bateau"]}},
                   "spot": NUM}),       # ce que ce coin a rendu : sa chance, et le poisson qu'y ont laissé les autres barques
     # ce que le pêcheur déclare à l'ancien en rentrant : les autres ne connaissent que `declared` ; la vraie prise (`landed`)
     # n'est connue que de lui et du joueur
@@ -105,7 +109,8 @@ PAYLOADS: dict[str, dict] = {
     # joueur), `estimated` : ce que la vallée en croit ; `wrongful` : il n'avait pas menti (erreur de jugement)
     "lie_discovered": obj({"agent": STR, "lie_season": INT, "declared": NUM, "landed": NUM,
                            "how": {"enum": ["patrouille", "temoins", "indices"]}, "secret": BOOL, "wrongful": BOOL},
-                          {"estimated": NUM_OR_NULL, "witnesses": IDS, "report_event_id": STR_OR_NULL}),
+                          {"estimated": NUM_OR_NULL, "witnesses": IDS, "report_event_id": STR_OR_NULL,
+                           "breach": {"type": "array", "items": STR}}),     # règles enfreintes, établies (au lieu d'un mensonge)
     # interdit de pêche, ou levée de l'interdiction, par un vote de la vallée (`proposal_id`, ses voix `for` sur `voters`)
     "ban": obj({"agent": STR, "banned": BOOL, "reputation": NUM}, {"proposal_id": STR, "for": IDS, "voters": INT}),
     # la patrouille du lac, si le conseil en a voté une : sa route de la saison (étapes : zone = un village ou « large », jours
@@ -147,7 +152,11 @@ PAYLOADS: dict[str, dict] = {
     "assembly_end": obj({"scope": STR, "adopted_proposal": STR_OR_NULL, "utterances": INT}),
     "utterance": obj({"speaker": STR, "to": STR, "text": STR, "scope": STR, "round": INT,
                       "info_horizon": NUM, "heard": IDS, "decision_event_id": STR}),
-    "proposal": obj({"proposal_id": STR, "author": STR, "quota": NUM, "scope": STR, "utterance_id": STR}),
+    # une règle = un type + une valeur + une cible (voir `rules.py`) ; `quota` reprend la valeur (tonnes pour un quota, sinon durée en
+    # saisons, nombre de sorties ou rang de la taille de bateau) ; `text` : la règle en mots
+    "proposal": obj({"proposal_id": STR, "author": STR, "quota": NUM, "scope": STR, "utterance_id": STR},
+                    {"kind": {"enum": ["quota", "reserve", "repos", "sorties", "bateau"]}, "value": NUM, "target": STR_OR_NULL,
+                     "text": STR}),
     "support": obj({"agent": STR, "proposal_id": STR, "utterance_id": STR}),
     "promise": obj({"agent": STR, "amount": NUM, "for_season": INT, "utterance_id": STR}),
     # `kept` : d'après la vraie prise ; `known_kept` : d'après ce que la vallée en sait (déclaration, ou mensonge découvert)
@@ -156,7 +165,10 @@ PAYLOADS: dict[str, dict] = {
     "accusation": obj({"accuser": STR, "accused": STR, "utterance_id": STR}),
     "norm_adopted": obj({"proposal_id": STR, "quota": NUM, "scope": STR, "effective_season": INT,
                          "supporters": IDS, "participants": IDS, "author": STR},
-                        {"delegates": {"type": "object"}}),      # au conseil des élus : l'élu de chaque village à cet instant
+                        {"delegates": {"type": "object"},      # au conseil des élus : l'élu de chaque village à cet instant
+                         "kind": {"enum": ["quota", "reserve", "repos", "sorties", "bateau"]}, "value": NUM, "target": STR_OR_NULL,
+                         "text": STR,           # la règle en mots
+                         "duration": INT, "until_season": INT}),      # reserve, repos : durée, et dernière saison d'effet
     "memory_write": obj({"agent": STR, "memory_id": STR, "text": STR, "kind": STR, "importance": NUM,
                          "pinned": BOOL}, {"source_event_id": STR_OR_NULL}),
     "season_end": obj({"stock": NUM, "catches": {"type": "object"}, "wealth": {"type": "object"},

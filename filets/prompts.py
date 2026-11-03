@@ -262,13 +262,39 @@ def rule_reminder(obs: dict) -> str:
     """La règle votée qui s'applique à ce pêcheur, rappelée juste avant la question (les petits modèles lisent surtout la fin).
     Sans ce rappel, ils raisonnaient sur le lac seul et dépassaient le quota qu'ils venaient de voter : 0 pêcheur sur 8 le
     respectait. Le pêcheur reste libre de tricher ; il sait seulement ce que cela veut dire."""
-    rule = obs.get("rule")
+    rule, other = obs.get("rule"), fishing_rules_reminder(obs)
     if not rule:
-        return ""
+        return other
     who = "tu l'as soutenue" if rule["supported"] else "tu ne l'as pas soutenue, mais la vallée l'a adoptée"
     return (f"Règle votée à la veillée : pas plus de {rule['quota']:g} t par pêcheur cette saison ({who}). "
             "La dépasser, c'est trahir la parole de la vallée : chacun en jugera selon sa morale, et ceux qui ne te font plus "
-            "confiance peuvent proposer de t'interdire de pêche.\n")
+            "confiance peuvent proposer de t'interdire de pêche.\n") + other
+
+
+def fishing_rules_reminder(obs: dict) -> str:
+    """Les autres règles votées (zone réservée, lac au repos, nombre de sorties, taille de bateau), et ce qu'elles changent pour ce
+    pêcheur cette saison. Le pêcheur reste libre de les enfreindre ; il sait seulement ce que cela veut dire."""
+    lines = []
+    if obs.get("lake_closed"):
+        lines.append("Ton lac est fermé à la pêche cette saison (repos du lac) : y pêcher, c'est enfreindre la règle. Reste à quai "
+                     "(prise 0)" + (", ou pêche dans un autre lac." if obs.get("lake_options") else "."))
+    elif obs.get("shore_closed"):
+        lines.append(f"Ta rive ({obs.get('own_zone', 'ton village')}) est une zone réservée cette saison. "
+                     + ("Le large aussi est fermé : reste à quai (prise 0), ou enfreins la règle en pêchant sur ta rive "
+                        "(\"lieu\": \"rive\")." if obs.get("large_closed") else
+                        "Tu peux pêcher au large (\"lieu\": \"large\"), ou sur ta rive (\"lieu\": \"rive\") en enfreignant la règle."))
+    if obs.get("outings_cap"):
+        n = obs.get("outings_n", 6)
+        lines.append(f"La règle limite les sorties en mer à {obs['outings_cap']} sur {n} : avec moins de sorties, tu ramènes moins "
+                     f"(environ {obs['outings_cap']}/{n} de ce que tu vises). \"sorties\" : le nombre que tu fais ; en faire plus, "
+                     "c'est enfreindre la règle.")
+    if obs.get("boat_limit") is not None:
+        lines.append(f"La règle limite la taille des bateaux, et le tien est plus gros : tu ne devrais pas ramener plus de "
+                     f"{obs['boat_limit']:g} t.")
+    if not lines:
+        return ""
+    return ("Règles de pêche votées : " + " ".join(lines) + " Enfreindre une règle se voit (voisins, patrouille), et l'ancien peut "
+            "l'établir devant tous.\n")
 
 
 def rule_review(obs: dict) -> str:
@@ -281,6 +307,29 @@ def rule_review(obs: dict) -> str:
     over = sum(v > rule["quota"] + 0.05 for v in vals)
     return (f"Bilan de la règle de {rule['quota']:g} t : parmi les {len(vals)} pêcheurs dont tu connais la prise, {over} l'ont "
             f"dépassée et {len(vals) - over} l'ont respectée.\n")
+
+
+def rule_types_help(obs: dict, brief: bool = False) -> str:
+    """Les types de règle que le conseil peut voter, un exemple chacun, et ce qui, dans la situation, appelle l'un ou l'autre. Les
+    agents choisissent le type selon ce qu'ils voient, pas par habitude : sans cela, tout le monde proposait un quota."""
+    villages, lakes = ", ".join(obs.get("villages") or ["un village"]), ", ".join(obs.get("lake_names") or [])
+    boats = obs.get("boat_names") or []
+    n = obs.get("outings_n", 6)
+    lines = ["Types de règle (une seule par réplique ; choisis celle qui répond à ce que tu vois, pas toujours un quota) :",
+             "- quota : tonnes par pêcheur et par saison. Ex. type \"quota\", valeur 3.",
+             f"- reserve : une rive (ou le large) interdite de pêche. Valeur = nombre de saisons, cible = un village ({villages}) ou "
+             "\"large\". Ex. \"reserve\", 2, \"" + (obs.get("villages") or ["Hennad"])[0] + "\". Pour un coin trop pêché.",
+             f"- repos : un lac fermé à la pêche. Valeur = nombre de saisons, cible = le lac ({lakes or 'ton lac'}). Ex. \"repos\", 1. "
+             "Pour un lac trop bas.",
+             f"- sorties : au plus N sorties en mer par pêcheur et par saison (il y en a {n} d'ordinaire). Ex. \"sorties\", 3."]
+    if len(boats) >= 2:
+        lines.append("- bateau : taille maximale des bateaux, les plus gros ne ramènent que la cale permise. Valeur = "
+                     + ", ".join(f"{i + 1} pour la {b}" for i, b in enumerate(boats[:-1])) + ". Ex. \"bateau\", 1. Contre les gros bateaux.")
+    if obs.get("hot_line"):
+        lines.append(obs["hot_line"])
+    if brief:
+        lines = [lines[0]] + [ln.split(". Pour")[0].split(". Contre")[0] for ln in lines[1:]]
+    return "\n".join(lines) + "\n"
 
 
 def trust_word(v: float) -> str:
@@ -334,8 +383,11 @@ def trust_schema(ids: list[str] | None) -> dict:
     return {"type": "object", "additionalProperties": step}
 
 
+RULE_KINDS = ["quota", "reserve", "repos", "sorties", "bateau"]
+
+
 def answer_schema(purpose: str, brief: bool = False, fisher: bool = True, ids: list[str] | None = None,
-                  lakes: list[str] | None = None) -> dict:
+                  lakes: list[str] | None = None, extras: list[str] | None = None) -> dict:
     """Forme exacte de la réponse, pour les fournisseurs qui savent la faire respecter (Ollama : voir `llm.OpenAICompatClient`).
     Tous les champs sont présents, dans cet ordre : pour une prise, la justification (ce que l'agent constate du lac) vient AVANT
     le nombre, qui s'écrit donc à la suite de ce raisonnement et non avant lui. Les textes sont bornés."""
@@ -345,9 +397,16 @@ def answer_schema(purpose: str, brief: bool = False, fisher: bool = True, ids: l
         props = {"justification": text}
         if lakes:                         # plusieurs lacs à portée : il dit lequel (le sien, ou un autre), avant le nombre
             props["lac"] = {"enum": list(lakes)}
+        if extras and "lieu" in extras:       # sa rive est réservée : il dit où il pêche
+            props["lieu"] = {"enum": ["rive", "large"]}
+        if extras and "sorties" in extras:    # le nombre de sorties est limité : il dit combien il en fait
+            props["sorties"] = {"type": "integer", "minimum": 1, "maximum": 12}
         props.update({"prise": {"type": "number"}, "declaration": {"type": "number"}})
     else:
-        props = {"message": text, "destinataire": ident, "proposition_quota": {"type": ["number", "null"]},
+        # une règle proposée = un type, une valeur, une cible (court, pour un petit modèle) ; null : rien proposé
+        props = {"message": text, "destinataire": ident, "proposition_type": {"enum": RULE_KINDS + [None]},
+                 "proposition_valeur": {"type": ["number", "null"]},
+                 "proposition_cible": {"type": ["string", "null"], "maxLength": 24},
                  "soutien": {"type": ["string", "null"], "maxLength": 8}}
         if fisher:
             props["promesse"] = {"type": ["number", "null"]}
@@ -412,7 +471,8 @@ def lake_options_block(obs: dict) -> str:
              f"ce que la même sortie rapporterait chez toi, et la route te coûterait {o['cost']:.0f} écus ({o['cost'] / price:.1f} t de "
              f"poisson) ; tu y viserais jusqu'à {cap_text(o['hold'])} t, soit au mieux "
              f"{max(0.0, o['hold'] * o['factor'] - o['cost'] / price):.1f} t une fois la route payée (contre {here:.1f} t au mieux chez toi), "
-             "avec les pêcheurs de là-bas" for o in opts]
+             "avec les pêcheurs de là-bas" + (" ; MAIS la pêche y est interdite cette saison (règle votée)" if o.get("closed") else "")
+             for o in opts]
     return (f"Tu pêches d'ordinaire dans {lake_ref(obs['lake_name']) if obs.get('lake_name') else 'ton lac'}, celui de ton village{state}. "
             "Tu peux aussi pêcher dans un autre lac, si tu as de bonnes raisons d'y aller ; la route est une vraie dépense :\n"
             + _bullets(lines) + "\n")
@@ -422,7 +482,8 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     if obs.get("banned"):
         seen = "ce que tu constates du lac, ce que tu fais de ton interdiction"
     else:
-        seen = "ce que tu constates du lac, ce que tu fais de la règle votée" if obs.get("rule") else "ce que tu constates du lac"
+        seen = "ce que tu constates du lac, ce que tu fais de la règle votée" if obs.get("rule") or obs.get("fishing_rules") \
+            else "ce que tu constates du lac"
         if obs.get("lake_options"):          # d'autres lacs sont à portée : il pèse son lac contre les autres, route comprise, avant de choisir
             seen = "ce que tu constates de ton lac et des autres, ce que coûte la route, et où pêcher en conséquence"
     just = f"<1 phrase courte : {seen}, et ce que tu en conclus>" if brief else \
@@ -455,6 +516,8 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
             + " : un dépassement avoué se pardonne plus facilement qu'un mensonge découvert.\n"
             + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
               + (f"\"lac\": \"<le lac où tu pêches : {' ou '.join(obs['lake_labels'])}>\", " if obs.get("lake_labels") else "")
+              + ("\"lieu\": \"<rive ou large>\", " if "lieu" in (obs.get("catch_extras") or ()) else "")
+              + (f"\"sorties\": <nombre de sorties, de 1 à {obs['outings_n']}>, " if "sorties" in (obs.get("catch_extras") or ()) else "")
               + (f"\"prise\": <tonnes dans le lac que tu choisis : {catch_range(obs)} chez toi"
                  + "".join(f" ; jusqu'à {cap_text(o['hold'])} t dans {lake_ref(o['label'])}" for o in obs["lake_options"]) + ">, "
                  if obs.get("lake_options") else f"\"prise\": <tonnes, {catch_range(obs)}>, ")
@@ -505,8 +568,10 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     fields = [
         f"\"message\": \"{msg}\"",
         "\"destinataire\": \"tous\" ou l'identifiant d'une personne présente",
-        "\"proposition_quota\": <tonnes par pêcheur et par saison d'une règle nouvelle que tu proposes, selon le lac et ce qu'il "
-        "te faut pour vivre, ou null " + ("pour garder la règle en vigueur" if obs.get("rule") else "si tu n'en proposes pas") + ">",
+        "\"proposition_type\": \"quota\" ou \"reserve\" ou \"repos\" ou \"sorties\" ou \"bateau\" (le type de la règle nouvelle que "
+        "tu proposes, selon ce que tu vois), ou null " + ("pour garder les règles en vigueur" if obs.get("norms") else "si tu n'en proposes pas"),
+        "\"proposition_valeur\": <le nombre de cette règle, selon son type : voir plus haut, ou null>",
+        "\"proposition_cible\": \"<le village, le lac ou large visé par une réserve ou un repos>\" ou null",
         "\"soutien\": \"<identifiant d'une proposition que tu soutiens, ex. P2>\" ou null",
     ]
     if fisher:
@@ -558,7 +623,7 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         f"Veillée chez l'ancien ({obs['scope_label']}){turn}. Présents : {people}.\n\n"
         f"{room}{who_line}{acts}"
         + f", ou simplement donner ton avis. {rumor_hint}Rien ne t'oblige à tenir parole.\n"
-        + lake_reminder(obs) + rule_review(obs)
+        + lake_reminder(obs) + rule_review(obs) + rule_types_help(obs, brief)
         + "Réponds en JSON : {" + ", ".join(fields) + "}"
     )
     # la veillée a son propre contexte, plus court ; en réflexion complète (profil de référence), le contexte reste entier

@@ -30,6 +30,33 @@
     },
     "delegates": {
       "type": "object"
+    },
+    "kind": {
+      "enum": [
+        "quota",
+        "reserve",
+        "repos",
+        "sorties",
+        "bateau"
+      ]
+    },
+    "value": {
+      "type": "number"
+    },
+    "target": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "text": {
+      "type": "string"
+    },
+    "duration": {
+      "type": "integer"
+    },
+    "until_season": {
+      "type": "integer"
     }
   },
   "required": [

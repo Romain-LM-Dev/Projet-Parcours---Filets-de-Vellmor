@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from . import prompts, routing
 from .llm import detect_drift, extract_json, to_number
 from .memory import MemoryStore
-from .policies import at_lake, catch_rule, declare_rule, elect_rule, lake_choice_rule, speak_rule, trust_rule
+from .policies import at_lake, catch_rule, declare_rule, elect_rule, lake_choice_rule, rule_choices, speak_rule, trust_rule
 from .profiles import Profile
 
 log = logging.getLogger("filets.agents")
@@ -86,7 +86,8 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
     hint = {"purpose": purpose, "archetype": agent.archetype, "state": state, "system": system,
             "schema": schema or (prompts.REFLEX_SCHEMA if reflex else prompts.answer_schema(
                 purpose, brief, agent.is_fisher, [world.first_name(a.id) for a in world.fishers if a.id != agent.id],
-                state.get("lake_labels") if purpose == "catch" else None)),
+                state.get("lake_labels") if purpose == "catch" else None,
+                state.get("catch_extras") if purpose == "catch" else None)),
             "seed": _seed(world, agent, purpose, state)}                  # le schéma est imposé aux fournisseurs qui le savent
     if max_tokens:
         hint["max_tokens"] = max_tokens
@@ -148,13 +149,15 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
         s_here = at_lake(state, there)
         v, rule = catch_rule(agent.archetype, s_here)
         said, drule = declare_rule(agent.archetype, s_here, v)
+        extras, xrule = rule_choices(agent.archetype, s_here)          # où il pêche et combien de sorties, face aux règles
         lake_text = f" ; il pêche dans {prompts.lake_ref(there['label'])} : {why_lake}" if there else ""
-        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {rule} ; {drule}{lake_text}.", "rule": rule,
-                                             "value": v, "declared": said, "fallback": False, "model": None, "tier": None,
-                                             "llm_call_id": None, **({"lake": where} if where else {})}, actor=agent.id)
+        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {rule} ; {drule}{xrule}{lake_text}.",
+                                             "rule": rule, "value": v, "declared": said, "fallback": False, "model": None,
+                                             "tier": None, "llm_call_id": None, **extras,
+                                             **({"lake": where} if where else {})}, actor=agent.id)
         _note_observation(obs, dec)
         agent.last_decision = dec
-        return Outcome(v, {"prise": v, "declaration": said, "lake": where}, dec)
+        return Outcome(v, {"prise": v, "declaration": said, "lake": where, **extras}, dec)
 
     brief = prompts.is_brief(world.cfg["llm"])
     system, why = routing.choose_system(obs, "catch") if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
@@ -190,14 +193,24 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
     said = to_number(data.get("declaration")) if data and system == "S2" and not fallback else None
     said = v if said is None else round(min(max(said, 0.0), v), 1)
     where = chosen["name"] if chosen and not fallback else None
+    # les règles de pêche (zone réservée, nombre de sorties) : ce qu'il répond ; au repli, ce que ferait son caractère
+    extras: dict = {}
+    if fallback:
+        extras, _ = rule_choices(agent.archetype, at_lake(state, None))
+    elif data and system == "S2":
+        if "lieu" in state.get("catch_extras", ()) and str(data.get("lieu", "")).strip().lower() in ("rive", "large"):
+            extras["place"] = str(data["lieu"]).strip().lower()
+        n_out = to_number(data.get("sorties"))
+        if n_out is not None and state.get("outings_cap"):
+            extras["outings"] = int(max(1, min(state["outings_n"], round(n_out))))
     dec = world.events.emit("decision", {**common, "justification": just or "(sans justification)", "rule": rule,
                                          "value": v, "declared": said, "fallback": fallback, "model": res.model,
                                          "tier": res.tier, "llm_call_id": res.call_id,
-                                         "out_of_role": flags.get("out_of_role", False),
+                                         "out_of_role": flags.get("out_of_role", False), **extras,
                                          **({"lake": where} if where else {})}, actor=agent.id)
     _note_observation(obs, dec)
     agent.last_decision = dec
-    return Outcome(v, {"prise": v, "declaration": said, "lake": where}, dec)
+    return Outcome(v, {"prise": v, "declaration": said, "lake": where, **extras}, dec)
 
 
 async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outcome:
@@ -230,8 +243,9 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
         just = f"(repli) Règle appliquée : {rule}."
     else:
         acts = []
-        if to_number(data.get("proposition_quota")) is not None:
-            acts.append(f"propose {to_number(data.get('proposition_quota')):g} t")
+        proposed = world.read_proposal(data, agent)
+        if proposed is not None:
+            acts.append("propose : " + world.rule_words(*proposed))
         if data.get("soutien"):
             acts.append(f"soutient {data.get('soutien')}")
         if to_number(data.get("promesse")) is not None:
@@ -369,10 +383,10 @@ async def _quota_ballot(world, agent: Agent, asm) -> None:
     ici, et la clôture compte ce qu'il a dit (`World.closing_vote`)."""
     lake = world.lake_of(agent)
     est = lake.observe(agent.rng)
-    table = [f"- {pr.id} : {pr.quota:g} t par pêcheur, proposée par {world.name(pr.author)}, "
+    table = [f"- {pr.id} : {world.proposal_words(pr)}, proposée par {world.name(pr.author)}, "
              f"{sum(1 for v in asm.support.values() if v[0] == pr.id)} soutien(s)" for pr in asm.proposals.values()]
     messages = prompts.ballot_messages(agent.profile, table, est, lake.capacity, lake.collapse_ratio)
-    described = {pr.id: f"{pr.quota:g} t par pêcheur, proposée par {world.name(pr.author)}, "
+    described = {pr.id: f"{world.proposal_words(pr)}, proposée par {world.name(pr.author)}, "
                         f"{sum(1 for v in asm.support.values() if v[0] == pr.id)} soutien(s)" for pr in asm.proposals.values()}
     data, res, _ = await _ask_llm(world, agent, "vote", messages, {"round": 99}, "S1",
                                   schema=prompts.ballot_schema(list(asm.proposals)), max_tokens=prompts.BALLOT_MAX_TOKENS,

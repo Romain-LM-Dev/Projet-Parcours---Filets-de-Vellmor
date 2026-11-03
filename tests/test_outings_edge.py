@@ -275,7 +275,9 @@ def test_scripted_fishers_fish_the_same_in_sync_and_async(tmp_path):
     assert len(same_aim) >= len(sync.fishers)                                       # au moins la première saison, où personne n'a rien appris
     def days(c):            # les sorties sans leurs tonnes : le jour, le temps, la chance, le rendement
         return [{x: v for x, v in o.items() if x != "tonnes"} for o in c["outings"]]
-    assert all(days(caught_sync[k]) == days(caught_asyn[k]) for k in same_aim)
+    # (une règle du conseil sur les sorties peut en retrancher, toujours les dernières : on compare le début de la liste)
+    assert all(days(caught_sync[k])[:min(len(caught_sync[k]["outings"]), len(caught_asyn[k]["outings"]))] ==
+               days(caught_asyn[k])[:min(len(caught_sync[k]["outings"]), len(caught_asyn[k]["outings"]))] for k in same_aim)
     # la même prise : à la première saison, où les coins de pêche (les parcelles du lac) sont encore intacts ; ensuite, chaque coin
     # garde la trace de ce que les autres y ont pris, et ils n'ont pas tous visé pareil dans les deux modes
     first = [k for k in same_aim if k[1] == 1]

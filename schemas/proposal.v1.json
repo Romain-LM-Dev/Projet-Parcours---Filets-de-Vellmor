@@ -15,6 +15,27 @@
     },
     "utterance_id": {
       "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "quota",
+        "reserve",
+        "repos",
+        "sorties",
+        "bateau"
+      ]
+    },
+    "value": {
+      "type": "number"
+    },
+    "target": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "text": {
+      "type": "string"
     }
   },
   "required": [

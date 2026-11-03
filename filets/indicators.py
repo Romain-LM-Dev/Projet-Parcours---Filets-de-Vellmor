@@ -49,6 +49,7 @@ class IndicatorEngine:
         self.catches: dict[int, dict[str, float]] = defaultdict(dict)
         self.catch_ids: dict[int, list[str]] = defaultdict(list)
         self.norms: list[dict] = []                 # historique des normes adoptées
+        self.breaches: dict[int, dict[str, set]] = defaultdict(dict)       # saison -> pêcheur -> règles de pêche enfreintes (`catch.breach`)
         self.promise_outcomes: list[dict] = []
         self.incidents: dict[str, int] = defaultdict(int)
         self.llm = {"calls": 0, "tokens": 0, "latency_s": 0.0, "errors": 0, "cancelled": 0}
@@ -106,6 +107,8 @@ class IndicatorEngine:
             s = ev["season"]
             self.catches[s][p["agent"]] = self.catches[s].get(p["agent"], 0.0) + p["landed"]
             self.catch_ids[s].append(ev["event_id"])
+            if p.get("breach"):
+                self.breaches[s].setdefault(p["agent"], set()).update(p["breach"])
             # obsolescence : ce qui a changé dans le lac entre l'observation et l'action (C5, C7)
             if self.lakes:
                 self.lake_catch[s][p["lake"]] += p["landed"]
@@ -170,13 +173,22 @@ class IndicatorEngine:
                 for n, lk in self.lakes.items()}
 
     # ------------------------------------------------------------------ calculs
-    def _quota_for(self, fisher: str, season: int) -> tuple[float, dict] | None:
+    def _rules_for(self, fisher: str, season: int) -> list[dict]:
+        """Les règles en vigueur pour ce pêcheur à cette saison, de tout type : la dernière de chaque (type, cible) ; celle de son
+        village l'emporte sur celle de la vallée ; une règle à durée s'éteint après `until_season`."""
         hamlet = self.fishers.get(fisher, {}).get("hamlet")
-        for scope in (f"hamlet:{hamlet}", "valley"):
-            c = [n for n in self.norms if n["scope"] == scope and n["effective_season"] <= season]
-            if c:
-                return c[-1]["quota"], c[-1]
-        return None
+        best: dict[tuple, dict] = {}
+        for scope in ("valley", f"hamlet:{hamlet}"):
+            for i, n in enumerate(self.norms):
+                if n["scope"] == scope and n["effective_season"] <= season and                         (n.get("until_season") is None or season <= n["until_season"]):
+                    best[(n.get("kind", "quota"), n.get("target"))] = {**n, "_i": i}
+        return list(best.values())
+
+    def _kept(self, n: dict, fisher: str, season: int, catch: float) -> bool:
+        """Ce pêcheur a-t-il respecté cette règle ? Un quota : sa prise ; les autres types : aucune infraction à sa charge."""
+        if n.get("kind", "quota") == "quota":
+            return catch <= n["quota"] + self.tol
+        return n["kind"] not in self.breaches[season].get(fisher, ())
 
     def season_values(self, season: int) -> tuple[dict, list[str]]:
         catches = {f: self.catches[season].get(f, 0.0) for f in self.fishers}
@@ -186,16 +198,17 @@ class IndicatorEngine:
         sources = list(self.catch_ids[season])
         concerned, agree, comply = 0, 0, 0
         for f, c in catches.items():
-            q = self._quota_for(f, season)
-            if q is None:
+            in_force = self._rules_for(f, season)
+            if not in_force:
                 continue
-            quota, norm = q
+            norm = max(in_force, key=lambda n: n["_i"])                  # l'accord se mesure sur la dernière règle adoptée
             concerned += 1
             rep = (norm.get("delegates") or {}).get(self.fishers[f].get("hamlet"))      # l'élu de son village parle pour lui
             agree += f in norm["supporters"] or (rep is not None and rep in norm["supporters"])
-            comply += c <= quota + self.tol
-            if norm["event_id"] not in sources:
-                sources.append(norm["event_id"])
+            comply += all(self._kept(n, f, season, c) for n in in_force)      # le respect, de toutes celles qui le visent
+            for n in in_force:
+                if n["event_id"] not in sources:
+                    sources.append(n["event_id"])
         n = len(catches) or 1
         agreement = agree / n                       # part de TOUS les pêcheurs qui ont soutenu la règle qui les concerne (ou dont l'élu l'a fait)
         compliance = comply / concerned if concerned else 0.0   # part des pêcheurs soumis à une règle qui la respectent
@@ -216,6 +229,12 @@ class IndicatorEngine:
             "norm_concerned": concerned,
             "norm_supporters": agree,
             "norm_compliers": comply,
+            # les règles en vigueur cette saison, dites selon leur type (texte de `norm_adopted`), et les infractions aux règles
+            # de pêche (zone réservée, repos, sorties, taille de bateau) : combien de pêcheurs en ont enfreint une
+            "rules_in_force": sorted({n.get("text") or f"pas plus de {n['quota']:g} t par pêcheur et par saison"
+                                      for f in catches for n in self._rules_for(f, season)}),
+            "rule_kinds": sorted({n.get("kind", "quota") for f in catches for n in self._rules_for(f, season)}),
+            "rule_breachers": len(self.breaches[season]),
             "promises": len(outcomes),
             "promises_kept": len(kept),
             "promise_kept_rate": round(len(kept) / len(outcomes), 4) if outcomes else None,
@@ -230,7 +249,10 @@ class IndicatorEngine:
             "capacity": self.capacity,
             "stock_ratio": round(self.stock / self.capacity, 4) if self.capacity else 0.0,
             "collapsed": self.collapsed,
-            "norms": {n["scope"]: n["quota"] for n in self.norms},
+            "norms": {n["scope"]: n["quota"] for n in self.norms if n.get("kind", "quota") == "quota"},
+            "rules": [{"scope": n["scope"], "kind": n.get("kind", "quota"), "target": n.get("target"), "value": n.get("value", n["quota"]),
+                       "text": n.get("text"), "effective_season": n["effective_season"], "until_season": n.get("until_season")}
+                      for n in self.norms],
             "utterances": self.utterances,
             "accusations": self.accusations,
             "incidents": dict(self.incidents),

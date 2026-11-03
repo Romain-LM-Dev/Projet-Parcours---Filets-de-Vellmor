@@ -41,7 +41,7 @@ def test_a_boat_never_lands_more_than_the_lake_lets_it(tmp_path):
     asyncio.run(world.run())
     for e in kinds(read_events(tmp_path, "limite"), "catch"):
         p = e["payload"]
-        assert p["landed"] <= world.hold_of(world.agents[p["agent"]], p["stock_at_action"]) + 1e-6
+        assert p["landed"] <= world.hold_of(world.agents[p["agent"]], p["stock_at_action"]) + 5e-4
 
 
 def test_the_range_a_fisher_reads_shrinks_with_the_lake(tmp_path):

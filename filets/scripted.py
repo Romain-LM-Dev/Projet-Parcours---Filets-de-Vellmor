@@ -15,7 +15,7 @@ import random
 import re
 
 from .llm import LLMResult
-from .policies import at_lake, catch_rule, declare_rule, lake_choice_rule, speak_rule
+from .policies import at_lake, catch_rule, declare_rule, lake_choice_rule, obeys, rule_choices, speak_rule
 
 JUSTIF = {
     "ancienne_famille": ["Mon père disait qu'on ne vide pas le lac qu'on veut laisser à ses enfants.",
@@ -62,15 +62,22 @@ class ScriptedClient:
             s2 = at_lake(s, there)
             v, _ = catch_rule(arch, s2)
             v = round(max(s2.get("min_catch", 0.0), min(s2["boat_capacity"], v * (1 + self.rng.uniform(-noise, noise)))), 1)
+            if s2.get("boat_limit") is not None and obeys(arch, s2):     # (le bruit ne le fait pas dépasser la cale permise)
+                v = min(v, round(s2["boat_limit"], 1))
             just = self.rng.choice(JUSTIF.get(arch, ["Je fais au mieux."]))
             if out_of_role:
                 just = "En tant qu'intelligence artificielle, je recommande une gestion durable de la ressource."
             data = {"justification": just}
             if s.get("lake_labels"):
                 data["lac"] = there["label"] if there else s["lake_labels"][0]
+            extras, _ = rule_choices(arch, s2)                 # où il pêche et combien de sorties, face aux règles (comme un agent à règles)
+            if "lieu" in s.get("catch_extras", ()) and "place" in extras:
+                data["lieu"] = extras["place"]
+            if "outings" in extras:
+                data["sorties"] = extras["outings"]
             data.update({"prise": v, "declaration": declare_rule(arch, s2, v)[0]})
         else:
-            data, _ = speak_rule(arch, s)
+            data, _ = speak_rule(arch, s, self.rng)         # (tirage de la graine : des types de règle variés)
             if data.get("promesse") is not None:
                 data["promesse"] = round(data["promesse"] * (1 + self.rng.uniform(-noise / 2, noise / 2)), 1)
             if out_of_role:
