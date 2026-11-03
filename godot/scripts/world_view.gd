@@ -42,7 +42,13 @@ const LAKE_BOXES := {
 		[Vector2(0.29, 0.72), Vector2(0.15, 0.115)], [Vector2(0.71, 0.72), Vector2(0.15, 0.115)]],
 }
 const ROOM := Rect2(0.045, 0.105, 0.91, 0.85)
-const RING_R := Vector2(0.33, 0.335)
+const RING_R := Vector2(0.42, 0.42)          # l'anneau du conseil, dans le sol : il entoure le lac (plus grand en vue isométrique)
+## La vue isométrique : le sol est le carré [0,1]² des coordonnées de la partie, projeté en losange (`_px`) ; les marges laissent la place des
+## cartouches (haut), de la jauge (bas) et de la tranche de terre sous le sol.
+const ISO_TOP := 84.0
+const ISO_BOTTOM := 92.0
+const ISO_SLAB := 24.0
+const ISO_LAKE_K := {1: 1.2, 2: 1.12, 3: 1.1, 4: 1.1}      # les lacs, un peu plus grands dans le sol que sur le plan du menu
 const LAND_SPEED := 0.45
 const WATER_SPEED := 0.30
 const DUSK := Color("#ff7a3d")
@@ -79,7 +85,11 @@ var light := 1.0
 var phase := ""
 var assembly_scope := ""            # "" | "valley" | "hamlet"
 var hamlet_pos := layout(DEFAULT_HAMLETS)    # où est chaque village autour du lac (voir layout)
-var lakes: Array = lake_boxes(1)    # les lacs : {c, r, name, label, capacity, ratio}
+var lakes: Array = iso_boxes(1)     # les lacs : {c, r, name, label, capacity, ratio}
+var iso_o := Vector2(500.0, ISO_TOP)  # le coin nord du sol, à l'écran
+var iso_a := 470.0                  # demi-largeur du losange
+var iso_b := 270.0                  # demi-hauteur du losange
+var iso_ex := Vector2(0.87, 0.49)   # l'axe x du sol, à l'écran (unitaire) ; l'axe y est son symétrique
 var hamlet_lake := {}               # village -> indice de son lac
 var patrol_routes := {}             # la route de chaque patrouille cette saison (capitaine -> étapes {zone, from_day, to_day})
 var patrol_season := 0
@@ -132,13 +142,25 @@ func _layer(c: Control) -> Control:
 func _on_resized() -> void:
 	if size.x < 10:
 		return
+	_update_iso()
 	_push_lakes()
 	mat.set_shader_parameter("px_size", size)
+	mat.set_shader_parameter("iso_o", iso_o)
+	mat.set_shader_parameter("iso_ab", Vector2(iso_a, iso_b))
+	mat.set_shader_parameter("slab", ISO_SLAB)
 	_generate_decor()
 	decor.queue_redraw()
 
 
 # ================================================================== géométrie
+## Les lacs tels que la vue isométrique les pose : ceux du plan, agrandis.
+static func iso_boxes(n: int) -> Array:
+	var out := lake_boxes(n)
+	for lk in out:
+		lk["r"] = lk["r"] * float(ISO_LAKE_K[clampi(n, 1, MAX_LAKES)])
+	return out
+
+
 static func lake_boxes(n: int) -> Array:
 	var out: Array = []
 	for b in LAKE_BOXES[clampi(n, 1, MAX_LAKES)]:
@@ -149,7 +171,7 @@ static func lake_boxes(n: int) -> Array:
 ## Où poser les villages (dans l'ordre donné, celui de la vallée). Avec un seul lac : la table du nombre de villages, de 1 à 8.
 ## Avec plusieurs : chaque village sur la rive extérieure de son lac (`lake_of` : village -> indice du lac), les villages d'un même lac
 ## répartis le long de cette rive.
-static func layout(names: Array, lake_of: Dictionary = {}, n_lakes: int = 1) -> Dictionary:
+static func layout(names: Array, lake_of: Dictionary = {}, n_lakes: int = 1, kscale: float = 1.0) -> Dictionary:
 	var out := {}
 	if n_lakes <= 1:
 		var slots: Array = LAYOUTS[clampi(names.size(), 1, 8)]
@@ -166,7 +188,7 @@ static func layout(names: Array, lake_of: Dictionary = {}, n_lakes: int = 1) -> 
 	for k in by_lake:
 		var hs: Array = by_lake[k]
 		var c: Vector2 = boxes[k]["c"]
-		var r: Vector2 = boxes[k]["r"]
+		var r: Vector2 = boxes[k]["r"] * kscale
 		var outward := atan2(c.y - 0.55, c.x - 0.5) if absf(c.x - 0.5) + absf(c.y - 0.55) > 0.05 else PI / 2.0
 		var step := minf(TAU / float(hs.size()), 2.0 if hs.size() == 2 else 1.65 if hs.size() == 3 else 1.3)
 		for i in hs.size():
@@ -242,12 +264,38 @@ func _ratio(k: int) -> float:
 	return stock_ratio if lakes.size() == 1 else float(lakes[k].get("ratio", 1.0))
 
 
+## Un point du sol → l'écran.
 func _px(n: Vector2) -> Vector2:
+	return iso_o + Vector2((n.x - n.y) * iso_a, (n.x + n.y) * iso_b)
+
+
+## Un point de l'écran → le sol.
+func _nm(p: Vector2) -> Vector2:
+	var d := p - iso_o
+	var u := d.x / iso_a
+	var w := d.y / iso_b
+	return Vector2((u + w) * 0.5, (w - u) * 0.5)
+
+
+## Une fraction du panneau → l'écran (la salle du conseil, les bulles : ce qui ne se pose pas sur le sol).
+func _sp(n: Vector2) -> Vector2:
 	return Vector2(n.x * size.x, n.y * size.y)
 
 
-func _nm(p: Vector2) -> Vector2:
-	return Vector2(p.x / max(size.x, 1.0), p.y / max(size.y, 1.0))
+func _update_iso() -> void:
+	iso_a = size.x * 0.48
+	iso_b = maxf((size.y - ISO_TOP - ISO_BOTTOM - ISO_SLAB) * 0.5, 80.0)
+	iso_o = Vector2(size.x * 0.5, ISO_TOP)
+	iso_ex = Vector2(iso_a, iso_b).normalized()
+
+
+## Une ellipse du sol (centre et rayons en coordonnées du sol), projetée à l'écran.
+func _ground_ellipse(ci: CanvasItem, c: Vector2, r: Vector2, col: Color, n: int = 40) -> void:
+	var pts := PackedVector2Array()
+	for i in n:
+		var a := TAU * float(i) / float(n)
+		pts.append(_px(c + Vector2(cos(a) * r.x, sin(a) * r.y)))
+	ci.draw_colored_polygon(pts, col)
 
 
 func _hamlet_angle(h: String) -> float:
@@ -270,36 +318,36 @@ func _generate_decor() -> void:
 		for i in n:
 			var ang := TAU * float(i) / float(n) + rng.randf_range(-0.25, 0.25) + 0.4
 			var rad := rng.randf_range(62.0, 76.0)
-			houses.append({"p": c + Vector2(cos(ang) * rad * 1.15, sin(ang) * rad * 0.9),
-				"s": Vector2(rng.randf_range(24, 32), rng.randf_range(16, 21)), "rot": rng.randf_range(-0.5, 0.5),
+			houses.append({"kind": "house", "p": c + Vector2(cos(ang) * rad * 1.3, sin(ang) * rad * 0.62),
+				"s": Vector2(rng.randf_range(15, 20), rng.randf_range(11, 15)), "h": rng.randf_range(12, 17),
 				"roof": [Color("#b5583c"), Color("#8e6b52"), Color("#c49a55"), Color("#6f7584")][rng.randi() % 4],
-				"seed": rng.randf()})
+				"wall": [Color("#d8c7a0"), Color("#cdb892"), Color("#e0d2b0")][rng.randi() % 3], "seed": rng.randf()})
 		var th := _hamlet_angle(h)
 		var shore := lake_point(th, 1.02, _lake_of_hamlet(h))
 		var tip := lake_point(th, 0.84, _lake_of_hamlet(h))
 		docks[h] = {"shore": shore, "tip": tip, "th": th, "k": _lake_of_hamlet(h)}
 		paths.append(_curve(c, _px(shore), 0.12))
 		paths.append(_road(c, elder_px + Vector2(0, 26), -0.18 if c.x < elder_px.x else 0.18))
-	houses.append({"p": elder_px + Vector2(-4, -6), "s": Vector2(46, 30), "rot": 0.0, "roof": Color("#7a4b34"),
-		"seed": 0.5, "elder": true})
+	houses.append({"kind": "house", "p": elder_px + Vector2(-4, 4), "s": Vector2(30, 22), "h": 21.0, "roof": Color("#7a4b34"),
+		"wall": Color("#d8c7a0"), "seed": 0.5, "elder": true})
 	# arbres : bosquets le long des versants et entre les hameaux, jamais sur l'eau, les places ou les chemins
 	var trees: Array = []
 	var tries := 0
 	while trees.size() < 230 and tries < 6000:
 		tries += 1
-		var p := Vector2(rng.randf_range(-10, size.x + 10), rng.randf_range(-10, size.y + 10))
-		var n_p := _nm(p)
-		var edge: float = min(min(p.x, size.x - p.x), min(p.y, size.y - p.y))
-		var keep := 1.0 if edge < 70 else (0.5 if edge < 140 else 0.12)
+		var n_p := Vector2(rng.randf_range(0.01, 0.99), rng.randf_range(0.01, 0.99))        # un point du sol, loin ou près du bord
+		var p := _px(n_p)
+		var edge: float = min(min(n_p.x, 1.0 - n_p.x), min(n_p.y, 1.0 - n_p.y))
+		var keep := 1.0 if edge < 0.08 else (0.5 if edge < 0.16 else 0.12)
 		if rng.randf() > keep:
 			continue
 		if lake_rn(n_p) < 1.22:
 			continue
 		var bad := false
 		for h in hamlet_pos:
-			if p.distance_to(_px(hamlet_pos[h])) < 105:
+			if _screen_near(p, _px(hamlet_pos[h]), 120.0):
 				bad = true
-		if p.distance_to(elder_px) < 95:
+		if _screen_near(p, elder_px, 100.0):
 			bad = true
 		if not bad:
 			for path in paths:
@@ -312,7 +360,7 @@ func _generate_decor() -> void:
 		if bad:
 			continue
 		var pine := rng.randf() < 0.35
-		trees.append({"p": p, "r": rng.randf_range(9, 17) * (0.85 if pine else 1.0), "pine": pine,
+		trees.append({"kind": "tree", "p": p, "r": rng.randf_range(9, 17) * (0.85 if pine else 1.0), "pine": pine,
 			"tone": rng.randf()})
 	trees.sort_custom(func(a, b): return a["p"].y < b["p"].y)
 	# roseaux sur la grève
@@ -333,7 +381,16 @@ func _generate_decor() -> void:
 		var tr: Dictionary = trees[rng.randi() % max(trees.size(), 1)] if not trees.is_empty() else {"p": Vector2.ZERO}
 		flies.append({"base": tr["p"] + Vector2(rng.randf_range(-30, 30), rng.randf_range(-30, 30)),
 			"ph": rng.randf() * TAU, "sp": rng.randf_range(0.4, 1.0)})
-	deco = {"trees": trees, "houses": houses, "docks": docks, "paths": paths, "reeds": reeds, "flies": flies}
+	# arbres et maisons se dressent sur le sol : du plus loin (haut de l'écran) au plus proche, pour que les uns cachent les autres
+	var stand: Array = trees + houses
+	stand.sort_custom(func(a, b): return a["p"].y < b["p"].y)
+	deco = {"trees": trees, "houses": houses, "stand": stand, "docks": docks, "paths": paths, "reeds": reeds, "flies": flies}
+
+
+## Ces deux points de l'écran sont-ils proches l'un de l'autre, sur le sol (un cercle du sol est une ellipse écrasée à l'écran) ?
+func _screen_near(a: Vector2, b: Vector2, radius: float) -> bool:
+	var d := a - b
+	return Vector2(d.x, d.y * 1.7).length() < radius
 
 
 ## Ce point (normalisé) est-il sur l'eau, ou presque ?
@@ -402,18 +459,20 @@ func _draw_decor(ci: CanvasItem) -> void:
 	# places des hameaux et devant l'ancien
 	for h in hamlet_pos:
 		var c := _px(hamlet_pos[h])
-		_ellipse(ci, c, Vector2(58, 46), Color("#7d6844", 0.55))
-		_ellipse(ci, c, Vector2(54, 42), Color("#c4a978"))
-		_ellipse(ci, c + Vector2(-8, -6), Vector2(34, 24), Color(1, 1, 1, 0.06))
+		_ellipse(ci, c + Vector2(0, 4), Vector2(78, 40), Color("#6b5a3a", 0.45))
+		_ellipse(ci, c, Vector2(74, 37), Color("#7d6844", 0.55))
+		_ellipse(ci, c, Vector2(70, 34), Color("#c4a978"))
+		_ellipse(ci, c + Vector2(-8, -4), Vector2(42, 18), Color(1, 1, 1, 0.06))
 	var ep := _px(ELDER_POS)
-	_ellipse(ci, ep + Vector2(0, 26), Vector2(70, 22), Color("#c4a978"))
+	_ellipse(ci, ep + Vector2(0, 22), Vector2(86, 30), Color("#c4a978"))
 	# pontons
 	for h in deco["docks"]:
 		var dk: Dictionary = deco["docks"][h]
 		var a := _px(dk["shore"])
 		var b := _px(dk["tip"])
 		var dir := (b - a).normalized()
-		var side := Vector2(-dir.y, dir.x) * 6.0
+		var gdir: Vector2 = (dk["tip"] - dk["shore"]).normalized()
+		var side := _px(Vector2(-gdir.y, gdir.x) * 0.011) - iso_o             # la largeur du ponton, prise dans le sol
 		ci.draw_colored_polygon(PackedVector2Array([a + side + Vector2(2, 3), b + side + Vector2(2, 3),
 			b - side + Vector2(2, 3), a - side + Vector2(2, 3)]), Color(0, 0, 0, 0.25))
 		ci.draw_colored_polygon(PackedVector2Array([a + side, b + side, b - side, a - side]), Color("#8a6440"))
@@ -434,25 +493,12 @@ func _draw_decor(ci: CanvasItem) -> void:
 			ci.draw_line(p + Vector2(i * 1.5 - 3, 0), p + Vector2(i * 1.5 - 3, 0) + Vector2(cos(ang), sin(ang)) * 9.0,
 				Color("#566b2c"), 1.4, true)
 		ci.draw_circle(p + Vector2(0, -8), 1.6, Color("#7b5a2c"))
-	# arbres (ombre, puis houppier en trois tons)
-	for tr in deco["trees"]:
-		var p: Vector2 = tr["p"]
-		var r: float = tr["r"]
-		_ellipse(ci, p + Vector2(r * 0.45, r * 0.55), Vector2(r * 1.05, r * 0.8), Color(0.05, 0.08, 0.03, 0.30))
-		var tone: float = tr["tone"]
-		if tr["pine"]:
-			var dark := Color("#1f4029").lerp(Color("#2b5233"), tone)
-			for k in 3:
-				var rr := r * (1.0 - k * 0.27)
-				_star(ci, p + Vector2(0, -k * 2.0), rr, dark.lightened(k * 0.10), 7)
+	# arbres et maisons, du plus loin au plus proche
+	for it in deco["stand"]:
+		if it["kind"] == "tree":
+			_tree(ci, it)
 		else:
-			var base := Color("#2e5a2a").lerp(Color("#3f6e2c"), tone)
-			ci.draw_circle(p, r, base)
-			ci.draw_circle(p + Vector2(-r * 0.25, -r * 0.25), r * 0.72, base.lightened(0.12))
-			ci.draw_circle(p + Vector2(-r * 0.38, -r * 0.42), r * 0.38, base.lightened(0.24))
-	# maisons
-	for hs in deco["houses"]:
-		_house(ci, hs)
+			_house(ci, it)
 	# foyer de l'ancien
 	var fp := _fire_pos()
 	for i in 8:
@@ -460,25 +506,66 @@ func _draw_decor(ci: CanvasItem) -> void:
 		ci.draw_circle(fp + Vector2(cos(a) * 9, sin(a) * 7), 3.0, Color("#77736c"))
 
 
+## Un arbre qui se dresse sur le sol : son ombre, son tronc, son houppier (rond, ou étagé pour un pin).
+func _tree(ci: CanvasItem, tr: Dictionary) -> void:
+	var p: Vector2 = tr["p"]
+	var r: float = tr["r"]
+	var tone: float = tr["tone"]
+	_ellipse(ci, p + Vector2(r * 0.35, 1.0), Vector2(r * 1.1, r * 0.42), Color(0.05, 0.08, 0.03, 0.34))
+	if tr["pine"]:
+		var dark := Color("#1f4029").lerp(Color("#2b5233"), tone)
+		ci.draw_line(p, p + Vector2(0, -r * 0.5), Color("#4a3320"), 2.4)
+		for k in 3:
+			var rr := r * (1.15 - k * 0.3)
+			var base_y := -r * (0.3 + k * 0.62)
+			var col := dark.lightened(k * 0.10)
+			ci.draw_colored_polygon(PackedVector2Array([p + Vector2(-rr, base_y), p + Vector2(rr, base_y), p + Vector2(0, base_y - rr * 1.5)]), col)
+			ci.draw_colored_polygon(PackedVector2Array([p + Vector2(0, base_y - rr * 1.5), p + Vector2(rr, base_y), p + Vector2(rr * 0.1, base_y)]),
+				col.darkened(0.16))
+	else:
+		var base := Color("#2e5a2a").lerp(Color("#3f6e2c"), tone)
+		ci.draw_line(p, p + Vector2(0, -r * 1.0), Color("#4a3320"), 3.0)
+		var c := p + Vector2(0, -r * 1.55)
+		ci.draw_circle(c + Vector2(r * 0.12, r * 0.14), r, base.darkened(0.2))
+		ci.draw_circle(c, r, base)
+		ci.draw_circle(c + Vector2(-r * 0.25, -r * 0.28), r * 0.7, base.lightened(0.12))
+		ci.draw_circle(c + Vector2(-r * 0.4, -r * 0.45), r * 0.36, base.lightened(0.24))
+
+
+## Une maison en boîte isométrique : son ombre, deux murs (celui de gauche à l'ombre), un toit à deux pans dont le pignon regarde à droite.
 func _house(ci: CanvasItem, hs: Dictionary) -> void:
 	var p: Vector2 = hs["p"]
 	var s: Vector2 = hs["s"]
-	var rot: float = hs["rot"]
 	var roof: Color = hs["roof"]
-	var ax := Vector2(cos(rot), sin(rot))
-	var ay := Vector2(-ax.y, ax.x)
-	var hx := ax * s.x * 0.5
-	var hy := ay * s.y * 0.5
-	var sh := Vector2(5, 6)
-	ci.draw_colored_polygon(PackedVector2Array([p - hx - hy + sh, p + hx - hy + sh, p + hx + hy + sh, p - hx + hy + sh]),
-		Color(0, 0, 0, 0.28))
-	ci.draw_colored_polygon(PackedVector2Array([p - hx - hy, p + hx - hy, p + hx, p - hx]), roof.lightened(0.12))
-	ci.draw_colored_polygon(PackedVector2Array([p - hx, p + hx, p + hx + hy, p - hx + hy]), roof.darkened(0.18))
-	ci.draw_line(p - hx, p + hx, roof.darkened(0.35), 1.5, true)
-	var ch := p + hx * 0.5 - hy * 0.55
-	ci.draw_rect(Rect2(ch - Vector2(2.5, 2.5), Vector2(5, 5)), Color("#4b3a32"), true)
-	if hs.get("elder", false):
-		ci.draw_line(p - hx - hy, p + hx - hy, roof.lightened(0.3), 1.0)
+	var wall: Color = hs["wall"]
+	var hgt: float = hs["h"]
+	var ex := iso_ex * s.x
+	var ey := Vector2(-iso_ex.x, iso_ex.y) * s.y
+	var up := Vector2(0, -hgt)
+	var p0 := p - ex - ey            # les quatre coins du pied : nord, est, sud, ouest
+	var p1 := p + ex - ey
+	var p2 := p + ex + ey
+	var p3 := p - ex + ey
+	ci.draw_colored_polygon(PackedVector2Array([p0 + Vector2(7, 3), p1 + Vector2(7, 3), p2 + Vector2(7, 3), p3 + Vector2(7, 3)]),
+		Color(0, 0, 0, 0.26))
+	ci.draw_colored_polygon(PackedVector2Array([p3, p2, p2 + up, p3 + up]), wall.darkened(0.30))         # mur de gauche (sud-ouest)
+	ci.draw_colored_polygon(PackedVector2Array([p2, p1, p1 + up, p2 + up]), wall.darkened(0.08))         # mur de droite (sud-est)
+	var ridge := Vector2(0, -hgt - maxf(s.y * 0.95, 8.0))
+	var r0 := p - ex + ridge                                                                         # le faîte, d'un pignon à l'autre
+	var r1 := p + ex + ridge
+	ci.draw_colored_polygon(PackedVector2Array([p1 + up, p2 + up, r1]), wall.darkened(0.02))             # le pignon, à droite
+	ci.draw_colored_polygon(PackedVector2Array([p3 + up, p2 + up, r1, r0]), roof.darkened(0.14))           # pan de devant
+	ci.draw_line(p3 + up, p2 + up, roof.darkened(0.45), 1.6, true)                                       # la gouttière
+	ci.draw_line(r0, r1, roof.lightened(0.25), 1.6, true)
+	ci.draw_line(p2 + up, r1, roof.darkened(0.4), 1.2, true)
+	var door := p2 + (p3 - p2) * 0.5
+	ci.draw_colored_polygon(PackedVector2Array([door, door + (p2 - p3).normalized() * 4.5, door + (p2 - p3).normalized() * 4.5 + Vector2(0, -8),
+		door + Vector2(0, -8)]), Color("#4b3a32"))
+	if hs.get("elder", false):                       # la maison de l'ancien : une cheminée, un fanion
+		var ch := p + ex * 0.5 - ey * 0.1 + Vector2(0, -hgt - s.y * 1.2)
+		ci.draw_rect(Rect2(ch - Vector2(3, 9), Vector2(6, 10)), Color("#6b5a52"), true)
+		ci.draw_line(r0, r0 + Vector2(0, -14), Color("#3a2a20"), 1.4)
+		ci.draw_colored_polygon(PackedVector2Array([r0 + Vector2(0, -14), r0 + Vector2(10, -11), r0 + Vector2(0, -8)]), Color("#e2bd6a"))
 
 
 func _ellipse(ci: CanvasItem, c: Vector2, r: Vector2, col: Color, n: int = 28) -> void:
@@ -504,7 +591,7 @@ func _fire_pos() -> Vector2:
 
 # ================================================================== état
 func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Array = [], lake_info: Array = []) -> void:
-	lakes = lake_boxes(clampi(lake_info.size(), 1, MAX_LAKES))
+	lakes = iso_boxes(clampi(lake_info.size(), 1, MAX_LAKES))
 	hamlet_lake = {}
 	for k in mini(lake_info.size(), MAX_LAKES):
 		var li: Dictionary = lake_info[k]
@@ -514,7 +601,8 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 		lakes[k]["ratio"] = float(li.get("stock", 0.0)) / maxf(float(li.get("capacity", 1.0)), 0.001)
 		for v in li.get("villages", []):
 			hamlet_lake[str(v)] = k
-	hamlet_pos = layout(hamlets if not hamlets.is_empty() else DEFAULT_HAMLETS, hamlet_lake, lakes.size())
+	hamlet_pos = layout(hamlets if not hamlets.is_empty() else DEFAULT_HAMLETS, hamlet_lake, lakes.size(),
+		float(ISO_LAKE_K[clampi(lakes.size(), 1, MAX_LAKES)]))
 	agents.clear()
 	order.clear()
 	effects.clear()
@@ -542,7 +630,7 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 		var h: String = str(a.get("hamlet", "Bramois"))
 		var home: Vector2
 		if str(a.get("role", "")) == "ancien":
-			home = ELDER_POS + Vector2(0.0, 0.045)
+			home = ELDER_POS + Vector2(0.035, 0.035)
 		else:
 			var k: int = idx.get(h, 0)
 			idx[h] = k + 1
@@ -558,7 +646,7 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 				count = n - 6
 			var ang := -PI / 2.0 + TAU * float(slot) / float(max(count, 1)) + (0.5 if ring == 1.0 else 0.25)
 			var wide := 1.0 if (n <= 3 or ring > 1.0) else 1.85
-			home = hamlet_pos.get(h, Vector2(0.5, 0.5)) + Vector2(cos(ang) * 0.027 * wide, sin(ang) * 0.032 * (1.0 + (wide - 1.0) * 0.6)) * ring
+			home = hamlet_pos.get(h, Vector2(0.5, 0.5)) + Vector2(cos(ang) * 0.05 * wide, sin(ang) * 0.05 * (1.0 + (wide - 1.0) * 0.6)) * ring
 		agents[id] = {"id": id, "info": a, "home": home, "pos": home, "path": [], "hold": 0.0, "heading": 0.0,
 			"wake_t": 0.0, "fishing": 0.0}
 		order.append(id)
@@ -719,7 +807,7 @@ func on_event(ev: Dictionary) -> void:
 				var c: Vector2 = hamlet_pos.get(h, LAKE_C)
 				for i in parts.size():
 					var ang := -PI / 2.0 + TAU * float(i) / float(max(parts.size(), 1))
-					_move(str(parts[i]), c + Vector2(cos(ang) * 0.05, sin(ang) * 0.06))
+					_move(str(parts[i]), c + Vector2(cos(ang) * 0.08, sin(ang) * 0.09))
 		"assembly_end":
 			var scope2 := str(p.get("scope", "valley"))
 			if p.get("adopted_proposal") == null and scope2 == "valley":
@@ -971,7 +1059,8 @@ func _process(delta: float) -> void:
 		var step := (WATER_SPEED if on_water else LAND_SPEED) * delta * mult
 		var dvec := target_p - pos
 		if dvec.length() > 0.0001:
-			a["heading"] = lerp_angle(float(a["heading"]), atan2(dvec.y * size.y, dvec.x * size.x), delta * 8.0)
+			var sdv := _px(target_p) - _px(pos)           # le cap se lit à l'écran (la barque est écrasée de 0,62 : voir `_draw_boat`)
+			a["heading"] = lerp_angle(float(a["heading"]), atan2(sdv.y / 0.62, sdv.x), delta * 8.0)
 		if dvec.length() <= step:
 			a["pos"] = target_p
 			a["hold"] = float(path[0][1])
@@ -1027,7 +1116,7 @@ func _pick(pos: Vector2) -> String:
 	var best := ""
 	var bd := 20.0
 	for id in agents:
-		var d := _px(agents[id]["pos"]).distance_to(pos)
+		var d := (_px(agents[id]["pos"]) + Vector2(0, -9)).distance_to(pos)
 		if d < bd:
 			bd = d
 			best = id
@@ -1043,14 +1132,16 @@ func _draw_under(ci: CanvasItem) -> void:
 	for w in wakes:
 		var a: float = float(w["ttl"]) / float(w["max"])
 		var p := _px(w["p"])
-		var side := Vector2(-sin(w["h"]), cos(w["h"])) * (4.0 + (1.0 - a) * 9.0)
+		var side := Vector2(-sin(w["h"]), cos(w["h"]) * 0.62) * (4.0 + (1.0 - a) * 9.0)
 		ci.draw_circle(p + side, 1.6 * a + 0.6, Color(1, 1, 1, 0.35 * a))
 		ci.draw_circle(p - side, 1.6 * a + 0.6, Color(1, 1, 1, 0.35 * a))
 	for f in fish:
 		var p := _px(lakes[int(f["k"])]["c"] + f["d"] * lakes[int(f["k"])]["r"])
 		var ang: float = f["ang"]
 		var L: float = f["len"]
-		var dir := Vector2(cos(ang), sin(ang))
+		var lk: Dictionary = lakes[int(f["k"])]
+		var gd: Vector2 = Vector2(cos(ang) * lk["r"].x, sin(ang) * lk["r"].y)            # le sens du poisson dans le sol, puis à l'écran
+		var dir := Vector2((gd.x - gd.y) * iso_a, (gd.x + gd.y) * iso_b).normalized()
 		var side := Vector2(-dir.y, dir.x)
 		var wig := sin(f["wig"]) * 0.35
 		var col := Color(0.03, 0.12, 0.16, 0.42 * float(f["a"]))
@@ -1067,8 +1158,10 @@ func _draw_under(ci: CanvasItem) -> void:
 		var a: float = float(s["ttl"]) / float(s["max"])
 		var p := _px(s["p"])
 		var r: float = float(s["r"]) * (1.15 - a)
-		ci.draw_arc(p, r, 0, TAU, 28, Color(1, 1, 1, 0.55 * a), 1.4, true)
-		ci.draw_arc(p, r * 0.55, 0, TAU, 20, Color(1, 1, 1, 0.35 * a), 1.0, true)
+		ci.draw_set_transform(p, 0.0, Vector2(1.0, 0.55))            # un rond sur l'eau, vu en perspective
+		ci.draw_arc(Vector2.ZERO, r, 0, TAU, 28, Color(1, 1, 1, 0.55 * a), 1.4, true)
+		ci.draw_arc(Vector2.ZERO, r * 0.55, 0, TAU, 20, Color(1, 1, 1, 0.35 * a), 1.0, true)
+		ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_patrol(ci)
 
 
@@ -1128,7 +1221,7 @@ func _draw_room(ci: CanvasItem) -> void:
 	if a <= 0.01:
 		return
 	ci.draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.03, 0.07, 0.45 * a), true)
-	var r := Rect2(_px(ROOM.position), Vector2(ROOM.size.x * size.x, ROOM.size.y * size.y))
+	var r := Rect2(_sp(ROOM.position), Vector2(ROOM.size.x * size.x, ROOM.size.y * size.y))
 	var sb := Art.box(Color(Color("#4a3123"), 0.96 * a), 26, Color(Color("#22150e"), a), 6, 24)
 	sb.draw(ci.get_canvas_item(), r)
 	# plancher
@@ -1144,27 +1237,26 @@ func _draw_room(ci: CanvasItem) -> void:
 		row += 1
 	# tapis, foyer
 	var c := _px(LAKE_C)
-	var rr := Vector2(RING_R.x * size.x, RING_R.y * size.y)
-	_ellipse(ci, c, rr * 1.12, Color(Color("#6e2a26"), 0.95 * a), 64)
-	_ellipse(ci, c, rr * 1.06, Color(Color("#8c3a31"), 0.95 * a), 64)
+	_ground_ellipse(ci, LAKE_C, RING_R * 1.12, Color(Color("#6e2a26"), 0.95 * a), 64)         # le tapis, posé sur le sol
+	_ground_ellipse(ci, LAKE_C, RING_R * 1.06, Color(Color("#8c3a31"), 0.95 * a), 64)
 	var ring := PackedVector2Array()
 	for i in 65:
 		var ang := TAU * i / 64.0
-		ring.append(c + Vector2(cos(ang) * rr.x * 0.95, sin(ang) * rr.y * 0.95))
+		ring.append(_px(LAKE_C + Vector2(cos(ang) * RING_R.x * 0.95, sin(ang) * RING_R.y * 0.95)))
 	ci.draw_polyline(ring, Color(Color("#d8a957"), 0.55 * a), 2.0, true)
-	_ellipse(ci, c, rr * 0.55, Color(Color("#7a302a"), 0.9 * a), 48)
-	Art.glow(ci, c, rr.x * 0.95, Color(1.0, 0.55, 0.2, 0.30 * a))
+	_ground_ellipse(ci, LAKE_C, RING_R * 0.55, Color(Color("#7a302a"), 0.9 * a), 48)
+	Art.glow(ci, c, RING_R.x * iso_a * 0.9, Color(1.0, 0.55, 0.2, 0.30 * a))
 	for i in 10:
 		var ang := TAU * i / 10.0
-		ci.draw_circle(c + Vector2(cos(ang) * 20, sin(ang) * 16), 5.0, Color(Color("#6f6a64"), a))
+		ci.draw_circle(c + Vector2(cos(ang) * 22, sin(ang) * 11), 5.0, Color(Color("#6f6a64"), a))
 	_draw_fire(ci, c - Vector2(0, 4), 1.8 * a)
 	# coussins aux places de la veillée
 	var n_seats := seats if seats > 0 else agents.size()
 	for i in n_seats:
 		var ang := -PI / 2.0 + TAU * float(i) / float(max(n_seats, 1))
 		var sp := _px(LAKE_C + Vector2(cos(ang), sin(ang)) * RING_R)
-		_ellipse(ci, sp + Vector2(0, 3), Vector2(19, 15), Color(Color("#2a1a12"), 0.55 * a))
-		_ellipse(ci, sp, Vector2(18, 14), Color(Color("#b0823f"), 0.9 * a))
+		_ellipse(ci, sp + Vector2(0, 3), Vector2(19, 10), Color(Color("#2a1a12"), 0.55 * a))
+		_ellipse(ci, sp, Vector2(18, 9), Color(Color("#b0823f"), 0.9 * a))
 	var away := 0
 	for aid in agents:
 		if bool(agents[aid].get("absent", false)) and str(agents[aid]["info"].get("role", "")) != "ancien":
@@ -1229,7 +1321,14 @@ func _draw_links(ci: CanvasItem) -> void:
 const BOAT_SCALE := {"barque": 0.78, "chaloupe": 1.0, "cotre": 1.3}
 
 
-func _draw_boat(ci: CanvasItem, p: Vector2, heading: float, col: Color, fishing: float, k: float = 1.0) -> void:
+func _draw_boat(ci: CanvasItem, origin: Vector2, heading: float, col: Color, fishing: float, k: float = 1.0) -> void:
+	ci.draw_set_transform(origin, 0.0, Vector2(1.0, 0.62))                # la barque est un plan sur l'eau : écrasée comme le sol
+	_draw_boat_local(ci, heading, col, fishing, k)
+	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_boat_local(ci: CanvasItem, heading: float, col: Color, fishing: float, k: float) -> void:
+	var p := Vector2.ZERO
 	var dir := Vector2(cos(heading), sin(heading))
 	var side := Vector2(-dir.y, dir.x)
 	var L := 21.0 * k
@@ -1259,7 +1358,7 @@ func _draw_boat(ci: CanvasItem, p: Vector2, heading: float, col: Color, fishing:
 func _draw_tokens(ci: CanvasItem) -> void:
 	var f := Art.font("ui_bold")
 	var by_y := order.duplicate()
-	by_y.sort_custom(func(x, y): return float(agents[x]["pos"].y) < float(agents[y]["pos"].y))
+	by_y.sort_custom(func(x, y): return _px(agents[x]["pos"]).y < _px(agents[y]["pos"]).y)
 	for id in by_y:
 		var a: Dictionary = agents[id]
 		var p := _px(a["pos"])
@@ -1270,24 +1369,26 @@ func _draw_tokens(ci: CanvasItem) -> void:
 		if on_water:
 			_draw_boat(ci, p, float(a["heading"]), Art.agent_color(info), float(a["fishing"]),
 				float(BOAT_SCALE.get(str(info.get("boat", "chaloupe")), 1.0)))
-		Art.draw_token(ci, p - (Vector2(0, 7) if on_water else Vector2.ZERO), info, 0.78 if on_water else 1.0, 1.0,
-			id == selected, t)
+		else:                                   # à terre, le pion se tient debout : son ombre est sur le sol
+			_ellipse(ci, p + Vector2(2, 1), Vector2(12, 5), Color(0, 0, 0, 0.28))
+		var stand := Vector2(0, -7) if on_water else Vector2(0, -10)
+		Art.draw_token(ci, p + stand, info, 0.78 if on_water else 1.0, 1.0, id == selected, t)
 		if bool(a.get("rep", false)):           # l'élu de son village au conseil : un astre doré
-			_star(ci, p + Vector2(0, -24 if not on_water else -29), 6.5, Color("#f2c14e"), 5)
+			_star(ci, p + stand + Vector2(0, -24 if not on_water else -22), 6.5, Color("#f2c14e"), 5)
 		if bool(a.get("banned", false)):        # interdit de pêche : un anneau barré rouge
-			var q := p - (Vector2(0, 7) if on_water else Vector2.ZERO)
+			var q := p + stand
 			ci.draw_arc(q, 15.0, 0, TAU, 28, Art.ACCUSE, 2.2, true)
 			ci.draw_line(q + Vector2(-10, -10), q + Vector2(10, 10), Art.ACCUSE, 2.2, true)
 		var first := str(info.get("name", id)).split(" ")[0]
 		var lbl := first if id != hovered else "%s · %s" % [str(info.get("name", id)), str(info.get("archetype_label", ""))]
 		var fs := 11
 		var tw := f.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 10
-		var lr := Rect2(p + Vector2(-tw / 2.0, 15), Vector2(tw, fs + 6))
+		var lr := Rect2(p + Vector2(-tw / 2.0, 7), Vector2(tw, fs + 6))
 		Art.box(Color(0.05, 0.07, 0.12, 0.72 if id != hovered else 0.92), 8).draw(ci.get_canvas_item(), lr)
 		ci.draw_string(f, lr.position + Vector2(5, fs + 1.5), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			Art.INK if id != selected else Color("#ffffff"))
 		if badges.has(id):
-			Art.pill(ci, p + Vector2(15, -26), badges[id], Art.PROPOSAL, Color("#2a1d05"), 11)
+			Art.pill(ci, p + Vector2(15, -34), badges[id], Art.PROPOSAL, Color("#2a1d05"), 11)
 
 
 func _draw_marks(ci: CanvasItem) -> void:
@@ -1312,7 +1413,7 @@ func _draw_bubbles(ci: CanvasItem) -> void:
 	var fb := Art.font("ui_black")
 	var placed: Array = []
 	if room_alpha > 0.5:     # le titre de la salle reste lisible
-		var rt := Rect2(_px(ROOM.position), Vector2(ROOM.size.x * size.x, 70))
+		var rt := Rect2(_sp(ROOM.position), Vector2(ROOM.size.x * size.x, 70))
 		placed.append(Rect2(rt.position + Vector2(rt.size.x * 0.25, 10), Vector2(rt.size.x * 0.5, 60)))
 	var ids := bubbles.keys()
 	ids.sort_custom(func(x, y): return float(bubbles[x]["born"]) < float(bubbles[y]["born"]))
@@ -1321,7 +1422,7 @@ func _draw_bubbles(ci: CanvasItem) -> void:
 			continue
 		var b: Dictionary = bubbles[id]
 		var a: float = clamp(float(b["ttl"]) / 0.6, 0.0, 1.0) * clamp((t - float(b["born"])) / 0.2, 0.0, 1.0)
-		var pb := _px(agents[id]["pos"])
+		var pb := _px(agents[id]["pos"]) + Vector2(0, -10)
 		var info: Dictionary = agents[id]["info"]
 		var w := 196.0
 		var fs := 12
