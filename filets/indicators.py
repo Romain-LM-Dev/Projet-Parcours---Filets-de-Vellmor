@@ -60,7 +60,9 @@ class IndicatorEngine:
         self.accusations = 0
         self.history: list[dict] = []
         self.last_values: dict = {}
-        self.collapsed = False
+        self.collapsed = False                      # la vallée est effondrée quand TOUS ses lacs le sont (comme le moteur)
+        self.lakes: dict[str, dict] = {}            # (plusieurs lacs) nom -> {label, capacity, stock, collapsed}
+        self.lake_catch: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))     # saison -> lac -> prises
 
     # ------------------------------------------------------------------ ingestion
     def ingest(self, ev: dict) -> dict | None:
@@ -80,6 +82,8 @@ class IndicatorEngine:
             self.capacity = p["lake"]["capacity"]
             self.msy = p["lake"]["sustainable_yield"]
             self.stock = p["lake"]["stock"]
+            self.lakes = {lk["name"]: {"label": lk["label"], "capacity": lk["capacity"], "stock": lk["stock"], "collapsed": False}
+                          for lk in p.get("lakes", [])} if len(p.get("lakes", [])) > 1 else {}
             self.fishers = {a["id"]: dict(a) for a in p["agents"] if a.get("role") == "pecheur"}
         elif self.run_id is None or ev.get("run_id") != self.run_id:
             self.skipped += 1
@@ -89,16 +93,25 @@ class IndicatorEngine:
             self.season = ev["season"]
         elif t == "lake_update":
             self.stock = p["stock"]
+            self._set_lake_stocks(p.get("lakes"))
             if p["cause"] in ("catch", "injection"):
                 return self.snapshot(ev, "lake", [ev["event_id"]])
         elif t == "lake_collapsed":
-            self.collapsed = True
+            if self.lakes and p.get("lake") in self.lakes:
+                self.lakes[p["lake"]]["collapsed"] = True
+                self.collapsed = all(lk["collapsed"] for lk in self.lakes.values())
+            else:
+                self.collapsed = True
         elif t == "catch":
             s = ev["season"]
             self.catches[s][p["agent"]] = self.catches[s].get(p["agent"], 0.0) + p["landed"]
             self.catch_ids[s].append(ev["event_id"])
             # obsolescence : ce qui a changé dans le lac entre l'observation et l'action (C5, C7)
-            self.staleness.append(abs(p["stock_at_action"] - p["stock_at_horizon"]) / max(1e-9, self.capacity))
+            if self.lakes:
+                self.lake_catch[s][p["lake"]] += p["landed"]
+            # (stocks du lac où il a pêché : on les rapporte à la capacité de CE lac, pas à celle de la vallée)
+            cap = self.lakes[p["lake"]]["capacity"] if self.lakes and p.get("lake") in self.lakes else self.capacity
+            self.staleness.append(abs(p["stock_at_action"] - p["stock_at_horizon"]) / max(1e-9, cap))
         elif t == "sale":
             if p["agent"] in self.fishers:
                 self.fishers[p["agent"]]["wealth"] = p["wealth"]      # l'inégalité suit les ventes, pas seulement les bilans
@@ -143,6 +156,18 @@ class IndicatorEngine:
         elif t == "run_end":
             return self.snapshot(ev, "run_end", [])
         return None
+
+    def _set_lake_stocks(self, stocks: dict | None):
+        for name, st in (stocks or {}).items():
+            if name in self.lakes:
+                self.lakes[name]["stock"] = st
+
+    def lakes_detail(self, season: int) -> dict:
+        """Par lac : stock, part de sa capacité, effondré ou non, prises de la saison (`catch.lake`)."""
+        return {n: {"label": lk["label"], "stock": round(lk["stock"], 3), "capacity": lk["capacity"],
+                    "stock_ratio": round(lk["stock"] / lk["capacity"], 4) if lk["capacity"] else 0.0,
+                    "collapsed": lk["collapsed"], "catch": round(self.lake_catch[season].get(n, 0.0), 3)}
+                for n, lk in self.lakes.items()}
 
     # ------------------------------------------------------------------ calculs
     def _quota_for(self, fisher: str, season: int) -> tuple[float, dict] | None:
@@ -221,6 +246,9 @@ class IndicatorEngine:
             "llm_calls_s2": self.by_system["S2"]["calls"], "llm_tokens_s2": self.by_system["S2"]["tokens"],
             "wealth_gini": gini(wealth),
         }
+        if self.lakes:
+            values["lakes"] = self.lakes_detail(ev["season"])
+            values["lakes_collapsed"] = sum(lk["collapsed"] for lk in self.lakes.values())
         if extra:
             values.update(extra)
         out = {"trigger": trigger, "values": values, "source_event_ids": sources,
@@ -234,6 +262,7 @@ class IndicatorEngine:
             if f in self.fishers:
                 self.fishers[f]["wealth"] = w
         self.stock = ev["payload"]["stock"]
+        self._set_lake_stocks(ev["payload"].get("lakes"))
         values, sources = self.season_values(ev["season"])
         out = self.snapshot(ev, "season_end", sources + [ev["event_id"]], values)
         self.history.append(out["values"])

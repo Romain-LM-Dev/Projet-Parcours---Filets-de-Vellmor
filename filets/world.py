@@ -54,7 +54,7 @@ from .config import ROOT, sustainable_yield
 from .control import MODES, GameControl, StopRun
 from .events import EventFactory, Recorder
 from .lake import Lake
-from .lakes import GRID, lake_distance, lake_parcels, resolve_lakes, village_positions
+from .lakes import GRID, lake_distance, lake_parcels, resolve_lakes, village_positions, world_size
 from .memory import MemoryBank, MemoryStore, VectorMemory
 from .objects import archive_run, make_objects
 from .profiles import Profile, build_population, villages_of
@@ -2347,7 +2347,7 @@ class World:
                        "growth_rate": lk.r, "villages": [h for h, n in self.lake_of_hamlet.items() if n == lk.name],
                        "fishers": self.lake_fishers[lk.name],
                        "cells": [[p["i"], p["j"], p["depth"], p["luck"]] for p in lk.parcels]} for lk in self.lakes.values()],
-            "map": {"grid": GRID, "hamlets": {h: [round(x, 4), round(y, 4)] for h, (x, y) in self.village_xy.items()}},
+            "map": {"grid": GRID, "size": world_size(len(self.hamlets), len(self.lakes)), "hamlets": {h: [round(x, 4), round(y, 4)] for h, (x, y) in self.village_xy.items()}},
             "agents": [{**a.profile.public(), "wealth": a.wealth, "offset_days": a.offset_days}
                        for a in self.agents.values()],
             "hamlets": self.hamlets, "boats": {k: dict(v) for k, v in self.boats.items()},

@@ -6,6 +6,9 @@ var stock: Array = []
 var norm: Array = []
 var kept: Array = []
 var live_stock := -1.0
+var lakes: Dictionary = {}      # (plusieurs lacs) nom -> sa part de capacité par saison
+
+const C_LAKES := [Color("#4fb3d9"), Color("#8f8cff"), Color("#3fd0c9"), Color("#d98cf2")]
 
 const C_STOCK := Color("#4fb3d9")
 const C_NORM := Color("#f2b23a")
@@ -16,6 +19,7 @@ func reset() -> void:
 	stock.clear()
 	norm.clear()
 	kept.clear()
+	lakes.clear()
 	live_stock = -1.0
 	queue_redraw()
 
@@ -29,6 +33,13 @@ func set_season(season: int, v: Dictionary) -> void:
 		norm.append(-1.0)
 		kept.append(-1.0)
 	stock[i] = float(v.get("stock_ratio", 0.0))
+	var lv: Dictionary = v.get("lakes", {})
+	for n in lv:
+		if not lakes.has(n):
+			lakes[n] = []
+		while lakes[n].size() <= i:
+			lakes[n].append(-1.0)
+		lakes[n][i] = float(lv[n].get("stock_ratio", 0.0))
 	norm[i] = float(v.get("norm_index", 0.0))
 	var k: Variant = v.get("promise_kept_rate")
 	kept[i] = -1.0 if k == null else float(k)
@@ -45,7 +56,13 @@ func _draw() -> void:
 	var fb := Art.font("ui_bold")
 	var r := Rect2(Vector2(34, 30), size - Vector2(46, 52))
 	var lx := 8.0
-	for item in [["stock du lac", C_STOCK], ["indice de norme", C_NORM], ["promesses tenues", C_KEPT]]:
+	var legend: Array = [["stock du lac", C_STOCK]] if lakes.is_empty() else []
+	var li := 0
+	for n in lakes:
+		legend.append([str(n), C_LAKES[li % C_LAKES.size()]])
+		li += 1
+	legend += [["indice de norme", C_NORM], ["promesses tenues", C_KEPT]]
+	for item in legend:
 		draw_rect(Rect2(Vector2(lx, 9), Vector2(10, 10)), item[1], true)
 		draw_string(fb, Vector2(lx + 15, 18), item[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Art.MUTED)
 		lx += 30 + fb.get_string_size(item[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
@@ -63,10 +80,15 @@ func _draw() -> void:
 		poly.append(Vector2(pts[pts.size() - 1].x, r.end.y))
 		poly.append(Vector2(pts[0].x, r.end.y))
 		draw_colored_polygon(poly, Color(C_STOCK, 0.16))
-	_series(stock, r, n, C_STOCK, 2.5)
+	if lakes.is_empty():
+		_series(stock, r, n, C_STOCK, 2.5)
+	li = 0
+	for name in lakes:
+		_series(lakes[name], r, n, C_LAKES[li % C_LAKES.size()], 2.2)
+		li += 1
 	_series(norm, r, n, C_NORM, 2.0)
 	_series(kept, r, n, C_KEPT, 2.0)
-	if live_stock >= 0.0:
+	if live_stock >= 0.0 and lakes.is_empty():
 		var x: float = r.position.x + r.size.x * float(stock.size()) / float(n - 1)
 		var y: float = r.position.y + r.size.y * (1.0 - clamp(live_stock, 0.0, 1.0))
 		draw_circle(Vector2(x, y), 6.0, Color(C_STOCK, 0.25))

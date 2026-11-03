@@ -145,6 +145,7 @@ func _ready() -> void:
 
 # ------------------------------------------------------------------ interface
 var ind_sub := {}
+var ind_title := {}            # clé de carte KPI -> son titre (le stock devient « STOCK DES LACS » avec plusieurs lacs)
 
 
 func _pad(sb: StyleBoxFlat, h: float, v: float) -> StyleBoxFlat:
@@ -252,7 +253,9 @@ func _kpi(parent: Control, key: String, title: String, sub: String, accent: Colo
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 0 if big else -2)
 	pc.add_child(vb)
-	vb.add_child(_label(title.to_upper(), 10, "ui_black", Art.MUTED))
+	var tl := _label(title.to_upper(), 10, "ui_black", Art.MUTED)
+	vb.add_child(tl)
+	ind_title[key] = tl
 	var v := _label("—", 28 if big else 17, "title" if big else "ui_bold", accent.lightened(0.25) if big else Art.INK)
 	vb.add_child(v)
 	ind_labels[key] = v
@@ -1157,6 +1160,7 @@ const KPI_SUB := {"stock": "repeuplement max à 50 %", "norme": "accord × confo
 func _reset_kpis() -> void:
 	for k in ind_labels:
 		ind_labels[k].text = "—"
+	ind_title["stock"].text = "STOCK DU LAC"
 	for k in KPI_SUB:
 		if ind_sub.has(k):
 			ind_sub[k].text = KPI_SUB[k]
@@ -1170,6 +1174,14 @@ func _on_indicator(msg: Dictionary) -> void:
 	var v: Dictionary = p.get("values", {})
 	ind_labels["stock"].text = "%.0f %%" % (float(v.get("stock_ratio", 0)) * 100.0)
 	ind_sub["stock"].text = "%.0f t sur %.0f · repeuplement max à 50 %%" % [float(v.get("stock", 0)), float(run.get("capacity", 0))]
+	var lks: Dictionary = v.get("lakes", {})
+	ind_title["stock"].text = "STOCK DES LACS" if not lks.is_empty() else "STOCK DU LAC"
+	if not lks.is_empty():              # plusieurs lacs : une courte ligne par lac (nom, part de sa capacité)
+		var lines := PackedStringArray()
+		for n in lks:
+			lines.append("%s %.0f %%%s" % [n, float(lks[n].get("stock_ratio", 0)) * 100.0, " (effondré)" if bool(lks[n].get("collapsed", false)) else ""])
+		ind_sub["stock"].text = "
+".join(lines)
 	ind_labels["incidents"].text = str(int(v.get("incidents_total", 0)))
 	ind_labels["llm"].text = str(int(v.get("llm_calls", 0)))
 	ind_labels["tokens"].text = str(int(v.get("llm_tokens", 0)))

@@ -46,6 +46,12 @@ _PLAN_BOXES = {2: (0.15, 0.21), 3: [(0.15, 0.13), (0.15, 0.13), (0.19, 0.115)], 
 GRID = 30
 
 
+def world_size(villages: int, lakes: int) -> float:
+    """La taille de la vallée, en largeurs de carte : au zoom 1, on en voit une largeur (il faut la parcourir) ; elle grandit avec
+    les villages et les lacs, pour garder de l'espace entre eux. Maisons et personnages, eux, gardent leur taille."""
+    return round(min(2.6, 1.5 + 0.1 * max(0, villages - 4) + 0.15 * (max(1, lakes) - 1)), 2)
+
+
 def village_positions(hamlets: list[str], lake_index: dict[str, int], n_lakes: int) -> dict[str, tuple[float, float]]:
     """Où est chaque village dans le sol (normalisé) : `layout` de world_view.gd, que la carte reprend telle quelle."""
     if n_lakes <= 1:
