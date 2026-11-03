@@ -408,6 +408,16 @@ arrêtée (« le lac est à sec »).
 Pour resserrer les comportements (l'un pêchait 0 t, l'autre 10 t au même moment), chaque pêcheur reçoit aussi un résumé de ce que les
 autres ont déclaré la saison dernière (« entre 2 et 6 t, 4,0 t pour le pêcheur du milieu »), et les règles adoptées servent de repère commun.
 
+**Types de règles.** En plus du quota (des tonnes par pêcheur et par saison), le conseil peut adopter une **réserve** (la rive d'un village
+ou le large d'un lac sont interdits, pour quelques saisons ; qui la respecte pêche ailleurs), le **repos** d'un lac (fermé une ou plusieurs
+saisons ; on reste à quai ou l'on va pêcher dans un autre lac), une **limite de sorties** (au plus N sorties par saison) ou une **taille de
+bateau maximale** (les plus gros ne prennent que la cale permise). Chaque agent choisit le type selon la situation (lac bas, coin trop pêché,
+gros bateaux, prises qui dépassent) ; le respecter ou non reste son choix : son IA, ou le caractère d'un agent à règles (le taiseux triche,
+la famille prudente respecte). Deux propositions ne se rejoignent que du même type et de la même cible. Une violation se voit par la
+patrouille et les témoins, et le joueur la lit dans le fil (« règle enfreinte »). Sur la carte, des bouées et des hachures marquent une
+réserve, « au repos » un lac fermé. Événements : `proposal` et `norm_adopted` portent `kind`, `value`, `target`, `text` (+ `duration`,
+`until_season`) ; `catch.breach` signale la violation.
+
 ## Prises secrètes, déclarations et confiance
 
 **Seuls le pêcheur et le joueur connaissent la vraie prise.** En rentrant, chaque pêcheur **déclare** sa prise à l'ancien
@@ -655,7 +665,8 @@ et ses effets sont des événements séparés : `proposal`, `support`, `promise`
 
 Vue de dessus de la vallée, dessinée entièrement en code (aucune image externe) :
 
-* **la carte remplit tout le cadre** : la vallée en losange touche ses quatre bords, la forêt s'étend au-delà. On s'y promène comme
+* **la carte remplit tout le cadre** : la vallée en losange touche ses quatre bords, la forêt s'étend au-delà. La vallée est plus grande que l'écran (sa taille suit le nombre de villages et de lacs, `run_start.map.size`) ;
+  ses bords se fondent dans la forêt et les collines, et une **mini-carte** en bas à droite montre toute la vallée et la vue (un clic y déplace la vue ; au zoom minimum, toute la vallée tient à l'écran). On s'y promène comme
   dans Age of Empires : **la molette zoome** vers le pointeur (jusqu'à ×4), **le clic droit** (ou celui du milieu) fait glisser la
   carte, **les flèches** et le bord de la carte la font défiler, **Origine** recadre sur toute la vallée, **G** montre les mailles ;
 * **le lac** est un shader, dessiné d'après ses parcelles : son eau se trouble et se couvre d'herbiers là où le poisson manque
