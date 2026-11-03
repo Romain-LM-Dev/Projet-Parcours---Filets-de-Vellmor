@@ -1,5 +1,6 @@
-// Vallée de Vellmor, en vue isométrique : le sol est un losange (le carré [0,1]² des coordonnées de la partie, projeté) qui touche les
-// quatre bords de la carte ; au-delà s'étend la forêt hors de la vallée. Prairie, grève et lacs se dessinent dans le sol, pas à l'écran.
+// Vallée de Vellmor, en vue isométrique : le sol est un losange (le carré [0,1]² des coordonnées de la partie, projeté) ; son bord n'est
+// pas net : il ondule (bruit) et la prairie se fait plus sauvage, puis forêt, puis collines, sur une bande large. Prairie, grève et lacs
+// se dessinent dans le sol, pas à l'écran.
 // Les lacs viennent de leurs parcelles (`lake_mask`, une parcelle par texel, lissée : la même image que lit world_view.gd) : la rive
 // passe là où l'eau vaut 0,5, le vert dit le poisson de chaque parcelle, l'alpha sa profondeur.
 shader_type canvas_item;
@@ -11,6 +12,7 @@ uniform bool mesh = false;                           // touche G : les parcelles
 uniform vec2 px_size = vec2(1000.0, 800.0);
 uniform vec2 iso_o = vec2(500.0, 0.0);               // le coin nord du sol
 uniform vec2 iso_ab = vec2(500.0, 400.0);            // demi-largeur et demi-hauteur du losange
+uniform float world_k = 1.5;                         // la vallée en largeurs de carte : les bruits du sol suivent
 uniform float dry : hint_range(0.0, 1.0) = 0.0;      // sécheresse en cours
 uniform float t_offset = 0.0;
 
@@ -40,20 +42,13 @@ void fragment() {
 	vec2 sp = UV * px_size;
 	vec2 g = to_ground(sp);
 	vec2 p = sp / 110.0;
-	if (!on_ground(g)) {
-		// hors de la vallée : une forêt dense, de plus en plus sombre en s'éloignant du sol
-		vec3 col = mix(vec3(0.12, 0.22, 0.11), vec3(0.19, 0.31, 0.14), fbm(p * 0.8));
-		float canopy = smoothstep(0.42, 0.62, fbm(sp / 24.0 + 7.0));
-		col = mix(col, vec3(0.06, 0.14, 0.07), canopy * 0.85);
-		col *= 0.72 + 0.25 * fbm(sp / 8.0);
-		col = mix(col, vec3(0.45, 0.42, 0.25), dry * 0.35);
-		float away = max(max(-g.x, g.x - 1.0), max(-g.y, g.y - 1.0));
-		col *= mix(0.92, 0.55, smoothstep(0.0, 0.18, away));
-		COLOR = vec4(col, 1.0);
-	} else {
-		vec4 m = texture(lake_mask, g);
-		float wv = m.r + (fbm(g * 70.0) - 0.5) * 0.10;     // la rive ondule un peu
-		float wob = (fbm(g * 25.0) - 0.5) * 0.05;
+	// e : la distance au bord du losange, en pixels (négative dedans), déformée par du bruit : le bord ondule
+	float away = max(max(-g.x, g.x - 1.0), max(-g.y, g.y - 1.0));
+	float e = away * iso_ab.x + (fbm(sp / 230.0 + 3.0) - 0.5) * 150.0 + (fbm(sp / 55.0) - 0.5) * 36.0;
+	{
+		vec4 m = texture(lake_mask, clamp(g, 0.0, 1.0));
+		float wv = m.r + (fbm(g * 70.0 * world_k) - 0.5) * 0.10;     // la rive ondule un peu
+		float wob = (fbm(g * 25.0 * world_k) - 0.5) * 0.05;
 
 		// --- prairie : deux verts, taches d'herbe haute, fleurs
 		float gr = fbm(p * 0.7);
@@ -69,9 +64,11 @@ void fragment() {
 		vec3 flower = mix(vec3(0.98, 0.93, 0.70), vec3(0.95, 0.70, 0.78), hash(cell + 7.0));
 		col = mix(col, flower, fl * 0.55 * (1.0 - dry) * (1.0 - smoothstep(0.08, 0.22, wv)));
 
-		// --- bords du sol : herbe plus sombre, comme des versants
-		float edge = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y)) * 340.0;
-		col *= mix(0.66, 1.0, smoothstep(0.0, 70.0, edge + fbm(p * 1.5) * 34.0));
+		// --- vers le bord : prairie sauvage (herbe haute, touffes) qui s'assombrit et jaunit
+		float wild = smoothstep(-330.0, -30.0, e);
+		float tuft = smoothstep(0.50, 0.70, fbm(sp / 38.0 + 5.0));
+		col = mix(col, vec3(0.36, 0.45, 0.20), wild * 0.5);
+		col *= 1.0 - wild * (0.14 + 0.30 * tuft);
 
 		// --- grève et sable mouillé
 		vec3 sand = vec3(0.83, 0.75, 0.55);
@@ -97,7 +94,7 @@ void fragment() {
 			w += spark * 0.10;
 			// écume du rivage
 			float foam = 1.0 - smoothstep(0.5, 0.58, wv);
-			float fnoise = noise(g * 160.0 + vec2(T * 0.7, 0.0));
+			float fnoise = noise(g * 160.0 * world_k + vec2(T * 0.7, 0.0));
 			w = mix(w, vec3(0.93, 0.97, 0.96), foam * (0.35 + 0.55 * fnoise));
 			col = mix(col, w, smoothstep(0.48, 0.51, wv));
 		}
@@ -108,6 +105,20 @@ void fragment() {
 			float line = 1.0 - min(smoothstep(0.0, fw.x, min(f.x, 1.0 - f.x)), smoothstep(0.0, fw.y, min(f.y, 1.0 - f.y)));
 			col = mix(col, vec3(1.0), line * 0.18);
 		}
+		// --- au-delà du sol : forêt dense, puis collines qui se perdent dans l'ombre
+		vec3 fc = mix(vec3(0.12, 0.22, 0.11), vec3(0.19, 0.31, 0.14), fbm(p * 0.8));
+		float canopy = smoothstep(0.42, 0.62, fbm(sp / 24.0 + 7.0));
+		fc = mix(fc, vec3(0.06, 0.14, 0.07), canopy * 0.85);
+		fc *= 0.72 + 0.25 * fbm(sp / 8.0);
+		float hill = fbm(sp / 420.0 + 17.0);
+		float slope = hill - fbm(sp / 420.0 + 17.0 + vec2(0.05, 0.08));        // l'éclairage vient du nord-ouest
+		float high = smoothstep(220.0, 700.0, e) * smoothstep(0.35, 0.6, hill);
+		fc = mix(fc, vec3(0.30, 0.34, 0.22), high * 0.55);
+		fc *= 1.0 + slope * 5.0 * smoothstep(100.0, 400.0, e);
+		fc = mix(fc, vec3(0.45, 0.42, 0.25), dry * 0.35);
+		fc *= mix(0.95, 0.60, smoothstep(0.0, 650.0, e));
+		// la lisière : la prairie sauvage se fond dans la forêt sur une bande large
+		col = mix(col, fc, smoothstep(-60.0, 110.0, e));
 		COLOR = vec4(col, 1.0);
 	}
 }

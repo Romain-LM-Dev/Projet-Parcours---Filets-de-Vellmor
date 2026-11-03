@@ -1,6 +1,7 @@
 ## Test hors fenêtre de la carte : pour 1 à 8 villages, aucun chemin de terre ne traverse le lac, les maisons sont sur la terre et sur
 ## leurs lots, et les marches des villageois (de leur village vers l'anneau du conseil) contournent l'eau et les maisons ; la caméra
-## zoome vers le pointeur et ne sort pas de la carte.
+## zoome vers le pointeur et ne sort pas du monde (la vallée, `map.size` largeurs de carte) ; au zoom minimum, toute la vallée tient dans le
+## cadre ; les mailles des maisons et des pas grandissent avec le monde ; `_generate_decor` reste rapide pour la plus grande vallée.
 ##   godot --headless --path godot -s res://tests/roads_test.gd
 extends SceneTree
 
@@ -41,7 +42,7 @@ func _initialize() -> void:
 			var start: Vector2 = w.hamlet_pos[h]
 			for k in 12:
 				var ang := TAU * float(k) / 12.0
-				var target: Vector2 = w.LAKE_C + Vector2(cos(ang), sin(ang)) * w.RING_R
+				var target: Vector2 = w.council_c + Vector2(cos(ang), sin(ang)) * w.council_r
 				var last := start
 				var steps: Array = w._land_route(start, target)
 				for i in steps.size():
@@ -52,16 +53,37 @@ func _initialize() -> void:
 					if i < steps.size() - 1 and w.walk.is_point_solid(w._step_of(step)):
 						check(false, "%d villages : %s → anneau %d passe dans une maison" % [n, h, k])
 					last = step
-	# la caméra : zoomer vers un point le garde sous le pointeur, et la carte couvre toujours le cadre
+	# la caméra : zoomer vers un point le garde sous le pointeur, et le monde couvre toujours le cadre
 	var p := Vector2(300, 200)
-	var under: Vector2 = (p - w.cam_off) / w.zoom
 	w.zoom_at(p, 2.0)
-	check(is_equal_approx(w.zoom, 2.0) and ((p - w.cam_off) / w.zoom).distance_to(under) < 0.01, "le zoom garde le point sous le pointeur")
+	var under: Vector2 = (p - w.cam_off) / w.zoom
+	w.zoom_at(p, 1.5)
+	check(((p - w.cam_off) / w.zoom).distance_to(under) < 0.01, "le zoom garde le point sous le pointeur")
 	w.pan(Vector2(5000, 5000))
-	check(w.cam_off.x <= 0.0 and w.cam_off.y <= 0.0, "on ne fait pas glisser la carte hors du cadre")
-	w.pan(Vector2(-50000, -50000))
-	check(w.cam_off.x >= w.size.x * (1.0 - w.zoom) - 0.01, "ni de l'autre côté")
-	w.zoom_at(p, 0.01)
-	check(is_equal_approx(w.zoom, 1.0) and w.cam_off == Vector2.ZERO, "au zoom 1, toute la vallée tient dans le cadre")
+	check(w.cam_off.x <= 0.0 and w.cam_off.y <= 0.0, "on ne fait pas glisser la carte hors du monde")
+	w.pan(Vector2(-500000, -500000))
+	check(w.cam_off.x >= w.size.x - w.world.x * w.zoom - 0.01 and w.cam_off.y >= w.size.y - w.world.y * w.zoom - 0.01, "ni de l'autre côté")
+	w.zoom_at(p, 0.001)
+	check(is_equal_approx(w.zoom, w.zoom_min) and is_equal_approx(w.zoom_min, 1.0 / w.world_k), "zoom minimum = 1 / taille du monde")
+	var tl: Vector2 = w._scr(Vector2(0.5, 0.0))
+	var br: Vector2 = w._scr(Vector2(0.5, 1.0))
+	var lf: Vector2 = w._scr(Vector2(0.0, 1.0))
+	var rt: Vector2 = w._scr(Vector2(1.0, 0.0))
+	var all_in := true
+	for q in [tl, br, lf, rt]:
+		all_in = all_in and Rect2(-Vector2.ONE, w.size + Vector2(2, 2)).has_point(q)
+	check(all_in, "au zoom minimum, les quatre coins de la vallée sont dans le cadre")
+	# mailles proportionnelles à la taille du monde, pas ×5 par lot ; zoom 1 centré sur la vallée à l'ouverture
+	for k in [1.0, 1.5, 2.6]:
+		w.reset_world([], 100.0, 30.0, [], [], {"size": k})
+		check(is_equal_approx(w.world_k, k) and w.n_lots == roundi(24.0 * k) and w.n_steps == w.n_lots * 5, "mailles pour size %s" % k)
+		check(w.n_steps % w.n_lots == 0, "STEPS divisible par LOTS")
+		check(w.zoom == 1.0 and (w._scr(Vector2(0.5, 0.5)) - w.size * 0.5).length() < 1.0, "zoom 1 centré sur la vallée (size %s)" % k)
+		check(absf(w.iso_a - w.size.x * 0.5 * k) < 0.01, "le sol mesure %s largeurs de cadre" % k)
+	var t0 := Time.get_ticks_usec()
+	w._generate_decor()
+	var dt := float(Time.get_ticks_usec() - t0) / 1.0e6
+	print("DECOR size 2.6 : %.3f s, %d arbres, %d roseaux, %d lucioles" % [dt, w.deco["trees"].size(), w.deco["reeds"].size(), w.deco["flies"].size()])
+	check(dt < 0.3, "_generate_decor < 0.3 s pour size 2.6 (%.3f s)" % dt)
 	print("ROADSTEST fails=%d" % fails)
 	quit(1 if fails > 0 else 0)
