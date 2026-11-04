@@ -80,6 +80,10 @@ func _initialize() -> void:
 		check(w.n_steps % w.n_lots == 0, "STEPS divisible par LOTS")
 		check(w.zoom == 1.0 and (w._scr(Vector2(0.5, 0.5)) - w.size * 0.5).length() < 1.0, "zoom 1 centré sur la vallée (size %s)" % k)
 		check(absf(w.iso_a - w.size.x * 0.5 * k) < 0.01, "le sol mesure %s largeurs de cadre" % k)
+		check(absf(w.iso_b - w.iso_a / 2.0) < 0.01, "dimétrie 2:1 (size %s)" % k)
+	w.size = Vector2(700, 900)
+	w.reset_world([], 100.0, 30.0, [], [], {"size": 1.5})
+	check(absf(w.iso_b - w.iso_a / 2.0) < 0.01, "dimétrie 2:1 aussi dans une fenêtre haute")
 	var t0 := Time.get_ticks_usec()
 	w._generate_decor()
 	var dt := float(Time.get_ticks_usec() - t0) / 1.0e6

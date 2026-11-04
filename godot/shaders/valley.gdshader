@@ -70,6 +70,14 @@ void fragment() {
 		col = mix(col, vec3(0.36, 0.45, 0.20), wild * 0.5);
 		col *= 1.0 - wild * (0.14 + 0.30 * tuft);
 
+		// --- relief doux : versants éclairés au nord-ouest, ombrés au sud-est
+		float hz = fbm(g * 6.0 * world_k + 40.0);
+		float hz2 = fbm((g + vec2(0.015, 0.0)) * 6.0 * world_k + 40.0);
+		col *= 1.0 + clamp((hz - hz2) * 14.0, -0.14, 0.14);
+		// --- berge : la terre descend vers l'eau, plus sombre du côté sud-est
+		float wse = texture(lake_mask, clamp(g + vec2(0.012, 0.0), 0.0, 1.0)).r;
+		col *= 1.0 - 0.30 * smoothstep(0.02, 0.2, wse - wv) * (1.0 - smoothstep(0.4, 0.5, wv));
+
 		// --- grève et sable mouillé
 		vec3 sand = vec3(0.83, 0.75, 0.55);
 		col = mix(col, sand * (0.94 + 0.08 * g2), smoothstep(0.24 + wob, 0.36 + wob, wv));
@@ -119,6 +127,7 @@ void fragment() {
 		fc *= mix(0.95, 0.60, smoothstep(0.0, 650.0, e));
 		// la lisière : la prairie sauvage se fond dans la forêt sur une bande large
 		col = mix(col, fc, smoothstep(-60.0, 110.0, e));
+		col = mix(col, vec3(0.80, 0.87, 0.92), 0.16 * pow(1.0 - clamp(sp.y / px_size.y, 0.0, 1.0), 2.0));   // le lointain s'éclaircit
 		COLOR = vec4(col, 1.0);
 	}
 }

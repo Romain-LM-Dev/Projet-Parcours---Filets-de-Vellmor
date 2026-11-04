@@ -96,6 +96,7 @@ var lakes: Array = iso_boxes(1, 1.5)     # les lacs : {c, r, name, label, capaci
 var iso_o := Vector2(500.0, 0.0)    # le coin nord du sol, à l'écran
 var iso_a := 470.0                  # demi-largeur du losange
 var iso_b := 270.0                  # demi-hauteur du losange
+var iso_sq := 0.5                   # l'écrasement du sol à l'écran (iso_b / iso_a) : dimétrie 2:1, quel que soit le format de la fenêtre
 var iso_ex := Vector2(0.87, 0.49)   # l'axe x du sol, à l'écran (unitaire) ; l'axe y est son symétrique
 # la caméra : le monde (sol, décor, pions) défile et se zoome dans `cam` ; `over` (bulles, cadrans, bandeaux) reste à l'écran
 var cam: Control
@@ -259,6 +260,8 @@ func _apply_cam() -> void:
 	var lo := size - (org + Vector2(2.0 * iso_a, 2.0 * iso_b) + mt) * zoom
 	var hi := -(org - mt) * zoom
 	cam_off = cam_off.clamp(lo.min(hi), hi)
+	if lo.y > hi.y:                  # la vallée (2:1) est plus basse que le cadre : elle reste centrée en hauteur
+		cam_off.y = (lo.y + hi.y) * 0.5
 	if cam != null:
 		cam.position = cam_off
 		cam.scale = Vector2(zoom, zoom)
@@ -633,7 +636,7 @@ func set_salon(on: bool) -> void:
 
 func _update_iso() -> void:
 	iso_a = size.x * 0.5 * world_k
-	iso_b = maxf(size.y * 0.5, 80.0) * world_k
+	iso_b = iso_a * iso_sq
 	var margin := size * MARGIN_K
 	iso_o = Vector2(margin.x + iso_a, margin.y)
 	world = Vector2(2.0 * iso_a, 2.0 * iso_b) + margin * 2.0
@@ -765,7 +768,7 @@ func _house_at(lot: Vector2i, rng: RandomNumberGenerator, elder: bool) -> Dictio
 		for y in range(int((n.y - half.y) * n_steps), int((n.y + half.y) * n_steps) + 1):
 			if x >= 0 and y >= 0 and x < n_steps and y < n_steps:
 				foot.append(Vector2i(x, y))
-	return {"kind": "house", "p": _px(n), "n": n, "lot": lot, "s": s, "h": L * (0.57 if elder else rng.randf_range(0.33, 0.46)),
+	return {"kind": "house", "p": _px(n), "n": n, "lot": lot, "s": s, "h": L * (0.70 if elder else rng.randf_range(0.42, 0.56)),
 		"roof": Color("#7a4b34") if elder else [Color("#b5583c"), Color("#8e6b52"), Color("#c49a55"), Color("#6f7584")][rng.randi() % 4],
 		"wall": Color("#d8c7a0") if elder else [Color("#d8c7a0"), Color("#cdb892"), Color("#e0d2b0")][rng.randi() % 3],
 		"seed": 0.5 if elder else rng.randf(), "elder": elder, "foot": foot}
@@ -897,7 +900,7 @@ func _generate_decor() -> void:
 ## Ces deux points de l'écran sont-ils proches l'un de l'autre, sur le sol (un cercle du sol est une ellipse écrasée à l'écran) ?
 func _screen_near(a: Vector2, b: Vector2, radius: float) -> bool:
 	var d := a - b
-	return Vector2(d.x, d.y * 1.7).length() < radius
+	return Vector2(d.x, d.y / iso_sq).length() < radius
 
 
 ## Un chemin de terre (en pixels) : la marche de `a` à `b`, adoucie.
@@ -934,9 +937,9 @@ func _draw_decor(ci: CanvasItem) -> void:
 	# places des hameaux et devant l'ancien
 	for h in hamlet_pos:
 		var c := _px(hamlet_pos[h])
-		_ellipse(ci, c + Vector2(0, 4), Vector2(78, 40), Color("#6b5a3a", 0.45))
-		_ellipse(ci, c, Vector2(74, 37), Color("#7d6844", 0.55))
-		_ellipse(ci, c, Vector2(70, 34), Color("#c4a978"))
+		_ellipse(ci, c + Vector2(0, 4), Vector2(78, 78 * iso_sq), Color("#6b5a3a", 0.45))
+		_ellipse(ci, c, Vector2(74, 74 * iso_sq), Color("#7d6844", 0.55))
+		_ellipse(ci, c, Vector2(70, 70 * iso_sq), Color("#c4a978"))
 		_ellipse(ci, c + Vector2(-8, -4), Vector2(42, 18), Color(1, 1, 1, 0.06))
 	var ep := _px(elder_pos)
 	_ellipse(ci, ep + Vector2(0, 22), Vector2(86, 30), Color("#c4a978"))
@@ -986,7 +989,7 @@ func _tree(ci: CanvasItem, tr: Dictionary) -> void:
 	var p: Vector2 = tr["p"]
 	var r: float = tr["r"]
 	var tone: float = tr["tone"]
-	_ellipse(ci, p + Vector2(r * 0.35, 1.0), Vector2(r * 1.1, r * 0.42), Color(0.05, 0.08, 0.03, 0.34))
+	_ellipse(ci, p + Vector2(r * 0.9, r * 0.45 * iso_sq), Vector2(r * 1.4, r * 0.7 * iso_sq), Color(0.05, 0.08, 0.03, 0.34))
 	if tr["pine"]:
 		var dark := Color("#1f4029").lerp(Color("#2b5233"), tone)
 		ci.draw_line(p, p + Vector2(0, -r * 0.5), Color("#4a3320"), 2.4)
@@ -1021,7 +1024,8 @@ func _house(ci: CanvasItem, hs: Dictionary) -> void:
 	var p1 := p + ex - ey
 	var p2 := p + ex + ey
 	var p3 := p - ex + ey
-	ci.draw_colored_polygon(PackedVector2Array([p0 + Vector2(7, 3), p1 + Vector2(7, 3), p2 + Vector2(7, 3), p3 + Vector2(7, 3)]),
+	var sh := Vector2(hgt * 0.7, hgt * 0.7 * iso_sq)             # l'ombre tombe vers le sud-est, comme celle des arbres
+	ci.draw_colored_polygon(PackedVector2Array([p0 + sh, p1 + sh, p2 + sh, p3 + sh]),
 		Color(0, 0, 0, 0.26))
 	ci.draw_colored_polygon(PackedVector2Array([p3, p2, p2 + up, p3 + up]), wall.darkened(0.30))         # mur de gauche (sud-ouest)
 	ci.draw_colored_polygon(PackedVector2Array([p2, p1, p1 + up, p2 + up]), wall.darkened(0.08))         # mur de droite (sud-est)
@@ -1584,7 +1588,7 @@ func _process(delta: float) -> void:
 		var dvec := target_p - pos
 		if dvec.length() > 0.0001:
 			var sdv := _px(target_p) - _px(pos)           # le cap se lit à l'écran (la barque est écrasée de 0,62 : voir `_draw_boat`)
-			a["heading"] = lerp_angle(float(a["heading"]), atan2(sdv.y / 0.62, sdv.x), delta * 8.0)
+			a["heading"] = lerp_angle(float(a["heading"]), atan2(sdv.y / iso_sq, sdv.x), delta * 8.0)
 		if dvec.length() <= step:
 			a["pos"] = target_p
 			a["hold"] = float(path[0][1])
@@ -1741,7 +1745,7 @@ func _draw_under(ci: CanvasItem) -> void:
 	for w in wakes:
 		var a: float = float(w["ttl"]) / float(w["max"])
 		var p := _px(w["p"])
-		var side := Vector2(-sin(w["h"]), cos(w["h"]) * 0.62) * (4.0 + (1.0 - a) * 9.0)
+		var side := Vector2(-sin(w["h"]), cos(w["h"]) * iso_sq) * (4.0 + (1.0 - a) * 9.0)
 		ci.draw_circle(p + side, 1.6 * a + 0.6, Color(1, 1, 1, 0.35 * a))
 		ci.draw_circle(p - side, 1.6 * a + 0.6, Color(1, 1, 1, 0.35 * a))
 	for f in fish:
@@ -1766,7 +1770,7 @@ func _draw_under(ci: CanvasItem) -> void:
 		var a: float = float(s["ttl"]) / float(s["max"])
 		var p := _px(s["p"])
 		var r: float = float(s["r"]) * (1.15 - a)
-		ci.draw_set_transform(p, 0.0, Vector2(1.0, 0.55))            # un rond sur l'eau, vu en perspective
+		ci.draw_set_transform(p, 0.0, Vector2(1.0, iso_sq))            # un rond sur l'eau, vu en perspective
 		ci.draw_arc(Vector2.ZERO, r, 0, TAU, 28, Color(1, 1, 1, 0.55 * a), 1.4, true)
 		ci.draw_arc(Vector2.ZERO, r * 0.55, 0, TAU, 20, Color(1, 1, 1, 0.35 * a), 1.0, true)
 		ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -1942,7 +1946,7 @@ const BOAT_SCALE := {"barque": 0.78, "chaloupe": 1.0, "cotre": 1.3}
 
 
 func _draw_boat(ci: CanvasItem, origin: Vector2, heading: float, col: Color, fishing: float, k: float = 1.0) -> void:
-	ci.draw_set_transform(origin, 0.0, Vector2(1.0, 0.62))                # la barque est un plan sur l'eau : écrasée comme le sol
+	ci.draw_set_transform(origin, 0.0, Vector2(1.0, iso_sq))                # la barque est un plan sur l'eau : écrasée comme le sol
 	_draw_boat_local(ci, heading, col, fishing, k)
 	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
