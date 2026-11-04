@@ -1,6 +1,6 @@
 ## Menu de démarrage : tout ce qu'on règle avant de lancer une partie.
 ##
-##   gauche  — le monde : mode de temps, saisons, veillées, l'ancien, limite du stock du lac
+##   gauche  — le monde : saisons, veillées, l'ancien, limite du stock du lac
 ##   centre  — l'IA (moteur, réflexion, vitesse au départ), puis les pêcheurs : prénom, hameau, archétype, expérience, avoir,
 ##             dette, cerveau (IA ou règles)
 ##   droite  — la vallée : où ils habitent (glisser un pêcheur d'un hameau à l'autre) et sa fiche
@@ -32,7 +32,6 @@ const BRAINS := [["IA · auto", "llm", "auto"], ["IA · grand", "llm", "grand"],
 var catalog := {}
 var fishers: Array = []
 var selected := -1
-var mode := "sync"
 var capacity_auto := true             # tant que le joueur n'a pas fixé le stock du lac, il suit le nombre de pêcheurs
 var speed_touched := false            # tant qu'il n'a pas choisi la vitesse, on propose celle qui convient au moteur d'IA
 var reflection_touched := false       # de même pour la réflexion (les réflexes « open » demandent la réflexion adaptative)
@@ -53,8 +52,6 @@ var _gen_timer: Timer                  # laisse finir de régler les nombres ava
 
 var sheet: PanelContainer
 var lbl_engine: Label
-var mode_buttons := {}
-var lbl_mode_desc: Label
 var spin_seasons: SpinBox
 var spin_seed: SpinBox
 var spin_rounds: SpinBox
@@ -92,7 +89,6 @@ var opt_llm: OptionButton
 var lbl_llm_desc: Label
 var opt_reflection: OptionButton
 var lbl_reflection_desc: Label
-var lbl_async_warning: Label
 var opt_speed: OptionButton
 var lbl_speed_hint: Label
 var chk_elder: CheckButton
@@ -303,27 +299,6 @@ func _build_left(body: Control) -> void:
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(col)
 
-	col.add_child(_section("Le temps du monde"))
-	var seg := HBoxContainer.new()
-	seg.add_theme_constant_override("separation", 6)
-	col.add_child(seg)
-	var grp := ButtonGroup.new()
-	for m in [["sync", "Synchrone"], ["async", "Asynchrone"]]:
-		var b := _seg(m[1], grp)
-		b.pressed.connect(func() -> void: _set_mode(m[0]))
-		mode_buttons[m[0]] = b
-		seg.add_child(b)
-	lbl_mode_desc = _lbl("", 12, "ui", Color(Art.MUTED, 0.95))
-	lbl_mode_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lbl_mode_desc.custom_minimum_size = Vector2(276, 0)
-	col.add_child(lbl_mode_desc)
-	# la mention « modifiable en cours de partie » est en bulle d'aide : la colonne est déjà haute
-	for b in mode_buttons.values():
-		(b as Button).tooltip_text = "Le mode pourra aussi être changé en cours de partie (dès la saison suivante)."
-	lbl_mode_desc.tooltip_text = "Le mode pourra aussi être changé en cours de partie (dès la saison suivante)."
-	lbl_mode_desc.mouse_filter = Control.MOUSE_FILTER_PASS
-
-	col.add_child(HSeparator.new())
 	col.add_child(_section("Durée et hasard"))
 	spin_seasons = _spin(1, 50, 1, 10, 84)
 	_row(col, "Saisons", spin_seasons)
@@ -347,7 +322,7 @@ func _build_left(body: Control) -> void:
 	opt_council.tooltip_text = "Au conseil de la vallée, un élu par village (choisi à chaque saison par ses pêcheurs) parle et vote pour tous ; les autres villageois n'y vont pas. Sans effet pour des veillées par village."
 	_row(col, "Conseil", opt_council)
 	spin_rounds = _spin(1, 3, 1, 2, 70)
-	spin_rounds.tooltip_text = "Combien de fois chacun prend la parole pendant une veillée, à tour de rôle (synchrone). En asynchrone, chacun s'exprime une seule fois, de son côté."
+	spin_rounds.tooltip_text = "Combien de fois chacun prend la parole pendant une veillée."
 	_row(col, "Tours de parole", spin_rounds)
 	chk_visible = CheckButton.new()
 	chk_visible.text = "Les déclarations à l'ancien sont lues à toute la vallée"
@@ -523,8 +498,6 @@ func _build_ai_strip(col: Control) -> void:
 	lbl_llm_desc = _note(col)
 	lbl_reflection_desc = _note(col)
 	lbl_speed_hint = _note(col)
-	lbl_async_warning = _note(col, Art.PROPOSAL)
-	lbl_async_warning.visible = false
 
 
 func _build_center(body: Control) -> void:
@@ -757,7 +730,6 @@ func reset_all() -> void:
 		return
 	var d: Dictionary = catalog.get("defaults", {})
 	_updating = true
-	_set_mode(str(d.get("mode", "sync")))
 	spin_seasons.value = int(d.get("seasons", 10))
 	spin_seed.value = int(d.get("seed", 42))
 	spin_rounds.value = int(d.get("assembly_rounds", 2))
@@ -865,26 +837,8 @@ func _suggest_reflection() -> void:
 	_show_reflection(opt_reflection.selected)
 
 
-func _set_mode(m: String) -> void:
-	mode = m
-	for k in mode_buttons:
-		(mode_buttons[k] as Button).set_pressed_no_signal(k == m)
-	for md in catalog.get("modes", []):
-		if str(md["id"]) == m:
-			lbl_mode_desc.text = str(md["detail"])
-	if not _updating:
-		_suggest_speed()
-
-
-## En asynchrone, le temps du monde suit le temps réel : pendant qu'une IA locale réfléchit, la veillée avance et peut se
-## fermer sans elle. Il faut alors ralentir le monde. Tant que le joueur n'a pas choisi sa vitesse, on propose celle
-## qui convient au moteur d'IA choisi (le catalogue la donne : `async_speed`).
 func _recommended_speed() -> float:
-	var default_speed := float(catalog.get("defaults", {}).get("speed", 1.0))
-	if mode != "async":
-		return default_speed
-	var o := _llm_option()
-	return float(o.get("async_speed", default_speed)) if not o.is_empty() else default_speed
+	return float(catalog.get("defaults", {}).get("speed", 1.0))
 
 
 func _suggest_speed() -> void:
@@ -901,21 +855,8 @@ func _suggest_speed() -> void:
 func _refresh_hints() -> void:
 	if lbl_speed_hint == null or catalog.is_empty() or opt_speed.selected < 0:
 		return
-	var o := _llm_option()
-	var real_ai := not o.is_empty() and str(o["id"]) != "scripted"
-	lbl_async_warning.text = ""
-	lbl_async_warning.visible = false
-	if mode != "async" or not real_ai:
-		lbl_speed_hint.text = "Modifiable à tout moment pendant la partie."
-		return
-	var rec := _recommended_speed()
-	var cur: Variant = opt_speed.get_item_metadata(opt_speed.selected)
-	lbl_speed_hint.text = "Conseillée avec ce moteur en asynchrone : %s." % _speed_text(rec)
-	if cur is String or float(cur) > rec + 0.0001:
-		lbl_async_warning.text = ("En asynchrone, le monde continue d'avancer pendant que l'IA réfléchit. À cette vitesse, "
-			+ "une IA locale ratera souvent sa pêche ou sa veillée (« réplique perdue »). Ralentissez le monde, ou "
-			+ "choisissez le mode synchrone.")
-		lbl_async_warning.visible = true
+	lbl_speed_hint.text = "Modifiable à tout moment pendant la partie."
+
 
 
 # ------------------------------------------------------------------ pêcheurs
@@ -1440,7 +1381,7 @@ func build_config() -> Dictionary:
 			"experience": int(f["experience"]), "wealth": float(f["wealth"]), "debt_payment": float(f["debt_payment"]),
 			"kind": str(f["kind"]), "tier": str(f["tier"]), "boat": str(f.get("boat", "chaloupe"))})
 	return {
-		"mode": mode, "seasons": int(spin_seasons.value), "seed": int(spin_seed.value),
+		"mode": "unique", "seasons": int(spin_seasons.value), "seed": int(spin_seed.value),
 		"communication": str(opt_comm.get_item_metadata(opt_comm.selected)), "catches_visible": chk_visible.button_pressed,
 		"assembly_rounds": int(spin_rounds.value),
 		"council": str(opt_council.get_item_metadata(opt_council.selected)), "climate": chk_climate.button_pressed, "patrol": chk_patrol.button_pressed,

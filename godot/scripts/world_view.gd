@@ -77,6 +77,7 @@ var selected := ""
 var hovered := ""
 var animate := true
 var paused := false                 # partie en pause : tout est figé, et la carte le dit
+var thinking: Array = []             # agents dont une décision est en cours (status.thinking) : bulle « … »
 var time_scale := 1.0               # vitesse des animations, calée sur celle de la partie (0 = figé)
 var effects: Array = []
 var bubbles := {}
@@ -1171,7 +1172,7 @@ func on_event(ev: Dictionary) -> void:
 	match ty:
 		"season_start":
 			dry = max(0.0, dry - 0.5)
-			var md := "" if not p.has("mode") else (" · asynchrone" if str(p["mode"]) == "async" else " · synchrone")
+			var md := ""
 			var cond: Dictionary = p.get("conditions", {})
 			if cond.get("climate") != null:
 				md = " · %s%s" % [str(cond["climate"]), md]
@@ -1219,10 +1220,6 @@ func on_event(ev: Dictionary) -> void:
 				_banner("Une rumeur court", _short(str(p.get("params", {}).get("text", "")), 70), Art.INJECT)
 			elif it == "set_communication":
 				_banner("Communication modifiée", str(p.get("params", {}).get("value", "")), Art.INJECT)
-			elif it == "set_mode":
-				var asynchronous := str(p.get("params", {}).get("value", "")) == "async"
-				_banner("Changement de mode", "%s dès la saison suivante" % ("Asynchrone" if asynchronous else "Synchrone"),
-					Art.INJECT)
 		"catch":
 			var id: String = str(p.get("agent", ""))
 			if agents.has(id):
@@ -2056,8 +2053,18 @@ func _draw_tokens(ci: CanvasItem) -> void:
 			Art.pill(ci, p + Vector2(15, -34), badges[id], Art.PROPOSAL, Color("#2a1d05"), 11)
 
 
+func set_thinking(ids: Array) -> void:
+	if ids != thinking:
+		thinking = ids.duplicate()
+		queue_redraw()
+
+
 func _draw_marks(ci: CanvasItem) -> void:
 	var f := Art.font("ui_black")
+	var dots := int(Time.get_ticks_msec() / 350) % 3 + 1       # « . », « .. », « ... » : l'horloge attend, la bulle vit seule
+	for id in thinking:
+		if agents.has(id) and not (_salon_draw and _seat(str(id)) == Vector2.INF):
+			Art.pill(ci, _apt(id) + Vector2(-14, -40), ".".repeat(dots) + " ".repeat(3 - dots), Color("#e8ecff", 0.92), Color("#10131c"), 13, "ui_black")
 	for e in effects:
 		if not agents.has(e["a"]) or (_salon_draw and _seat(str(e["a"])) == Vector2.INF):
 			continue

@@ -13,8 +13,7 @@ const Chart := preload("res://scripts/chart.gd")
 const Legend := preload("res://scripts/legend.gd")
 const StartMenu := preload("res://scripts/start_menu.gd")
 
-## Les vitesses lentes comptent : en asynchrone, le temps du monde suit le temps réel, et une IA locale qui réfléchit 30 s
-## agit alors 30 s plus tard dans le monde. Ralentir le monde lui laisse le temps de répondre avant la fin de la veillée.
+## Vitesses proposées dans la barre du haut.
 const SPEEDS := [0.0625, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
 
 ## Noms lisibles des incidents (le moteur les publie sous leur nom technique).
@@ -96,13 +95,8 @@ var btn_stop_top: Button            # le même arrêt, par-dessus le menu de dé
 var stop_dlg: ConfirmationDialog
 var btn_new: Button
 var speed_buttons := {}
-var mode_buttons := {}
 var lbl_progress: Label
-var lbl_pending: Label
-var btn_slow: Button             # « Ralentir » : proposé quand une IA locale est trop lente pour le rythme du monde
-var lbl_lost: Label
-var lost_this_season := 0        # répliques et sorties perdues depuis le début de la saison
-var slow_target := 0.25          # la vitesse que « Ralentir » demandera
+var lbl_thinking: Label          # « N en réflexion » : agents dont une décision est en cours (status.thinking)
 var end_overlay: Control
 var end_title: Label
 var end_text: Label
@@ -349,33 +343,9 @@ func _build_ui() -> void:
 	speed_buttons["max"] = b_max
 	tr.add_child(b_max)
 	tr.add_child(VSeparator.new())
-	var l_mode := _label("TEMPS", 10, "ui_black", Art.MUTED)
-	l_mode.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	tr.add_child(l_mode)
-	var mode_group := ButtonGroup.new()
-	for m in [["sync", "Synchrone"], ["async", "Asynchrone"]]:
-		var b := _seg(m[1])
-		b.button_group = mode_group
-		b.tooltip_text = "Le changement s'applique au début de la saison suivante"
-		b.pressed.connect(func() -> void: _send({"type": "set_mode", "value": m[0]}))
-		mode_buttons[m[0]] = b
-		tr.add_child(b)
-	lbl_pending = _label("", 12, "ui_bold", Art.PROPOSAL)
-	lbl_pending.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	tr.add_child(lbl_pending)
-	lbl_lost = _label("", 12, "ui_bold", Art.INCIDENT)
-	lbl_lost.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	lbl_lost.visible = false
-	tr.add_child(lbl_lost)
-	btn_slow = Button.new()
-	btn_slow.focus_mode = Control.FOCUS_NONE
-	btn_slow.visible = false
-	var slow_sb := _pad(Art.box(Color("#3a2414"), 9, Color(Art.INCIDENT, 0.6), 1), 11, 5)
-	btn_slow.add_theme_stylebox_override("normal", slow_sb)
-	btn_slow.add_theme_stylebox_override("hover", _pad(Art.box(Color("#4d2f18"), 9, Color(Art.INCIDENT, 0.9), 1), 11, 5))
-	btn_slow.add_theme_color_override("font_color", Color("#ffc08a"))
-	btn_slow.pressed.connect(func() -> void: _send({"type": "set_speed", "value": slow_target}))
-	tr.add_child(btn_slow)
+	lbl_thinking = _label("", 12, "ui_bold", Art.MUTED)
+	lbl_thinking.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tr.add_child(lbl_thinking)
 	var tr_sp := Control.new()
 	tr_sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tr.add_child(tr_sp)
@@ -641,7 +611,8 @@ func _on_status(s: Dictionary) -> void:
 	var st := str(s.get("state", ""))
 	var err := "" if s.get("error") == null else str(s.get("error"))
 	world.paused = st == "paused"
-	if st == "paused":
+	world.set_thinking(s.get("thinking", []) if s.get("thinking") is Array else [])
+	if st == "paused" or not world.thinking.is_empty():      # l'horloge attend les IA : plus de marche, l'heure ne défile pas
 		world.time_scale = 0.0
 	elif bool(s.get("fast", false)):
 		world.time_scale = 3.0
@@ -707,17 +678,11 @@ func _update_transport() -> void:
 		b.disabled = not live
 		var on: bool = fast if str(k) == "max" else (not fast and absf(float(k) - speed) < 0.001)
 		b.set_pressed_no_signal(on)
-	var cur := str(engine.get("mode", ""))
-	var pend := "" if engine.get("pending_mode") == null else str(engine.get("pending_mode"))
-	for k in mode_buttons:
-		var b: Button = mode_buttons[k]
-		b.disabled = not live
-		b.set_pressed_no_signal(k == (pend if pend != "" else cur))
-	lbl_pending.text = "" if pend == "" else "→ %s dès la saison suivante" % ("asynchrone" if pend == "async" else "synchrone")
-	_update_slow_hint(live, fast, speed, pend if pend != "" else cur)
+	var thinking: Array = engine.get("thinking", []) if engine.get("thinking") is Array else []
+	lbl_thinking.text = "" if thinking.is_empty() or not live else "%d en réflexion" % thinking.size()
 	if live:
 		lbl_progress.text = "Saison %d / %d  ·  %s" % [int(engine.get("season", 0)), int(engine.get("seasons", 0)), str(engine.get("sim_label", ""))]
-		if engine.get("detail") != null:        # asynchrone : le temps est suspendu, le monde attend des IA
+		if engine.get("detail") != null:
 			lbl_progress.text += "  ·  " + str(engine.get("detail"))
 	elif st == "starting":
 		lbl_progress.text = "Préparation…" if engine.get("detail") == null else str(engine.get("detail"))
@@ -725,42 +690,6 @@ func _update_transport() -> void:
 		lbl_progress.text = ""
 	btn_stop.visible = live
 	btn_new.visible = st == "ended" and bool(engine.get("lobby", false))
-
-
-## Asynchrone + vraie IA (locale ou distante) + monde plus rapide que ce que le moteur d'IA peut suivre : les IA ratent leur
-## fenêtre (« réplique perdue »). Le moteur publie la vitesse qui convient (`advised_speed`) ; on propose de s'y mettre d'un clic.
-## Si, même à cette vitesse, au moins deux répliques ou sorties se perdent dans la saison, on propose la vitesse du dessous.
-func _update_slow_hint(live: bool, fast: bool, speed: float, mode: String) -> void:
-	var adv: Variant = engine.get("advised_speed")
-	var real_ai := false
-	var ais: Variant = engine.get("ai")
-	if ais is Array:
-		for p in ais:
-			if str(p) != "scripted":
-				real_ai = true
-	var target := -1.0
-	var still_losing := false
-	if adv != null and (fast or speed > float(adv) + 0.0001):
-		target = float(adv)
-	elif lost_this_season >= 2 and not fast:
-		still_losing = true
-		for s in SPEEDS:                       # croissantes : on garde la plus grande vitesse inférieure à la vitesse actuelle
-			if float(s) < speed - 0.0001:
-				target = float(s)
-	var show: bool = live and mode == "async" and real_ai and target > 0.0
-	btn_slow.visible = show
-	lbl_lost.visible = live and lost_this_season > 0
-	if lost_this_season > 0:
-		lbl_lost.text = "%d perdue%s cette saison" % [lost_this_season, "s" if lost_this_season > 1 else ""]
-	if show:
-		btn_slow.text = "Ralentir (× %s)" % _speed_label(target)
-		slow_target = target
-		if still_losing:
-			btn_slow.tooltip_text = ("Encore %d répliques ou sorties perdues cette saison : l'IA réfléchit plus longtemps que ce "
-				+ "que le monde lui laisse. × %s lui donne plus de temps.") % [lost_this_season, _speed_label(target)]
-		else:
-			btn_slow.tooltip_text = ("En asynchrone, le monde continue d'avancer pendant que l'IA réfléchit : à cette vitesse, elle "
-				+ "rate souvent sa pêche ou sa veillée (« réplique perdue »). × %s laisse à l'IA le temps de répondre.") % _speed_label(target)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -835,8 +764,7 @@ func _on_event(ev: Dictionary) -> void:
 	var lab := "[color=#6f7896][font_size=11]%s[/font_size][/color]  " % last_sim_label
 	match t:
 		"season_start":
-			lost_this_season = 0
-			var md := "" if not p.has("mode") else ("  · asynchrone" if str(p["mode"]) == "async" else "  · synchrone")
+			var md := ""
 			var cond: Dictionary = p.get("conditions", {})
 			weather_days = cond.get("days", []) if cond.get("climate") != null else []
 			weather_season = int(ev.get("season", 0))
@@ -1114,8 +1042,7 @@ func _on_event(ev: Dictionary) -> void:
 				a["incidents"] = int(a["incidents"]) + 1
 			var itype := str(p.get("incident_type", ""))
 			if itype == "missed_window":
-				# pas une erreur : la fenêtre s'est fermée pendant que l'IA réfléchissait encore
-				lost_this_season += 1
+				# anciens journaux seulement : le moteur unique ne perd plus de fenêtre
 				var gone := str(p.get("handled_by", "")).to_upper()
 				_feed(lab + _tag(gone, "#f39c4a") + " %s [color=#c9a07a]%s[/color]" % [_who(id), _esc(str(p.get("detail", "")))], [id])
 				_update_transport()
@@ -1143,7 +1070,7 @@ func _on_event(ev: Dictionary) -> void:
 					var v: Variant = prm.get("value")
 					_feed(lab + _tag("VITESSE", "#ffd166") + (" vitesse maximale" if v is String else " vitesse × %s" % _num(v)), [])
 				"set_mode":
-					_feed(lab + _tag("TEMPS", "#ffd166") + " passage en mode [b]%s[/b] à la saison suivante" % ("asynchrone" if str(prm.get("value")) == "async" else "synchrone"), [])
+					_feed(lab + _tag("TEMPS", "#ffd166") + " changement de mode ignoré (un seul mode de temps)", [])
 				"stop":
 					_feed(lab + _tag("ARRÊT", "#ff6a5c") + " arrêt de la partie demandé", [])
 				_:
@@ -1240,7 +1167,6 @@ func _reset(ev: Dictionary) -> void:
 	proposals.clear()
 	norms.clear()
 	norms_now.clear()
-	lost_this_season = 0
 	selected = ""
 	for a in p.get("agents", []):
 		agents[str(a["id"])] = {"info": a, "catches": {}, "promises": [], "memories": [], "last_decision": {},
@@ -1256,7 +1182,7 @@ func _reset(ev: Dictionary) -> void:
 	chart.reset()
 	_reset_kpis()
 	var sc: Dictionary = p.get("scenario", {})
-	lbl_run.text = "%s   ·   mode %s   ·   %d pêcheurs%s" % [run["id"], run["mode"], int(p.get("population", {}).get("fishers", 0)),
+	lbl_run.text = "%s   ·   %d pêcheurs%s" % [run["id"], int(p.get("population", {}).get("fishers", 0)),
 		"   ·   REJEU" if run["replay"] else ""]
 	for i in comm_opt.item_count:
 		if comm_opt.get_item_metadata(i) == str(sc.get("communication", "valley")):

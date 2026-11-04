@@ -61,7 +61,7 @@ Au lancement, Godot propose le menu **Nouvelle partie** tant que le moteur est e
 
 | Réglage | Détail |
 |---|---|
-| Temps du monde | **Synchrone** (tous agissent ensemble ; à la veillée on parle à tour de rôle et **chacun entend les précédents** : dialogues dépendants) ou **Asynchrone** (chacun à son rythme, le temps suit le temps réel ; à la veillée **chacun s'exprime de son côté sans entendre les autres**, puis tous votent : dialogues indépendants) |
+| Temps du monde | un seul mode : réfléchir ne prend pas de temps (l'horloge attend les IA), agir en prend ; la veillée se déroule au fil de l'eau ([docs/temps.md](docs/temps.md)) |
 | Durée et hasard | nombre de saisons, graine (un même réglage et une même graine rejouent la même partie avec le faux LLM) |
 | La vallée | veillées (**conseil de la vallée**, par village, interdites), conseil (**un élu par village** ou tous les pêcheurs), **tours de parole** par veillée (1 à 3, 2 par défaut ; un seul en asynchrone), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
 | Le lac | **stock max** : la limite du stock, de 10 à 1000 t, ou *Auto* (12,5 t par pêcheur, qui suit alors le nombre de pêcheurs). C'est 100 % de la jauge : le lac part plein et ne la dépasse jamais. **Repeuplement** : le taux `r` du lac, de 0,1 à 2 par saison (1 = normal). Le menu rappelle ce que le lac renouvelle (`r·K/4` par saison) face à ce que les barques peuvent ramener. **Arrêter si le lac est vide** (coché par défaut) |
@@ -72,7 +72,7 @@ Au lancement, Godot propose le menu **Nouvelle partie** tant que le moteur est e
 | Réflexion | **Adaptative (système 1 / 2)** : un réflexe d'un nombre pour les prises de routine, la réflexion pour le reste ([détail](docs/architecture.md)). **Rapide** (une phrase courte, contexte allégé, réponse bornée : environ deux fois plus rapide) ou **Complète** (réponses libres, contexte entier : le profil de référence des expériences) |
 | Pêcheurs | de 1 à 24 : prénom, village, archétype, **bateau** (barque, chaloupe, cotre), expérience, avoir, dette par saison, « cerveau » (IA auto/grand/petit, ou règles). **Générer la vallée** : on choisit le nombre de **villages** (1 à 8), de pêcheurs et la **flotte** (petits bateaux, mixte, gros bateaux), le moteur génère la vallée d'après la graine, que l'on retouche ensuite ; elle se régénère dès qu'on change l'un de ces réglages ou la graine |
 | Disposition | un aperçu de la vallée, villages posés autour du lac : on glisse un pêcheur d'un village à l'autre ; **Composition de base** rétablit la vallée proposée par le moteur, tous en « IA auto » |
-| Vitesse | vitesse au départ (× 1/16 à × 16, ou maximale). En asynchrone avec une vraie IA, le menu propose la vitesse qui lui convient (× ¼ pour Ollama rapide, × 1/8 pour le 7B) et prévient si on choisit plus vite |
+| Vitesse | vitesse au départ (× 1/16 à × 16, ou maximale) |
 
 **Limite du stock du lac.** Le réglage fixe la capacité `K` du modèle logistique : le stock part de `K` (`lake.initial_ratio = 1`) et
 ne la dépasse jamais, et la jauge, `stock_ratio` et tous les pourcentages s'y rapportent. Un petit lac s'épuise vite avec beaucoup
@@ -118,7 +118,7 @@ Une barre au-dessus de la carte commande la partie en cours (touche **Espace** p
   Quand c'est le cas (asynchrone, vraie IA, vitesse au-dessus de celle que le moteur d'IA peut suivre), un bouton orange
   **Ralentir (× ¼)** apparaît ; un compteur indique les répliques et sorties perdues depuis le début de la saison. Si, même à la
   vitesse conseillée, au moins deux se perdent dans la saison, le bouton propose la vitesse du dessous.
-* **Temps** Synchrone / Asynchrone : le changement s'applique **au début de la saison suivante** (annoncé tout de suite).
+* **Réflexion** : une bulle « … » surmonte chaque agent dont une décision est en cours, et la barre du haut indique « N en réflexion » ; l'horloge attend.
   Chaque `season_start` porte le mode dans lequel la saison est jouée.
 * **Arrêter la partie** (deux clics) : immédiat, même pendant la réflexion d'une IA ; le run est clos avec la raison `stop`.
   Un écran de fin propose alors **Nouvelle partie**.
@@ -599,10 +599,10 @@ Il n'y a plus de choix Synchrone / Asynchrone : un **ordonnanceur à événement
 Réfléchir ne prend pas de temps simulé, agir en prend : une IA lente ne fait perdre aucune sortie et ne change pas le monde, et les
 décisions qu'aucun événement ne sépare sont demandées **en parallèle**.
 
-* **Veillée (provisoire).** On parle **à tour de rôle** (l'ancien ouvre, puis les élus, en commençant chaque saison par un village
-  différent) et chacun **entend tout ce qui a été dit avant lui** (`utterance.heard`). On peut répondre, soutenir, contester : ce qu'on
-  t'a dit directement (`destinataire`) est rappelé à part dans l'invite (« On s'est adressé à toi »). Les veillées de villages différents
-  se déroulent en parallèle. Elle sera refaite « au fil de l'eau » (répliques préparées en parallèle, une seule personne parle à la fois).
+* **Veillée au fil de l'eau.** Les répliques se préparent en parallèle sur le compte rendu du moment ; une seule personne parle à la
+  fois (`time.speech_minutes`, 20 minutes simulées) ; on répond d'abord à qui vient d'être interpellé (`destinataire`, rappelé à part
+  dans l'invite : « On s'est adressé à toi »), puis selon la clé de la graine ; une réplique n'est refaite que si l'on s'est adressé à
+  son auteur entre-temps. Les veillées de villages différents avancent de front. Détails : [docs/temps.md](docs/temps.md).
 * `time.mode` et la commande `set_mode` sont acceptés et ignorés (avertissement) ; `run_start.mode` vaut `unique`.
 
 **Proposer une règle.** Quand une règle est en vigueur, la rappeler ne la reconduit pas : `proposition_quota: null` la garde (elle reste

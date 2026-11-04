@@ -66,16 +66,9 @@ REFLECTIONS = [
      "detail": "Réponses libres et contexte complet (profil de référence des expériences) : plus lent."},
 ]
 
-MODES = [
-    {"id": "sync", "label": "Synchrone",
-     "detail": "Tous les pêcheurs observent le même instant, décident, puis agissent ensemble. À la veillée, on parle à tour "
-               "de rôle et chacun entend ceux qui ont parlé avant lui : les dialogues sont dépendants. La lenteur d'une IA "
-               "n'a aucun effet sur le temps du monde."},
-    {"id": "async", "label": "Asynchrone",
-     "detail": "Chacun va à son rythme et le temps du monde suit le temps réel : un pêcheur qui réfléchit "
-               "longtemps agit plus tard, sur un lac qui a changé. À la veillée, chacun s'exprime de son côté, sans entendre "
-               "les autres (un seul tour) : les dialogues sont indépendants, puis tous votent."},
-]
+# Un seul mode de temps (docs/temps.md) : la liste ne sert plus qu'à valider la demande (« sync » et « async » : anciennes
+# demandes, ignorées) ; le catalogue ne la publie plus.
+MODES = [{"id": "unique", "label": "Unique"}, {"id": "sync", "label": "Synchrone"}, {"id": "async", "label": "Asynchrone"}]
 
 COMMUNICATIONS = [
     {"id": "valley", "label": "Conseil de la vallée"},
@@ -175,7 +168,7 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
         ],
         "base_population": base,
         "defaults": {
-            "mode": "sync", "seasons": int(cfg["run"]["seasons"]), "seed": int(cfg["run"]["seed"]),
+            "mode": "unique", "seasons": int(cfg["run"]["seasons"]), "seed": int(cfg["run"]["seed"]),
             "communication": scn["communication"], "catches_visible": bool(scn["catches_visible"]),
             "council": scn.get("council", "delegates"), "patrol": bool((scn.get("patrol") or {}).get("enabled", True)),
             "speed": 1.0, "llm": option["id"],
@@ -196,7 +189,6 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
         },
         "limits": LIMITS,
         "speeds": SPEEDS,
-        "modes": MODES,
         "communications": COMMUNICATIONS,
         "reflections": REFLECTIONS,
         "llm_options": [{k: v for k, v in o.items() if k != "config"} for o in LLM_OPTIONS],

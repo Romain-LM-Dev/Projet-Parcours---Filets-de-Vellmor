@@ -1,5 +1,5 @@
-"""Ce que le joueur lit dans Godot : répliques perdues dites clairement, annonces visibles, rumeur dans l'inspecteur,
-et bouton « Ralentir ». Un run asynchrone enregistré (modèle lent, annonce dès la première saison) est rejoué dans l'interface
+"""Ce que le joueur lit dans Godot : aucune fenêtre ratée, annonces visibles, rumeur dans l'inspecteur, bulle « … » des agents
+qui réfléchissent. Un run enregistré (modèle lent, annonce dès la première saison) est rejoué dans l'interface
 principale, hors fenêtre (`godot/tests/main_feed_test.gd`).
 """
 from __future__ import annotations
@@ -32,10 +32,9 @@ ROSTER = [{"first_name": name, "hamlet": hamlet, "archetype": arch, "experience"
               ("Albane", "Tilque", "ancienne_famille"), ("Hugo", "Hennad", "nouveau_venu")])]
 
 
-def slow_async_run_with_announcement(tmp_path, run_id="gdfeed"):
-    """Mode asynchrone, modèle 5 fois plus lent que la veillée : des répliques et des sorties sont perdues ; annonce en saison 1."""
+def slow_run_with_announcement(tmp_path, run_id="gdfeed"):
+    """Modèle 5 fois plus lent : l'horloge l'attend, rien n'est perdu ; annonce en saison 1."""
     cfg = cfg_for(tmp_path, seasons=2, time__fast=False, time__sim_hours_per_second=7200,
-                  time__wait_for_ai=False,                   # sans attendre les IA lentes : des fenêtres se ferment sur elles
                   population__custom=ROSTER,                 # des agents à règles (un sur deux) : eux jugent et votent sans IA
                   climate__enabled=True, climate__event_rate=1.0,                 # un événement du climat dès la 2e saison
                   scenario__patrol={"cost": 15, "from_season": 1})                # une patrouille dès la première
@@ -60,8 +59,8 @@ def slow_async_run_with_announcement(tmp_path, run_id="gdfeed"):
     return tmp_path / "runs" / run_id / "events.jsonl"
 
 
-def test_the_main_view_says_clearly_what_was_lost_and_shows_the_announcement(tmp_path):
-    events = slow_async_run_with_announcement(tmp_path)
+def test_the_main_view_loses_nothing_and_shows_the_announcement(tmp_path):
+    events = slow_run_with_announcement(tmp_path)
     proc = subprocess.run([GODOT, "--headless", "--path", str(ROOT / "godot"), "-s", "res://tests/main_feed_test.gd", "--",
                            f"--events={events}"], capture_output=True, text=True, timeout=120, encoding="utf-8")
     out = proc.stdout

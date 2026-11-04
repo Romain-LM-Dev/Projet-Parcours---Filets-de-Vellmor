@@ -43,37 +43,17 @@ func _initialize() -> void:
 	check(m.chk_patrol.button_pressed and m.build_config()["patrol"] == true, "la patrouille est activée par défaut")
 	check(m.opt_fleet.item_count == 3 and str(m.opt_fleet.get_item_metadata(m.opt_fleet.selected)) == "mixte", "trois flottes, « mixte » par défaut")
 
-	# --- vitesse conseillée : en asynchrone avec une vraie IA, le monde doit ralentir pour lui laisser le temps de répondre
+	# --- un seul mode de temps : plus de choix, et la vitesse de départ ne dépend plus du moteur d'IA
 	var speed_is := func(v: float) -> bool:
 		var s: Variant = m.opt_speed.get_item_metadata(m.opt_speed.selected)
 		return typeof(s) == TYPE_FLOAT and is_equal_approx(s, v)
 	var pick_llm := func(id: String) -> void:
 		m._select_meta(m.opt_llm, id)
 		m.opt_llm.item_selected.emit(m.opt_llm.selected)       # comme un clic du joueur
-	m._set_mode("sync")
-	check(speed_is.call(1.0) and not m.lbl_async_warning.visible, "synchrone : × 1, aucun avertissement")
+	check(not "mode_buttons" in m and not m.has_method("_set_mode"), "le menu n'a plus de choix Synchrone / Asynchrone")
+	check(speed_is.call(1.0), "vitesse de départ × 1")
 	pick_llm.call("ollama_fast")
-	check(speed_is.call(1.0) and not m.lbl_async_warning.visible, "synchrone + Ollama : pas de ralentissement imposé")
-	m._set_mode("async")
-	check(speed_is.call(0.25), "asynchrone + Ollama rapide : vitesse conseillée × ¼")
-	check(not m.lbl_async_warning.visible and "× ¼" in m.lbl_speed_hint.text, "à la vitesse conseillée : pas d'avertissement, conseil affiché")
-	var one := 0
-	for i in m.opt_speed.item_count:
-		if typeof(m.opt_speed.get_item_metadata(i)) == TYPE_FLOAT and is_equal_approx(m.opt_speed.get_item_metadata(i), 1.0):
-			one = i
-	m.opt_speed.select(one)
-	m.opt_speed.item_selected.emit(one)          # le joueur choisit lui-même la vitesse
-	check(m.lbl_async_warning.visible and "réplique perdue" in m.lbl_async_warning.text, "trop vite pour une IA locale : avertissement")
-	pick_llm.call("ollama")
-	check(speed_is.call(1.0), "la vitesse choisie à la main n'est plus changée d'office")
-	m._set_mode("sync")
-	check(not m.lbl_async_warning.visible, "synchrone : plus d'avertissement")
-	m.reset_all()
-	m._set_mode("async")
-	pick_llm.call("ollama")
-	check(speed_is.call(0.125), "moteur 7B : vitesse conseillée × 1/8")
-	pick_llm.call("scripted")
-	check(speed_is.call(1.0) and not m.lbl_async_warning.visible, "faux LLM : aucune contrainte de vitesse")
+	check(speed_is.call(1.0), "Ollama : pas de ralentissement imposé, l'horloge attend l'IA")
 	m.reset_all()
 	check(m.fishers.size() == 8 and not m.speed_touched, "Tout réinitialiser : retour aux réglages de départ")
 
@@ -92,11 +72,6 @@ func _initialize() -> void:
 	check(reflection_is.call("rapide") and not m.reflection_touched, "Tout réinitialiser : réflexion de départ")
 
 	# --- paramètres de la partie
-	m._set_mode("async")
-	check(m.mode == "async" and m.mode_buttons["async"].button_pressed and not m.mode_buttons["sync"].button_pressed, "mode asynchrone")
-	m._set_mode("sync")
-	check(m.build_config()["mode"] == "sync", "retour en synchrone")
-	m._set_mode("async")
 	m.spin_seasons.value = 4
 	m.spin_seed.value = 123
 	m.opt_comm.select(1)
@@ -106,7 +81,7 @@ func _initialize() -> void:
 	m.chk_elder.button_pressed = true
 	m.opt_elder.select(1)
 	var cfg1: Dictionary = m.build_config()
-	check(cfg1["mode"] == "async" and cfg1["seasons"] == 4 and cfg1["seed"] == 123, "mode, saisons, graine")
+	check(cfg1["mode"] == "unique" and cfg1["seasons"] == 4 and cfg1["seed"] == 123, "mode unique, saisons, graine")
 	check(cfg1["communication"] == "hamlet" and cfg1["catches_visible"] == false, "veillées par hameau, prises cachées")
 	check(cfg1["llm"] == "ollama" and cfg1["speed"] == "max", "Ollama, vitesse maximale")
 	check(cfg1["population"]["elder"] == true and cfg1["population"]["elder_kind"] == "rule", "ancien à règles")
