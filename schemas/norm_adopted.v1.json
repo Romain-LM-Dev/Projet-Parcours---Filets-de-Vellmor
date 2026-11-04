@@ -52,6 +52,9 @@
     "text": {
       "type": "string"
     },
+    "assembly_scope": {
+      "type": "string"
+    },
     "duration": {
       "type": "integer"
     },

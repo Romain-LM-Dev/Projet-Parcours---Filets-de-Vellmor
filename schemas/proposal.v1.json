@@ -36,6 +36,9 @@
     },
     "text": {
       "type": "string"
+    },
+    "assembly_scope": {
+      "type": "string"
     }
   },
   "required": [

@@ -262,17 +262,30 @@ def lake_choice_rule(archetype: str, s: dict) -> tuple[str | None, str]:
     if not options or s.get("banned"):
         return None, ""
     shut = s.get("lake_closed") or (s.get("shore_closed") and s.get("large_closed"))
-    here = 0.0 if shut and ob else float(s["boat_capacity"])      # son lac lui est fermé : il n'y gagne rien
     price = max(float(s.get("price", 100.0)), 1e-9)
 
+    def allowed(hold: float, quota) -> float:      # qui respecte la règle du lac où il pêche n'y prend pas plus que le quota de ce lac
+        return min(hold, float(quota)) if ob and quota is not None else hold
+
+    here = 0.0 if shut and ob else allowed(float(s["boat_capacity"]), s.get("quota"))      # son lac lui est fermé : il n'y gagne rien
+
     def net(o: dict) -> float:
-        return float(o["hold"]) * float(o["factor"]) - float(o["cost"]) / price
+        return allowed(float(o["hold"]), o.get("quota")) * float(o["factor"]) - float(o["cost"]) / price
 
     best = max(options, key=lambda o: (net(o), o["name"]))
     if here <= 0.05 and net(best) > 0.05:
         return best["name"], f"son lac est vide, {best['label']} a encore du poisson"
     if net(best) > LEAVE.get(archetype, 1.4) * max(here, 0.05):
         return best["name"], (f"{best['label']} lui rapporterait {net(best):.1f} t, route comprise, contre {here:.1f} t chez lui")
+    if archetype == "taiseux" and not ob:
+        # il ne se laisse pas lier : il va où la règle est la plus lâche (pas de quota, ou un plus grand), si la route ne lui coûte pas trop
+        def looseness(quota, closed=False) -> float:
+            return -1.0 if closed else float("inf") if quota is None else float(quota)
+        home = looseness(s.get("quota"), s.get("lake_closed"))
+        looser = [o for o in options if looseness(o.get("quota"), o.get("closed")) > home + 0.5 and net(o) >= 0.7 * here]
+        if looser:
+            pick = max(looser, key=lambda o: (looseness(o.get("quota"), o.get("closed")), net(o), o["name"]))
+            return pick["name"], f"la règle est plus lâche à {pick['label']}"
     return None, ""
 
 
@@ -282,7 +295,9 @@ def at_lake(s: dict, option: dict | None) -> dict:
     if option is None:
         return s
     return {**s, "stock_estimate": option["est"], "capacity": option["capacity"], "n_fishers": option["fishers"] + 1,
-            "boat_capacity": option["hold"], "lake_closed": False, "shore_closed": False, "large_closed": False}
+            "boat_capacity": option["hold"], "lake_closed": False, "shore_closed": False, "large_closed": False,
+            # les règles de CE lac (quota, sorties, taille de bateau) : il y obéit à celles-là, pas à celles de son lac
+            **{k: option[k] for k in ("quota", "outings_cap", "boat_limit") if k in option}}
 
 
 def _round_half(x: float) -> float:
@@ -331,7 +346,23 @@ def propose_rule(archetype: str, s: dict, rng=None) -> tuple[str, float, str | N
     if kind is None:
         return None
     value, target, said = cand[kind]
+    if kind in ("quota", "sorties", "bateau"):        # ces règles-là peuvent viser son lac plutôt que tout le monde (cible = le lac)
+        lake = rule_lake(s, rng)
+        if lake is not None:
+            target, said = lake, said.rstrip(".") + f", sur {s.get('lake_label') or 'notre lac'} seulement."
     return kind, value, target, said
+
+
+def rule_lake(s: dict, rng=None) -> str | None:
+    """Le lac que vise la règle d'un agent à règles, ou None (tout le périmètre de la veillée). Il parle pour SON lac, d'après l'état
+    de chaque lac tel qu'il le croit : si les lacs sont à peu près aussi pleins, une règle commune fait l'affaire ; si l'un est bas et
+    l'autre plein, ils n'appellent pas la même règle, donc il vise le sien. `rng` (le faux LLM des tests) : tirage de la graine."""
+    ratios = s.get("lake_ratios") or {}
+    if len(ratios) < 2 or not s.get("lake_target"):
+        return None
+    if rng is not None:
+        return s["lake_target"] if rng.random() < 0.7 else None
+    return s["lake_target"] if max(ratios.values()) - min(ratios.values()) > 0.2 else None
 
 
 def likes_rule(archetype: str, s: dict, kind: str, target: str | None, value: float) -> bool:
@@ -396,7 +427,10 @@ def speak_rule(archetype: str, s: dict, rng=None) -> tuple[dict, str]:
                 return out, f"ancien : propose une règle de type {pr[0]} selon le lac et ses rives"
             out["proposition_quota"] = out["proposition_valeur"] = q
             out["proposition_type"] = "quota"
-            out["message"] = f"Le lac a besoin de temps. Je propose que chacun s'en tienne à {q:g} tonnes la saison prochaine."
+            lake = rule_lake(s, rng)
+            out["proposition_cible"] = lake
+            out["message"] = (f"Le lac a besoin de temps. Je propose que chacun s'en tienne à {q:g} tonnes la saison prochaine"
+                              + (f", sur {s.get('lake_label') or 'notre lac'}." if lake else "."))
         else:
             out["soutien"] = leading[0]
             out["message"] = "Cette proposition me paraît juste. Tenez-vous-y."

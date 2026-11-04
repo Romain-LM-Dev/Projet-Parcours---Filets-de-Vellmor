@@ -156,7 +156,9 @@ PAYLOADS: dict[str, dict] = {
     # saisons, nombre de sorties ou rang de la taille de bateau) ; `text` : la règle en mots
     "proposal": obj({"proposal_id": STR, "author": STR, "quota": NUM, "scope": STR, "utterance_id": STR},
                     {"kind": {"enum": ["quota", "reserve", "repos", "sorties", "bateau"]}, "value": NUM, "target": STR_OR_NULL,
-                     "text": STR}),
+                     "text": STR,
+                     # `scope` : à qui vaut la règle ("valley", "hamlet:<village>" ou "lake:<lac>") ; `assembly_scope` : la veillée où elle est née
+                     "assembly_scope": STR}),
     "support": obj({"agent": STR, "proposal_id": STR, "utterance_id": STR}),
     "promise": obj({"agent": STR, "amount": NUM, "for_season": INT, "utterance_id": STR}),
     # `kept` : d'après la vraie prise ; `known_kept` : d'après ce que la vallée en sait (déclaration, ou mensonge découvert)
@@ -168,6 +170,7 @@ PAYLOADS: dict[str, dict] = {
                         {"delegates": {"type": "object"},      # au conseil des élus : l'élu de chaque village à cet instant
                          "kind": {"enum": ["quota", "reserve", "repos", "sorties", "bateau"]}, "value": NUM, "target": STR_OR_NULL,
                          "text": STR,           # la règle en mots
+                         "assembly_scope": STR,   # la veillée où elle a été votée (`scope` : à qui elle vaut, éventuellement "lake:<lac>")
                          "duration": INT, "until_season": INT}),      # reserve, repos : durée, et dernière saison d'effet
     "memory_write": obj({"agent": STR, "memory_id": STR, "text": STR, "kind": STR, "importance": NUM,
                          "pinned": BOOL}, {"source_event_id": STR_OR_NULL}),

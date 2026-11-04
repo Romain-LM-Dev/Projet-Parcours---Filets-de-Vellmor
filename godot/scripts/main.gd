@@ -1022,7 +1022,7 @@ func _on_event(ev: Dictionary) -> void:
 					who_sits.append("%s (%s)" % [_who(str(p["delegates"][h])), str(h)])
 				_feed("\n" + lab + _tag("CONSEIL", "#7f95ff") + " le conseil de la vallée se réunit : " + ", ".join(who_sits) + "  [color=#6f7896](les autres villageois n'y vont pas)[/color]", [])
 			else:
-				_feed("\n" + lab + _tag("VEILLÉE", "#7f95ff") + " [b]%s[/b] se réunit" % _scope(str(p.get("scope", ""))).capitalize(), [])
+				_feed("\n" + lab + _tag("VEILLÉE", "#7f95ff") + " [b]%s[/b] se réunit" % _scope(_assembly_of(p)).capitalize(), [])
 		"narration":
 			var season := int(p.get("season", 0))
 			var how := "" if str(p.get("source", "")) != "faits" else "  [color=#6f7896][font_size=11](d'après les faits)[/font_size][/color]"
@@ -1087,7 +1087,7 @@ func _on_event(ev: Dictionary) -> void:
 			_render_rules()
 		"assembly_end":
 			if p.get("adopted_proposal") == null:
-				_feed(lab + _tag("SANS ACCORD", "#8f97b2") + " [color=#8f97b2]fin de veillée (%s), aucune règle adoptée[/color]" % _scope(str(p.get("scope", ""))), [])
+				_feed(lab + _tag("SANS ACCORD", "#8f97b2") + " [color=#8f97b2]fin de veillée (%s), aucune règle adoptée[/color]" % _scope(_assembly_of(p)), [])
 			proposals.clear()
 			_render_rules()
 		"memory_write":
@@ -1313,7 +1313,9 @@ func _render_rules() -> void:
 		if not scopes.has(sc):
 			scopes[sc] = []
 		scopes[sc].append(n)
-	for sc in scopes:
+	var order: Array = scopes.keys()
+	order.sort_custom(func(a, b): return _scope_rank(a) < _scope_rank(b))   # tri non stable : l'ordre interne d'un rang est libre
+	for sc in order:
 		s += "[color=#e2bd6a]%s[/color]\n" % _scope(sc).capitalize()
 		for n in scopes[sc]:
 			s += "   %s · %s\n" % [_esc(_rule_text(n)), "sans échéance" if n.get("until_season") == null
@@ -1360,7 +1362,7 @@ func _norm_card() -> void:
 		return
 	var parts := PackedStringArray()
 	for n in norms_now:
-		parts.append(_rule_text(n))
+		parts.append(_rule_text(n) + (" (%s)" % _scope(str(n.get("scope", ""))) if str(n.get("scope", "")).begins_with("lake:") else ""))
 	ind_sub["norme"].text = ind_sub["norme"].text.get_slice("\n", 0).split(" · règles")[0] + "\n" + " ; ".join(parts)
 
 
@@ -1576,7 +1578,20 @@ func _day_word(f: float) -> String:
 
 
 func _scope(s: String) -> String:
+	if s.begins_with("lake:"):
+		var l := s.substr(5)
+		return str(lake_labels.get(l, "lac de " + l))
 	return "toute la vallée" if s == "valley" else s.replace("hamlet:", "village de ")
+
+
+## L'ordre d'affichage des portées : vallée, lacs, villages.
+func _scope_rank(s: String) -> int:
+	return 0 if s == "valley" else (1 if s.begins_with("lake:") else 2)
+
+
+## La veillée d'où vient une proposition ou une règle (repli sur `scope` pour un vieux journal).
+func _assembly_of(p: Dictionary) -> String:
+	return str(p.get("assembly_scope", p.get("scope", "")))
 
 
 func _num(v: Variant) -> String:

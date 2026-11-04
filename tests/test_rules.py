@@ -9,7 +9,7 @@ from collections import Counter
 import pytest
 
 from filets import rules
-from filets.policies import catch_rule, propose_rule, speak_rule
+from filets.policies import catch_rule, lake_choice_rule, propose_rule, speak_rule
 from filets.world import Assembly
 from helpers import make_world, play
 from test_voting import Said
@@ -263,3 +263,96 @@ def test_a_scripted_game_of_six_seasons_adopts_at_least_two_different_types(tmp_
     breaches = [e for e in events if e["type"] == "catch" and e["payload"].get("breach")]
     for e in breaches:                                                       # (une infraction nomme toujours des types connus)
         assert set(e["payload"]["breach"]) <= {"reserve", "repos", "sorties", "bateau"}
+
+
+# ============================================================ des règles propres à un lac
+TWO_LAKES = dict(lake__lakes=[{"name": "Vellmor", "capacity": 100, "stock_ratio": 1.0, "villages": ["Ostrel", "Bramois"]},
+                              {"name": "Orsane", "capacity": 100, "stock_ratio": 1.0, "villages": ["Tilque", "Hennad"]}])
+
+
+def at(world, agent, requested, lake, **extra):
+    return world.apply_catch(agent, requested, decision(world, agent, **extra), world.clock.now(), lake_name=lake)["payload"]
+
+
+def lake_rule(world, kind, value, lake):
+    """Le conseil de la vallée vote une règle qui ne vaut que pour `lake` (tous les pêcheurs la proposent)."""
+    asm = Assembly("valley", [a.id for a in world.agents.values()], 0, 29.0)
+    return adopt(world, asm, n=8, proposition_type=kind, proposition_valeur=value, proposition_cible=lake)
+
+
+def test_a_lake_rule_binds_the_visitor_and_not_the_resident_who_fishes_elsewhere(tmp_path):
+    world, _ = room(tmp_path, **TWO_LAKES)
+    n = lake_rule(world, "sorties", 2, "Orsane")
+    assert n.scope == "lake:Orsane" and (n.kind, n.value) == ("sorties", 2.0)
+    adopted = [e for e in world.events.index.values() if e["type"] == "norm_adopted"][-1]["payload"]
+    assert adopted["scope"] == "lake:Orsane" and adopted["assembly_scope"] == "valley"
+    visitor = next(f for f in world.fishers if world.lake_of(f).name == "Vellmor")
+    resident = next(f for f in world.fishers if world.lake_of(f).name == "Orsane")
+    assert world.rule_view(visitor, 1, 0.0)["outings"] is None                          # chez lui, rien
+    assert world.rule_view(visitor, 1, 0.0, world.lakes["Orsane"])["outings"] == 2      # à Orsane, la règle d'Orsane
+    assert world.rule_view(resident, 1, 0.0, world.lakes["Vellmor"])["outings"] is None  # l'habitant parti ailleurs n'y est plus soumis
+    full_lake(world)
+    assert at(world, visitor, 3.0, "Orsane", outings=6)["breach"] == ["sorties"]        # le visiteur l'enfreint
+    assert "breach" not in at(world, resident, 3.0, "Vellmor", outings=6)
+    # l'ordre : la règle du lac l'emporte sur celle du village, qui l'emporte sur celle de la vallée
+    asm = Assembly(f"hamlet:{resident.profile.hamlet}", [a.id for a in world.fishers if a.profile.hamlet == resident.profile.hamlet], 0, 29.0)
+    adopt(world, asm, n=2, proposition_type="quota", proposition_valeur=5)
+    assert world.applicable_norm(resident, 1, 0.0, world.lakes["Orsane"]).scope == f"hamlet:{resident.profile.hamlet}"
+    asm = Assembly("valley", [a.id for a in world.agents.values()], 0, 29.0)
+    adopt(world, asm, n=8, proposition_type="quota", proposition_valeur=4, proposition_cible="Orsane")
+    assert world.applicable_norm(resident, 1, 0.0, world.lakes["Orsane"]).scope == "lake:Orsane"
+    assert world.applicable_norm(resident, 1, 0.0, world.lakes["Vellmor"]).scope == f"hamlet:{resident.profile.hamlet}"
+
+
+def test_two_lakes_can_have_different_rules_at_the_same_time_and_each_lake_tells_them(tmp_path):
+    world, _ = room(tmp_path, **TWO_LAKES)
+    lake_rule(world, "quota", 3, "Vellmor")
+    lake_rule(world, "sorties", 2, "Orsane")
+    a = next(f for f in world.fishers if world.lake_of(f).name == "Vellmor")
+    vell, ors = world.rules_for(a, 1, 0.0, world.lakes["Vellmor"]), world.rules_for(a, 1, 0.0, world.lakes["Orsane"])
+    assert set(vell) == {("quota", None)} and set(ors) == {("sorties", None)}
+    obs, state, _, _ = asyncio.run(world.observe(a, world.clock.now(), "catch"))
+    there = obs["lake_options"][0]
+    assert there["rules"] and "règle de ce lac" in there["rules"][0] and there["outings_cap"] == 2
+    assert any("pour le lac Vellmor" in line for line in obs["norms"])
+
+
+def test_a_close_mouthed_rule_fisher_goes_to_the_lake_with_the_loosest_rule_and_a_careful_one_respects_the_rule_there():
+    from filets.policies import at_lake
+    opt = {"name": "Orsane", "label": "Lac d'Orsane", "est": 90.0, "ratio": 0.9, "capacity": 100.0, "fishers": 4, "days": 0.5,
+           "factor": 0.8, "cost": 10.0, "hold": 4.0, "quota": None, "closed": False}
+    home = {"boat_capacity": 4.0, "price": 100.0, "quota": 2.0, "stock_estimate": 90.0, "capacity": 100.0, "n_fishers": 8,
+            "lake_options": [opt], "banned": False}
+    assert lake_choice_rule("taiseux", home)[0] == "Orsane" and "plus lâche" in lake_choice_rule("taiseux", home)[1]
+    assert lake_choice_rule("taiseux", {**home, "quota": None})[0] is None                       # chez lui c'est déjà le plus lâche
+    strict = {**home, "lake_options": [{**opt, "quota": 1.0}]}
+    assert lake_choice_rule("taiseux", strict)[0] is None                                        # ailleurs, c'est plus strict : il reste
+    assert lake_choice_rule("ancienne_famille", home)[0] is None                                 # la famille prudente reste sur son lac
+    there = at_lake(home, {**opt, "quota": 1.5})
+    assert there["quota"] == 1.5 and catch_rule("ancienne_famille", there)[0] <= 1.5 + 0.05
+
+
+def test_rule_fishers_aim_their_rule_at_their_own_lake_when_the_lakes_differ_and_a_common_rule_when_they_are_alike():
+    s = {"stock_estimate": 90.0, "capacity": 100.0, "n_fishers": 8, "lake_target": "Vellmor", "lake_label": "Lac de Vellmor",
+         "boat_names": ["chaloupe"], "outings_n": 6, "min_catch": 0.5, "own_zone": "Ostrel", "rule_kinds": []}
+    kind, _, target, said = propose_rule("beau_parleur", {**s, "lake_ratios": {"Vellmor": 0.9, "Orsane": 0.3}, "hot_zone": None})
+    if kind in ("quota", "sorties"):
+        assert target == "Vellmor" and "seulement" in said
+    kind, _, target, _ = propose_rule("beau_parleur", {**s, "lake_ratios": {"Vellmor": 0.8, "Orsane": 0.75}})
+    assert kind not in ("quota", "sorties") or target is None
+
+
+def test_a_scripted_game_on_three_lakes_adopts_a_lake_rule(tmp_path):
+    from filets.config import load_config, normalize
+    cfg = load_config("config/lakes.yaml")
+    cfg["output"]["runs_dir"] = str(tmp_path / "runs")
+    cfg["time"]["fast"] = True
+    cfg["time"]["mode"] = "sync"
+    cfg["run"]["seasons"] = 8
+    cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
+    cfg["economy"]["luck"] = 0.0
+    cfg["climate"]["enabled"] = False
+    cfg["population"]["rule_fraction"] = 0.0
+    events = play(tmp_path, "trois", cfg=normalize(cfg))
+    adopted = [e["payload"] for e in events if e["type"] == "norm_adopted"]
+    assert any(p["scope"].startswith("lake:") for p in adopted), [(p["scope"], p.get("text")) for p in adopted]

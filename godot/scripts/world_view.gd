@@ -1267,7 +1267,7 @@ func on_event(ev: Dictionary) -> void:
 				_mark(id, "interdit de pêche" if agents[id]["banned"] else "de nouveau libre",
 					Art.ACCUSE if agents[id]["banned"] else Color("#58d08a"), 4.0)
 		"assembly_start":
-			var scope: String = str(p.get("scope", "valley"))
+			var scope: String = str(p.get("assembly_scope", p.get("scope", "valley")))
 			var parts: Array = p.get("participants", [])
 			if scope == "valley":
 				assembly_scope = "valley"
@@ -1302,7 +1302,7 @@ func on_event(ev: Dictionary) -> void:
 					var ang := -PI / 2.0 + TAU * float(i) / float(max(parts.size(), 1))
 					_move(str(parts[i]), c + Vector2(cos(ang) * 0.08, sin(ang) * 0.09) / world_k)
 		"assembly_end":
-			var scope2 := str(p.get("scope", "valley"))
+			var scope2 := str(p.get("assembly_scope", p.get("scope", "valley")))
 			if p.get("adopted_proposal") == null and scope2 == "valley":
 				_banner("Pas d'accord ce soir", "Aucune règle n'a réuni la moitié des pêcheurs", Art.MUTED)
 			if scope2 == "valley":
@@ -1345,9 +1345,17 @@ func on_event(ev: Dictionary) -> void:
 			_mark(str(p.get("accused", "")), "accusé", Art.ACCUSE, 7.0)
 		"norm_adopted":
 			_set_rule(p)
-			_banner("Règle adoptée", "%s dès la saison %d · %d soutiens" % [
+			var rsc := str(p.get("scope", ""))
+			var rlk := ""
+			if rsc.begins_with("lake:"):
+				var ln := rsc.substr(5)
+				for lk in lakes:
+					if str(lk.get("name", "")) == ln:
+						ln = str(lk.get("label", ln))
+				rlk = " — " + (ln if ln.begins_with("Lac") else "lac de " + ln)
+			_banner("Règle adoptée", "%s%s dès la saison %d · %d soutiens" % [
 				_short(str(p.get("text", "")), 70) if str(p.get("text", "")) != "" else "%s t par pêcheur" % _num(p.get("quota", 0)),
-				int(p.get("effective_season", 0)), p.get("supporters", []).size()], Art.SUPPORT)
+				rlk, int(p.get("effective_season", 0)), p.get("supporters", []).size()], Art.SUPPORT)
 			for s in p.get("supporters", []):
 				_mark(str(s), "pour", Art.SUPPORT, 4.5)
 		"promise_outcome":
@@ -1736,12 +1744,26 @@ func _draw_rules(ci: CanvasItem) -> void:
 		Art.pill(ci, _px(c) + Vector2(0, -14), lbl, Color(0.08, 0.1, 0.16, 0.85), col, 11, "ui_bold", true)
 
 
+## Une pastille discrète près du nom d'un lac qui a ses propres règles en vigueur (le texte court s'il n'y en a qu'une).
+func _draw_lake_rules(ci: CanvasItem) -> void:
+	for lk in lakes:
+		var mine: Array = rules.filter(func(r): return str(r.get("scope", "")) == "lake:" + str(lk.get("name", "")) \
+			and (r.get("until_season") == null or int(r["until_season"]) >= cur_season))
+		if mine.is_empty():
+			continue
+		var txt := "règles du lac"
+		if mine.size() == 1 and str(mine[0].get("text", "")) != "":
+			txt = _short(str(mine[0]["text"]), 34)
+		Art.pill(ci, _px(lk["c"]) + Vector2(0, 24), txt, Color(0.08, 0.1, 0.16, 0.7), Color(0.62, 0.72, 0.85), 10, "ui_bold", true)
+
+
 func _draw_under(ci: CanvasItem) -> void:
 	_draw_rules(ci)
 	if lakes.size() > 1:
 		for lk in lakes:
 			ci.draw_string(Art.font("title_italic"), _px(lk["c"]) + Vector2(-70, 5), str(lk["label"]), HORIZONTAL_ALIGNMENT_CENTER, 140,
 				15, Color(1, 1, 1, 0.38))
+		_draw_lake_rules(ci)
 	for w in wakes:
 		var a: float = float(w["ttl"]) / float(w["max"])
 		var p := _px(w["p"])

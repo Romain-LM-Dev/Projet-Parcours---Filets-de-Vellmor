@@ -472,9 +472,12 @@ def lake_options_block(obs: dict) -> str:
              f"poisson) ; tu y viserais jusqu'à {cap_text(o['hold'])} t, soit au mieux "
              f"{max(0.0, o['hold'] * o['factor'] - o['cost'] / price):.1f} t une fois la route payée (contre {here:.1f} t au mieux chez toi), "
              "avec les pêcheurs de là-bas" + (" ; MAIS la pêche y est interdite cette saison (règle votée)" if o.get("closed") else "")
+             + (" ; les règles en vigueur là-bas, qui te vaudraient si tu y allais : " + " ; ".join(o["rules"]) if o.get("rules")
+                else " ; aucune règle votée ne s'y applique à toi")
              for o in opts]
     return (f"Tu pêches d'ordinaire dans {lake_ref(obs['lake_name']) if obs.get('lake_name') else 'ton lac'}, celui de ton village{state}. "
-            "Tu peux aussi pêcher dans un autre lac, si tu as de bonnes raisons d'y aller ; la route est une vraie dépense :\n"
+            "Tu peux aussi pêcher dans un autre lac, si tu as de bonnes raisons d'y aller ; la route est une vraie dépense, et là-bas ce sont les règles de ce lac qui valent pour toi, "
+            "pas celles de ton lac :\n"
             + _bullets(lines) + "\n")
 
 
@@ -571,7 +574,8 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         "\"proposition_type\": \"quota\" ou \"reserve\" ou \"repos\" ou \"sorties\" ou \"bateau\" (le type de la règle nouvelle que "
         "tu proposes, selon ce que tu vois), ou null " + ("pour garder les règles en vigueur" if obs.get("norms") else "si tu n'en proposes pas"),
         "\"proposition_valeur\": <le nombre de cette règle, selon son type : voir plus haut, ou null>",
-        "\"proposition_cible\": \"<le village, le lac ou large visé par une réserve ou un repos>\" ou null",
+        "\"proposition_cible\": \"<le village, le lac ou large visé par une réserve ou un repos" +
+        (" ; pour un quota, des sorties ou une taille de bateau : le nom d'un lac, si la règle ne doit valoir que pour ce lac" if obs.get("lake_names") and len(obs["lake_names"]) > 1 else "") + ">\" ou null",
         "\"soutien\": \"<identifiant d'une proposition que tu soutiens, ex. P2>\" ou null",
     ]
     if fisher:

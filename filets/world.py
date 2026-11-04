@@ -118,8 +118,9 @@ class Proposal:
     target: str | None = None        # reserve : la zone ; repos : le lac
 
     @property
-    def key(self) -> tuple[str, str | None]:
-        return self.kind, self.target
+    def key(self) -> tuple:
+        """Deux propositions ne se rejoignent que du même type, de la même cible et (pour un lac) de la même portée."""
+        return (self.kind, self.target) + ((self.scope,) if self.scope.startswith("lake:") else ())
 
 
 @dataclass
@@ -137,14 +138,14 @@ class Sanction:
 
 @dataclass
 class Assembly:
-    scope: str                       # "valley" ou "hamlet:<nom>"
+    scope: str                       # "valley" ou "hamlet:<nom>" (une règle adoptée peut viser un lac : "lake:<nom>")
     participants: list[str]
     season: int
     close_t: float
     utterances: list[dict] = field(default_factory=list)       # événements `utterance`
     proposals: dict[str, Proposal] = field(default_factory=dict)
     support: dict[str, tuple[str, float, str]] = field(default_factory=dict)  # agent -> (proposal, t, event_id)
-    stated: dict[str, tuple[str, str | None, float]] = field(default_factory=dict)     # agent -> (type, cible, valeur) qu'il a dit vouloir (proposé, ou promesse de quota)
+    stated: dict[str, tuple[str, str | None, float, str]] = field(default_factory=dict)     # agent -> (type, cible, valeur) qu'il a dit vouloir (proposé, ou promesse de quota)
     accused: list[tuple[float, str]] = field(default_factory=list)     # (instant, accusé) : qui a été mis en cause, et quand
     sanctions: dict[str, Sanction] = field(default_factory=dict)        # propositions soumises au vote (voir `Sanction`)
     mode: str = "sync"               # sync : on s'entend, tour à tour ; async : chacun parle de son côté, sans entendre les autres
@@ -166,7 +167,7 @@ class Assembly:
 
 @dataclass
 class Norm:
-    scope: str
+    scope: str                       # "valley", "hamlet:<village>" ou "lake:<lac>"
     quota: float
     effective_season: int
     proposal_id: str
@@ -432,16 +433,21 @@ class World:
         """Les autres lacs, pour un pêcheur qui hésiterait : ce qu'il en croit (de loin, avec deux fois plus d'erreur que sur le sien),
         la route (jours, ce qu'elle laisse de prise, ce qu'elle coûte) et ce que le lac lui laisserait viser là-bas."""
         home, seed = self.lake_of(agent), self.cfg["run"]["seed"]
-        view = self.rule_view(agent, self.clock.season_of(horizon), horizon)
+        season = self.clock.season_of(horizon)
         out = []
         for lake in self.lakes.values():
             if lake is home:
                 continue
             far = lake.observe_far(random.Random(f"{seed}|far|{agent.id}|{round(horizon, 3)}|{lake.name}"))
             days = self.distance(home, lake)
+            view = self.rule_view(agent, season, horizon, lake)       # les règles qui le toucheraient là-bas (celles du lac, du village, de la vallée)
+            quota = view["norms"].get(("quota", None))
             # (« closed » : un repos du lac, ou le large de ce lac réservé — là où va pêcher celui qui vient d'ailleurs)
             out.append({"name": lake.name, "label": lake.label, "est": far, "ratio": far / lake.capacity, "capacity": lake.capacity,
                         "closed": lake.name in view["closed"] or self.large_zone(lake) in view["reserved"],
+                        "quota": quota.quota if quota else None, "outings_cap": view["outings"], "boat_limit": view["boat_limit"],
+                        "rules": [self.norm_words(n) + (" (règle de ce lac)" if n.scope.startswith("lake:") else "")
+                                  for n in view["norms"].values()],
                         "fishers": self.lake_fishers[lake.name], "days": round(days, 2),
                         "factor": round(self.travel_factor(days), 3), "cost": round(self.travel_cost(days), 1),
                         "hold": round(self.hold_of(agent, min(far, lake.capacity), lake), 2)})
@@ -526,16 +532,25 @@ class World:
              and n.effective_season <= season and (n.until is None or season <= n.until)]
         return c[-1] if c else None
 
-    def applicable_norm(self, agent: Agent, season: int, horizon: float) -> Norm | None:
-        """Le quota qui s'applique à ce pêcheur (les autres types de règle : voir `rules_for`)."""
-        return (self.norm_for_scope(f"hamlet:{agent.profile.hamlet}", season, horizon)
+    def fished_lake(self, agent: Agent, season: int) -> Lake:
+        """Le lac où ce pêcheur a pêché cette saison (le sien s'il n'a pas encore choisi ailleurs)."""
+        return self.lakes.get(agent.lake_choice.get(season), None) or self.lake_of(agent)
+
+    def applicable_norm(self, agent: Agent, season: int, horizon: float, lake: Lake | None = None) -> Norm | None:
+        """Le quota qui s'applique à ce pêcheur (les autres types de règle : voir `rules_for`), selon le lac où il pêche (`lake`,
+        à défaut celui où il a pêché cette saison). Ordre : règle du lac, puis de son village, puis de la vallée."""
+        lake = lake or self.fished_lake(agent, season)
+        return (self.norm_for_scope(f"lake:{lake.name}", season, horizon)
+                or self.norm_for_scope(f"hamlet:{agent.profile.hamlet}", season, horizon)
                 or self.norm_for_scope("valley", season, horizon))
 
-    def rules_for(self, agent: Agent, season: int, horizon: float) -> dict[tuple[str, str | None], Norm]:
+    def rules_for(self, agent: Agent, season: int, horizon: float, lake: Lake | None = None) -> dict[tuple[str, str | None], Norm]:
         """Toutes les règles en vigueur pour ce pêcheur à la saison `season`, connues à `horizon` : la dernière de chaque
-        (type, cible) ; celle de son village l'emporte sur celle de la vallée."""
+        (type, cible) ; celle du lac où il pêche l'emporte sur celle de son village, qui l'emporte sur celle de la vallée.
+        `lake` : le lac visé (à défaut, celui où il a pêché cette saison)."""
+        lake = lake or self.fished_lake(agent, season)
         out: dict[tuple[str, str | None], Norm] = {}
-        for sc in ("valley", f"hamlet:{agent.profile.hamlet}"):
+        for sc in ("valley", f"hamlet:{agent.profile.hamlet}", f"lake:{lake.name}"):
             for n in self.norms:
                 if n.scope == sc and n.adopted_t <= horizon and n.effective_season <= season and \
                         (n.until is None or season <= n.until):
@@ -547,10 +562,11 @@ class World:
         """Les classes de bateau, de la plus petite cale à la plus grande."""
         return sorted(self.boats, key=lambda b: float(self.boats[b]["capacity"]))
 
-    def rule_view(self, agent: Agent, season: int, horizon: float) -> dict:
-        """Ce que les règles en vigueur changent pour ce pêcheur : zones réservées, lacs fermés, nombre de sorties permis, cale
-        permise s'il a un bateau plus gros que la taille maximale (le moteur ne fait que le dire ; il ne décide pas pour lui)."""
-        rl = self.rules_for(agent, season, horizon)
+    def rule_view(self, agent: Agent, season: int, horizon: float, lake: Lake | None = None) -> dict:
+        """Ce que les règles en vigueur changent pour ce pêcheur (s'il pêche dans `lake`) : zones réservées, lacs fermés, nombre de
+        sorties permis, cale permise s'il a un bateau plus gros que la taille maximale (le moteur ne fait que le dire ; il ne
+        décide pas pour lui)."""
+        rl = self.rules_for(agent, season, horizon, lake)
         out, boat = rl.get(("sorties", None)), rl.get(("bateau", None))
         limit = None
         if boat is not None:
@@ -585,7 +601,8 @@ class World:
 
     def proposal_words(self, pr: Proposal) -> str:
         """Une proposition de règle sur la table, en mots (un quota : « 3 t par pêcheur »)."""
-        return f"{pr.quota:g} t par pêcheur" if pr.kind == "quota" else self.rule_words(pr.kind, pr.quota, pr.target)
+        said = f"{pr.quota:g} t par pêcheur" if pr.kind == "quota" else self.rule_words(pr.kind, pr.quota, pr.target)
+        return said + (f" (pour {self.scope_words(pr.scope)})" if pr.scope.startswith("lake:") else "")
 
     def resolve_target(self, kind: str, raw, agent: Agent) -> str | None:
         """La cible d'une règle `reserve` (une zone : village, ou « large ») ou `repos` (un lac), lue dans la réplique d'un
@@ -1183,14 +1200,14 @@ class World:
         est = lake.observe(agent.rng if agent.is_fisher else self.obs_rng)
         entry, history = self.note_lake(agent, season, horizon, est, purpose, rnd)
         used += [e["event_id"] for e in history if e["event_id"]]
-        norm = self.applicable_norm(agent, season if purpose == "catch" else season + 1, horizon)
+        norm = self.applicable_norm(agent, season if purpose == "catch" else season + 1, horizon, lake)
         norm_lines = []
-        for key in ("valley", f"hamlet:{p.hamlet}"):
+        for key in ("valley", f"hamlet:{p.hamlet}", f"lake:{lake.name}"):
             latest: dict[tuple, Norm] = {}          # la dernière règle de chaque type (et cible), si elle court encore
             for n in self.norms:
                 if n.scope == key and n.adopted_t <= horizon and (n.until is None or season <= n.until):
                     latest[(n.kind, n.target)] = n
-            who = "toute la vallée" if key == "valley" else f"le hameau de {key.split(':', 1)[1]}"
+            who = self.scope_words(key)
             for n in latest.values():
                 since = "depuis" if n.effective_season <= season else "à partir de"
                 lasts = f" jusqu'à la saison {n.until}" if n.until is not None else ""
@@ -1198,7 +1215,7 @@ class World:
                                   f"(proposition {n.proposal_id}), en vigueur {since} la saison {n.effective_season}{lasts}")
                 used.append(n.event_id)
         rseason = season if purpose == "catch" else season + 1
-        view = self.rule_view(agent, rseason, horizon)
+        view = self.rule_view(agent, rseason, horizon, lake)
         catches_txt, catch_ids, last_catches = self.known_catches(agent, horizon, season)
         used += catch_ids
         pinned = agent.memory.pinned(horizon, season)
@@ -1306,7 +1323,12 @@ class World:
                      "my_boat_rank": names.index(p.boat) + 1 if p.boat in names else 1, "boat_names": names,
                      "hot_zone": hot[0] if hot else None, "rule_over": sum(over) / len(over) if over else None,
                      "lake_target": lake.name, "own_zone": p.hamlet, "large_target": self.large_zone(lake),
-                     "lake_names": list(self.lakes)}
+                     "lake_names": list(self.lakes), "lake_label": lake.label}
+            if self.multi:         # chaque lac tel qu'il le croit (le sien de près, les autres de loin) : de quoi viser un lac plutôt que la vallée
+                seed = self.cfg["run"]["seed"]
+                extra["lake_ratios"] = {lk.name: round((est if lk is lake else lk.observe_far(
+                    random.Random(f"{seed}|far|{agent.id}|{round(horizon, 3)}|{lk.name}"))) / lk.capacity, 3)
+                    for lk in self.lakes.values()}
             if hot:
                 extra["hot_line"] = (f"La rive de {hot[0]} est la plus vidée : elle est à {100 * hot[1]:.0f} % de son poisson, "
                                      f"le lac à {100 * hot[2]:.0f} %.")
@@ -1348,6 +1370,8 @@ class World:
                 obs["proposals"].append(f"{pr.id} : {self.proposal_words(pr)}, proposée par {self.name(pr.author)} ; "
                                         f"soutiens : {', '.join(sup) or 'aucun'}")
                 used.append(pr.event_id)
+                if pr.scope.startswith("lake:") and pr.scope != f"lake:{lake.name}":
+                    continue               # la règle d'un autre lac ne le touche pas : il ne la prend pas pour la proposition en tête
                 if best is None or len(sup) > best[2]:
                     best = (pr.id, pr.quota, len(sup), pr.author, pr.kind, pr.target)
                 if pr.kind == "quota" and (bestq is None or len(sup) > bestq[2]):
@@ -1375,6 +1399,7 @@ class World:
             obs["participants"] = [{"id": a, "name": self.name(a), "label": self.agents[a].profile.archetype_label}
                                    for a in assembly.participants]
             obs["scope_label"] = assembly.label
+            state["assembly_scope"] = assembly.scope
             obs["round"] = rnd
             # celui qu'un agent à règles accuserait : d'abord celui que les indices de la saison désignent, sinon le plus gros
             # pêcheur connu de la saison passée
@@ -1429,7 +1454,7 @@ class World:
         days = self.distance(home, lake)
         # les règles de pêche qui le visent (le moteur applique ; respecter ou non, c'est le choix de l'agent : `lieu` « large »
         # pour quitter sa rive, `sorties` pour le nombre de sorties ; sans réponse sur un point, il respecte)
-        view, pick = self.rule_view(agent, season, horizon), decision["payload"]
+        view, pick = self.rule_view(agent, season, horizon, lake), decision["payload"]      # (les règles du lac où il pêche)
         place = pick.get("place") if not secret and not away else None
         if place is None and not secret and not away and agent.profile.hamlet in view["reserved"]:
             place = "large"                       # il n'a rien dit de sa rive réservée : il la respecte
@@ -1963,8 +1988,9 @@ class World:
         rule = self.read_proposal(d, agent)
         if rule is not None:
             kind, q, target = rule
-            asm.stated[agent.id] = (kind, target, q)
-            twin = self._similar_proposal(asm, kind, target, q)
+            scope = self.proposal_scope(d, kind, asm)
+            asm.stated[agent.id] = (kind, target, q, scope if scope.startswith("lake:") else "")
+            twin = self._similar_proposal(asm, kind, target, q, scope)
             if twin is not None:
                 # huit pêcheurs qui proposent 7,0 ; 7,3 ; 7,4 ; 7,5 ne font pas huit règles : une seule, soutenue par tous. Sans
                 # cela les voix se dispersaient sur des dizaines de propositions et aucune règle n'était jamais adoptée. (Deux
@@ -1973,10 +1999,11 @@ class World:
             else:
                 pid = f"P{next(self._pid)}"
                 pe = self.events.emit("proposal", {"proposal_id": pid, "author": agent.id, "quota": q,
-                                                   "scope": asm.scope, "utterance_id": u["event_id"], "kind": kind,
+                                                   "scope": scope, "utterance_id": u["event_id"], "kind": kind,
+                                                   "assembly_scope": asm.scope,
                                                    "value": q, "target": target, "text": self.rule_words(kind, q, target)},
                                       actor=agent.id)
-                asm.proposals[pid] = Proposal(pid, agent.id, q, now, pe["event_id"], asm.scope, kind, target)
+                asm.proposals[pid] = Proposal(pid, agent.id, q, now, pe["event_id"], scope, kind, target)
                 self._support(agent, asm, pid, u)
         # soutien
         sup = d.get("soutien")
@@ -1995,7 +2022,7 @@ class World:
             pv = to_number(d.get("promesse"))
             if pv is not None and 0 <= pv <= self.boat_max:
                 pv = min(max(pv, lo), hi)
-                asm.stated.setdefault(agent.id, ("quota", None, round(pv, 2)))     # une proposition de règle, si elle existe, prime sur la promesse
+                asm.stated.setdefault(agent.id, ("quota", None, round(pv, 2), ""))     # une proposition de règle, si elle existe, prime sur la promesse
                 pe = self.events.emit("promise", {"agent": agent.id, "amount": round(pv, 2), "for_season": season + 1,
                                                   "utterance_id": u["event_id"]}, actor=agent.id)
                 self.promises[(agent.id, season + 1)] = (round(pv, 2), pe["event_id"])
@@ -2188,11 +2215,41 @@ class World:
             return ("sorties", float(round(val)), None) if 1 <= round(val) < n_out else None
         return ("bateau", float(round(val)), None) if 1 <= round(val) < len(self.boat_names) else None
 
-    def _similar_proposal(self, asm: Assembly, kind: str, target: str | None, q: float) -> Proposal | None:
-        """La proposition déjà sur la table, du même type et de la même cible, dont la valeur est assez proche (le quota :
-        à moins de `scenario.proposal_merge_tolerance` t ; les autres : `rules.VALUE_TOLERANCE`) ; la plus proche."""
+    def proposal_scope(self, d: dict, kind: str, asm: Assembly) -> str:
+        """La portée de la règle proposée : celle de la veillée, ou "lake:<lac>" si, dans un monde à plusieurs lacs, un quota, des
+        sorties ou une taille de bateau visent un lac (`proposition_cible` = le lac). Une veillée de village ne vise que le lac
+        de son village ; le conseil de la vallée, n'importe lequel."""
+        if not self.multi or kind not in ("quota", "sorties", "bateau"):
+            return asm.scope
+        text = unicodedata.normalize("NFKD", str(d.get("proposition_cible") or "")).encode("ascii", "ignore").decode().strip().lower()
+        for pre in ("le lac de ", "le lac d'", "lac de ", "lac d'", "lac "):
+            text = text.removeprefix(pre)
+        fold = lambda s: unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+        lake = next((lk for lk in self.lakes.values() if text and text in (fold(lk.name), fold(lk.label))), None)
+        if lake is None or (asm.scope.startswith("hamlet:") and self.lake_of_hamlet.get(asm.scope.split(":", 1)[1]) != lake.name):
+            return asm.scope
+        return f"lake:{lake.name}"
+
+    @staticmethod
+    def scope_words(scope: str) -> str:
+        """Pour qui vaut une règle, en mots."""
+        kind, _, name = scope.partition(":")
+        return {"valley": "toute la vallée", "hamlet": f"le hameau de {name}",
+                "lake": f"le lac {name}"}.get(kind, scope)
+
+    @staticmethod
+    def scope_of(scope: str) -> str:
+        """« de la vallée », « du hameau de X », « du lac X » (la règle de qui)."""
+        kind, _, name = scope.partition(":")
+        return {"valley": "de la vallée", "hamlet": f"du hameau de {name}", "lake": f"du lac {name}"}.get(kind, scope)
+
+    def _similar_proposal(self, asm: Assembly, kind: str, target: str | None, q: float, scope: str = "") -> Proposal | None:
+        """La proposition déjà sur la table, du même type et de la même cible (et, pour un lac, de la même portée), dont la valeur
+        est assez proche (le quota : à moins de `scenario.proposal_merge_tolerance` t ; les autres : `rules.VALUE_TOLERANCE`) ;
+        la plus proche."""
         tol = float(self.scn.get("proposal_merge_tolerance", 0.75)) if kind == "quota" else rules.VALUE_TOLERANCE[kind]
-        near = [p for p in asm.proposals.values() if p.key == (kind, target) and abs(p.quota - q) <= tol + 1e-9]
+        key = (kind, target) + ((scope,) if scope.startswith("lake:") else ())
+        near = [p for p in asm.proposals.values() if p.key == key and abs(p.quota - q) <= tol + 1e-9]
         return min(near, key=lambda p: (abs(p.quota - q), p.id), default=None)
 
     def motion_text(self, s: Sanction) -> str:
@@ -2345,9 +2402,9 @@ class World:
             agent = self.agents[aid]
             if not agent.is_fisher or aid in asm.support or aid not in asm.stated or not asm.proposals:
                 continue
-            kind, target, want = asm.stated[aid]           # on ne compare que dans le même type (et la même cible)
+            kind, target, want, scope = asm.stated[aid]    # on ne compare que dans le même type (et la même cible, la même portée de lac)
             tol = float(self.scn.get("vote_tolerance", 1.5)) if kind == "quota" else rules.VALUE_TOLERANCE[kind]
-            same = [p for p in asm.proposals.values() if p.key == (kind, target)]
+            same = [p for p in asm.proposals.values() if p.key == (kind, target) + ((scope,) if scope else ())]
             if not same:
                 continue
             best = min(same, key=lambda p: (abs(p.quota - want), p.id))
@@ -2370,24 +2427,28 @@ class World:
         adopted = None
         if tally:
             pid, sups = max(tally.items(), key=lambda kv: (len(kv[1]), -int(kv[0][1:])))
-            if len(sups) * 2 >= len(fishers_present):      # au moins la moitié des pêcheurs présents
-                pr = asm.proposals[pid]
+            pr = asm.proposals[pid]
+            # au moins la moitié des pêcheurs présents ; pour une règle de lac, la moitié de ceux de ce lac (eux seuls la subissent)
+            lake_rule = pr.scope.removeprefix("lake:") if pr.scope.startswith("lake:") else None
+            voters = [a for a in fishers_present if lake_rule is None or self.lake_of(self.agents[a]).name == lake_rule]
+            n_for = len([a for a in sups if a in voters])
+            if voters and n_for * 2 >= len(voters):
                 first = asm.season + 1
                 until = first + int(pr.quota) - 1 if pr.kind in rules.TIMED else None
                 said = self.rule_words(pr.kind, pr.quota, pr.target)
                 ne = self.events.emit("norm_adopted", {
-                    "proposal_id": pid, "quota": pr.quota, "scope": asm.scope, "effective_season": first,
+                    "proposal_id": pid, "quota": pr.quota, "scope": pr.scope, "assembly_scope": asm.scope, "effective_season": first,
                     "supporters": sorted(sups), "participants": asm.participants, "author": pr.author,
                     "kind": pr.kind, "value": pr.quota, "target": pr.target, "text": said,
                     **({"until_season": until, "duration": int(pr.quota)} if until is not None else {}),
                     **({"delegates": dict(self.reps)} if asm.delegates else {})})
-                self.norms.append(Norm(asm.scope, pr.quota, first, pid, self.clock.now(),
+                self.norms.append(Norm(pr.scope, pr.quota, first, pid, self.clock.now(),
                                        ne["event_id"], sorted(sups), pr.kind, pr.target, until))
                 adopted = pid
                 # la règle vaut pour tous : les villageois qui n'étaient pas au conseil l'apprennent aussi
                 everyone = list(self.agents) if asm.delegates else asm.participants
                 for aid in everyone:
-                    self.remember(self.agents[aid], f"Règle adoptée chez l'ancien ({asm.label}) : {said}, à partir de la "
+                    self.remember(self.agents[aid], f"Règle adoptée chez l'ancien ({asm.label}), pour {self.scope_words(pr.scope)} : {said}, à partir de la "
                                                     f"saison {first}, "
                                                     f"soutenue par {len(sups)} {'élus' if asm.delegates else 'pêcheurs'} "
                                                     f"sur {len(fishers_present)}.",
@@ -2534,13 +2595,13 @@ class World:
                 if landed.get(a.id, 0.0) > norm.quota + tol:
                     over.append(f"{self.first_name(a.id)} ({landed[a.id]:g} t)")
         for (scope, quota), over in quotas.items():
-            whose = "de la vallée" if scope == "valley" else f"du hameau de {scope.split(':', 1)[1]}"
+            whose = self.scope_of(scope)
             facts.append(f"Règle {whose} : pas plus de {quota:g} t par pêcheur ; "
                          + ("tous l'ont tenue." if not over else f"dépassée par {both(over)}."))
         adopted = of("norm_adopted")
         for n in adopted:
             present = sum(1 for p in n["participants"] if p in self.agents and self.agents[p].is_fisher)
-            whose = "" if n["scope"] == "valley" else f" pour le hameau de {n['scope'].split(':', 1)[1]}"
+            whose = "" if n["scope"] == "valley" else " pour " + self.scope_words(n["scope"])
             # la règle qu'elle remplace, pour que l'ancien ne dise pas « on augmente la limite » à la toute première
             kind = n.get("kind", "quota")
             before = self.norm_for_scope(n["scope"], season, self.clock.now(), kind, n.get("target"))
@@ -2561,7 +2622,8 @@ class World:
                     for (k, _), n in self.rules_for(a, season, self.clock.now()).items() if k == kind}
             for n in live.values():
                 broke = [c for c in of("catch") if kind in (c.get("breach") or []) and
-                         (kind not in rules.TARGETED or n.target in (c.get("zone"), c.get("lake") or next(iter(self.lakes))))]
+                         (kind not in rules.TARGETED or n.target in (c.get("zone"), c.get("lake") or next(iter(self.lakes)))) and
+                         (not n.scope.startswith("lake:") or n.scope[5:] == (c.get("lake") or next(iter(self.lakes))))]
                 facts.append(f"Règle en vigueur : {self.norm_words(n)} ; "
                              + (f"enfreinte par {both([self.first_name(c['agent']) for c in broke])}." if broke else "respectée par tous."))
         if of("assembly_start") and not adopted:
@@ -2628,7 +2690,7 @@ class World:
                 if real.get(a.id, 0.0) > norm.quota + tol:
                     over.append(f"{fn(a.id)} ({real[a.id]:g} t)")
         for (scope, quota), over in quotas.items():
-            whose = "de la vallée" if scope == "valley" else f"du hameau de {scope.split(':', 1)[1]}"
+            whose = self.scope_of(scope)
             facts.append(f"Règle {whose} : pas plus de {quota:g} t par pêcheur ; "
                          + ("tous l'ont tenue." if not over else f"dépassée par {both(over)}."))
         for kind in ("reserve", "repos", "sorties", "bateau"):              # les autres types : qui les a enfreints (la vérité)
@@ -2636,12 +2698,13 @@ class World:
                     for (k, _), n in self.rules_for(a, season, self.clock.now()).items() if k == kind}
             for n in live.values():
                 broke = [c for c in catches if kind in (c.get("breach") or []) and
-                         (kind not in rules.TARGETED or n.target in (c.get("zone"), lake_of(c)))]
+                         (kind not in rules.TARGETED or n.target in (c.get("zone"), lake_of(c))) and
+                         (not n.scope.startswith("lake:") or n.scope[5:] == lake_of(c))]      # (une règle de lac : les prises de ce lac)
                 facts.append(f"Règle en vigueur : {self.norm_words(n)} ; "
                              + (f"enfreinte par {both([fn(c['agent']) for c in broke])}." if broke else "respectée par tous."))
         adopted = of("norm_adopted")                                       # 7. la veillée
         for n in adopted:
-            whose = "" if n["scope"] == "valley" else f" pour le hameau de {n['scope'].split(':', 1)[1]}"
+            whose = "" if n["scope"] == "valley" else " pour " + self.scope_words(n["scope"])
             facts.append(f"À la veillée, règle adoptée{whose} : {n.get('text') or 'pas plus de %g t par pêcheur' % n['quota']} "
                          f"dès la saison {n['effective_season']} ({len(n['supporters'])} soutiens).")
         if of("assembly_start") and not adopted:

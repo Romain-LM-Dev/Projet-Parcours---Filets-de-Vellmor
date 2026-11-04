@@ -48,6 +48,7 @@ class IndicatorEngine:
         self.season = 0
         self.catches: dict[int, dict[str, float]] = defaultdict(dict)
         self.catch_ids: dict[int, list[str]] = defaultdict(list)
+        self.fished: dict[int, dict[str, str]] = defaultdict(dict)        # saison -> pêcheur -> lac où il a pêché (`catch.lake`)
         self.norms: list[dict] = []                 # historique des normes adoptées
         self.breaches: dict[int, dict[str, set]] = defaultdict(dict)       # saison -> pêcheur -> règles de pêche enfreintes (`catch.breach`)
         self.promise_outcomes: list[dict] = []
@@ -107,6 +108,8 @@ class IndicatorEngine:
             s = ev["season"]
             self.catches[s][p["agent"]] = self.catches[s].get(p["agent"], 0.0) + p["landed"]
             self.catch_ids[s].append(ev["event_id"])
+            if p.get("lake"):
+                self.fished[s][p["agent"]] = p["lake"]            # (la règle d'un lac ne touche que ceux qui y pêchent)
             if p.get("breach"):
                 self.breaches[s].setdefault(p["agent"], set()).update(p["breach"])
             # obsolescence : ce qui a changé dans le lac entre l'observation et l'action (C5, C7)
@@ -175,10 +178,11 @@ class IndicatorEngine:
     # ------------------------------------------------------------------ calculs
     def _rules_for(self, fisher: str, season: int) -> list[dict]:
         """Les règles en vigueur pour ce pêcheur à cette saison, de tout type : la dernière de chaque (type, cible) ; celle de son
-        village l'emporte sur celle de la vallée ; une règle à durée s'éteint après `until_season`."""
+        village l'emporte sur celle de la vallée, et celle du lac où il a pêché sur les deux ; une règle à durée s'éteint après
+        `until_season`."""
         hamlet = self.fishers.get(fisher, {}).get("hamlet")
         best: dict[tuple, dict] = {}
-        for scope in ("valley", f"hamlet:{hamlet}"):
+        for scope in ("valley", f"hamlet:{hamlet}", f"lake:{self.fished[season].get(fisher)}"):
             for i, n in enumerate(self.norms):
                 if n["scope"] == scope and n["effective_season"] <= season and                         (n.get("until_season") is None or season <= n["until_season"]):
                     best[(n.get("kind", "quota"), n.get("target"))] = {**n, "_i": i}
