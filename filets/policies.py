@@ -234,9 +234,10 @@ def sanction_rule(archetype: str, s: dict, judged: dict[str, int]) -> dict:
 
 def declare_rule(archetype: str, s: dict, v: float) -> tuple[float, str]:
     """Ce que le pêcheur dit à l'ancien avoir pêché. Le taiseux, qui pêche au-delà de la règle, déclare la règle, sauf si l'un de
-    ses mensonges vient d'être découvert ; les autres disent vrai."""
+    ses mensonges vient d'être découvert ; les autres disent vrai. Il ne cache que ce qui vaut le risque (au moins une tonne) :
+    pour moins, il dit sa prise."""
     quota = s.get("quota")
-    if archetype == "taiseux" and quota is not None and v > quota and not s.get("exposed"):
+    if archetype == "taiseux" and quota is not None and v - quota >= 1.0 and not s.get("exposed"):
         return round(max(s.get("min_catch", 0.0), min(v, quota)), 1), "taiseux : déclare la règle, pas sa prise"
     return v, "déclare sa vraie prise"
 

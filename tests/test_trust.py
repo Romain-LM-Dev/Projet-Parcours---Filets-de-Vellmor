@@ -383,3 +383,37 @@ def test_a_catch_a_few_kilos_above_the_displayed_limit_is_not_an_invalid_value(t
     import inspect
     src = inspect.getsource(decide_catch)
     assert "hi + 0.05" in src                                   # la tolérance d'arrondi est dans le bornage
+
+
+# ============================================================ un mensonge est une décision, pas un écart de mesure
+def _decision(stock=50.0):
+    return {"event_id": "d0", "payload": {"observed": {"stock_estimate": stock, "stock_true": stock}}}
+
+
+def test_a_good_day_makes_no_lie_and_a_liar_hides_what_he_meant_to_hide(tmp_path):
+    """Sans cacher : bonne ou mauvaise journée, il déclare sa prise réelle. En cachant 1,5 t : il cache 1,5 t, quelle que soit la
+    prise ; cacher 0,2 t volontairement est un mensonge de 0,2 t."""
+    from filets.world import MIN_LIE_T
+    world, bus, _ = make_world(tmp_path, "bonne-journee", economy__luck=0.4, climate__enabled=True, population__elder=False,
+                               lake__capacity=100.0)
+    a, b, c = world.fishers[:3]
+    for ag, yields in ((a, [1.4] * 6), (b, [0.7] * 6), (c, [1.0] * 6)):
+        ag.outings[1] = [{"day": 1.0 + i, "weather": "ordinaire", "luck": 1.0, "yield": y} for i, y in enumerate(yields)]
+    world.apply_catch(a, 3.0, _decision(), 0.0, declared=3.0)
+    world.apply_catch(b, 3.0, _decision(), 0.0, declared=3.0)
+    assert a.declared[1] == a.catches[1] and b.declared[1] == b.catches[1] and not world.lies
+    world.apply_catch(c, 3.0, _decision(), 0.0, declared=1.5)
+    lie = next(iter(world.lies.values()))
+    assert abs(lie["landed"] - lie["declared"] - 1.5) < 0.02
+    d = world.fishers[3]
+    d.outings[1] = c.outings[1]
+    world.apply_catch(d, 3.0, _decision(), 0.0, declared=2.8)
+    lie_d = [x for x in world.lies.values() if x["agent"] == d.id]
+    assert len(lie_d) == 1 and abs(lie_d[0]["landed"] - lie_d[0]["declared"] - 0.2) < 0.02 and 0.2 > MIN_LIE_T
+
+
+def test_no_recorded_lie_is_below_the_measurement_threshold_over_six_seasons(tmp_path):
+    from filets.world import MIN_LIE_T
+    world, bus, _ = make_world(tmp_path, "six-saisons", seasons=6, time__mode="sync", economy__luck=0.4, climate__enabled=True)
+    asyncio.run(world.run())
+    assert all(x["landed"] - x["declared"] >= MIN_LIE_T for x in world.lies.values())

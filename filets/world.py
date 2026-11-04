@@ -82,6 +82,8 @@ PATROL_CAPTAINS = ["Aubry", "Berthe", "Corentin", "Dalia"]       # les capitaine
 EVIDENCE = {"patrouille": 3.0, "temoin": 1.0, "depart": 1.0, "train_de_vie": 0.5, "comptes": 0.5}
 HOW = {"patrouille": "la patrouille du lac a mesuré sa barque", "temoins": "des voisins l'ont vu",
        "indices": "les indices concordaient"}
+# Tolérance de mesure (arrondis) : en dessous, un écart entre prise et déclaration n'est pas une décision de cacher, donc pas un mensonge.
+MIN_LIE_T = 0.05
 PATROL_ACTIONS = ("patrouille", "fin_patrouille")      # les propositions du conseil qui ne visent aucun pêcheur
 BREACH_WORD = {"quota": "quota dépassé", "reserve": "pêche dans la zone réservée", "repos": "pêche dans le lac au repos",
                "sorties": "trop de sorties en mer", "bateau": "trop de poisson pour la taille de bateau permise"}
@@ -1162,7 +1164,7 @@ class World:
             elif broke:
                 out.append(f"saison {s} : tu as pêché {landed:g} t contre la règle ({' ; '.join(BREACH_WORD[k] for k in broke)}) ; "
                            + ("la vallée l'a établi." if known else "personne ne le sait, pour l'instant."))
-            elif landed - said > 0.05:
+            elif landed - said >= MIN_LIE_T:
                 out.append(f"saison {s} : tu as pêché {landed:g} t et déclaré {said:g} t à l'ancien ; "
                            + ("la vallée a établi ce mensonge." if known else "personne ne le sait, pour l'instant."))
             elif known:
@@ -1535,12 +1537,15 @@ class World:
                           source_event_id=ev["event_id"])
             return ev
         # en rentrant, il déclare sa prise à l'ancien : la part qu'il comptait avouer (une prise rationnée, dans la même proportion)
-        said = landed if declared is None or requested <= 0 else round(landed * min(1.0, max(0.0, declared) / requested), 2)
+        # ce qu'il comptait cacher, en tonnes (prise visée - déclaration voulue), est caché tel quel : une bonne ou mauvaise journée
+        # ne change pas la vérité qu'il disait. Sous MIN_LIE_T, c'est un arrondi, pas une décision : il déclare sa prise.
+        hidden = 0.0 if declared is None else max(0.0, requested - max(0.0, declared))
+        said = landed if hidden < MIN_LIE_T else round(max(0.0, landed - hidden), 2)
         rep = self.events.emit("report", {"agent": agent.id, "hamlet": agent.profile.hamlet, "declared": said,
                                           "landed": landed, "catch_event_id": ev["event_id"]}, actor=agent.id)
         self.reports[(agent.id, season)] = rep
         agent.declared[season] = said
-        if landed - said > 0.05:
+        if landed - said >= MIN_LIE_T:
             self.lies[rep["event_id"]] = {"agent": agent.id, "season": season, "declared": said, "landed": landed,
                                           "found_t": None, "report_event_id": rep["event_id"]}
         note = f"J'ai pêché {landed:g} t cette saison ; le lac m'a semblé contenir environ {stock_observed:.0f} t. {outings_text(outs)}"
@@ -1562,7 +1567,7 @@ class World:
             note += f" J'en visais {requested:g} : {day_word(factor)} pêche."
         elif landed + 1e-6 < requested * ration or ration < 1:
             note += f" J'en voulais {requested:g}, je n'ai pas pu tout prendre."
-        if landed - said > 0.05:
+        if landed - said >= MIN_LIE_T:
             note += f" J'ai déclaré {said:g} t à l'ancien."
         self.remember(agent, note, "peche", 0.6, source_event_id=ev["event_id"])
         return ev
