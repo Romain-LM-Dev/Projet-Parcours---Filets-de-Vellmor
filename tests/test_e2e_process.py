@@ -93,7 +93,7 @@ def test_a_player_session_against_a_real_engine_process(tmp_path):
         # --- 1. à la connexion : le catalogue, puis l'état du salon
         await c.until(lambda: c.of("catalog") and c.status.get("state") == "idle", 20, "salon ouvert")
         cat = c.of("catalog")[0]
-        assert cat["defaults"]["mode"] == "sync" and len(cat["base_population"]) == 8
+        assert cat["defaults"].get("mode", "unique") in ("sync", "unique") and len(cat["base_population"]) == 8
         assert [m["topic"] for m in c.messages[:3]] == ["catalog", "status", "hello"]
         assert c.status["lobby"] is True and c.status["controls"] is True
 

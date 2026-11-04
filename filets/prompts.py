@@ -456,7 +456,7 @@ def context_block(obs: dict, brief: bool = False) -> str:
 
 
 def lake_options_block(obs: dict) -> str:
-    """Les autres lacs, quand on peut y aller : ce qu'on en croit d'ici, la route (une sortie plus longue, donc moins de prise, et de quoi
+    """Les autres lacs, quand on peut y aller : ce qu'on en croit d'ici, la route (des jours de mer : des sorties en moins, et de quoi
     la payer) et ce que le lac laisserait viser là-bas. Le pêcheur choisit : son lac est celui de son village, rien ne l'y oblige."""
     opts = obs.get("lake_options")
     if not opts:
@@ -467,8 +467,8 @@ def lake_options_block(obs: dict) -> str:
     state = f" : il est à {100 * obs['stock_estimate'] / cap:.0f} % ({lake_level(obs['stock_estimate'], cap, obs.get('collapse_ratio', 0.05))}), " \
             f"tu n'y pourrais viser que jusqu'à {cap_text(here)} t cette saison" if cap else ""
     lines = [f"{o['label']} : d'ici, on le dit à {100 * o['ratio']:.0f} % ({lake_level(o['est'], o['capacity'])}) ; à {o['days']:.1f} jour "
-             f"de route, chaque sortie dure {1 + 2 * o['days']:.1f} fois plus longtemps : tu ramènerais environ {100 * o['factor']:.0f} % de "
-             f"ce que la même sortie rapporterait chez toi, et la route te coûterait {o['cost']:.0f} écus ({o['cost'] / price:.1f} t de "
+             f"de route (aller et retour compris, {2 * o['days']:.1f} jour{'s' if o['days'] > 0.5 else ''} en mer), tu perdrais {o['lost']} sortie{'s' if o['lost'] > 1 else ''} "
+             f"sur la saison : tu ramènerais environ {100 * o['factor']:.0f} % de ce que tu rapporterais chez toi, et la route te coûterait {o['cost']:.0f} écus ({o['cost'] / price:.1f} t de "
              f"poisson) ; tu y viserais jusqu'à {cap_text(o['hold'])} t, soit au mieux "
              f"{max(0.0, o['hold'] * o['factor'] - o['cost'] / price):.1f} t une fois la route payée (contre {here:.1f} t au mieux chez toi), "
              "avec les pêcheurs de là-bas" + (" ; MAIS la pêche y est interdite cette saison (règle votée)" if o.get("closed") else "")
@@ -621,19 +621,12 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     sanctions = ("Propositions d'exclure, de réautoriser ou de patrouille sur la table :\n" + _bullets(obs["sanctions"]) + "\n\n"
                  if obs.get("sanctions") else "")
     who_line = "".join(f"{x}\n" for x in (obs.get("delegate"), obs.get("patrol_line")) if x)
-    if obs.get("independent"):
-        # asynchrone : chacun s'exprime de son côté ; il n'entend rien, ne voit rien de ce que les autres déposent avant le vote
-        room = ("Chacun s'exprime ce soir de son côté, sans entendre les autres : tu ne sais pas ce qu'ils diront. Tous voteront "
-                "ensuite sur tout ce qui aura été proposé.\n\n")
-        acts = ("À toi de parler. Tu peux proposer une règle, promettre, accuser"
-                + sanction_acts)
-    else:
-        direct = (f"On s'est adressé à toi :\n{_bullets(obs['addressed'])}\n\n" if obs.get("addressed") else "")
-        room = (f"Ce qui a déjà été dit ce soir :\n{transcript}\n\n{direct}Propositions de règle sur la table :\n{proposals}\n\n"
-                f"{sanctions}")
-        acts = ("À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser"
-                + sanction_acts)
-    turn = "" if obs.get("independent") else f", tour de parole {obs['round']}"
+    direct = (f"On s'est adressé à toi :\n{_bullets(obs['addressed'])}\n\n" if obs.get("addressed") else "")
+    room = (f"Ce qui a déjà été dit ce soir :\n{transcript}\n\n{direct}Propositions de règle sur la table :\n{proposals}\n\n"
+            f"{sanctions}")
+    acts = ("À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser"
+            + sanction_acts)
+    turn = f", tour de parole {obs['round']}"
     ask = (
         f"Veillée chez l'ancien ({obs['scope_label']}){turn}. Présents : {people}.\n\n"
         f"{room}{who_line}{acts}"

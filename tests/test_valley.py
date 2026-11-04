@@ -373,5 +373,5 @@ def test_the_catalog_offers_the_new_settings():
     assert cat["limits"]["villages"] == [1, 8] and cat["village_names"][:4] == cat["hamlets"]
     assert [c["id"] for c in cat["councils"]] == ["delegates", "all"]
     assert [m["id"] for m in cat["communications"]] == ["valley", "hamlet", "none"]
-    sync, asyn = (m["detail"] for m in cat["modes"])
-    assert "dépendants" in sync and "indépendants" in asyn
+    # un seul mode de temps (docs/temps.md) : le menu n'en propose plus le choix
+    assert "modes" not in cat and cat["defaults"]["mode"] == "unique"

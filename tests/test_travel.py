@@ -26,7 +26,7 @@ def kinds(events, kind):
 
 def option(name="Orsane", ratio=1.0, hold=4.0, days=0.6, cost=70.0):
     return {"name": name, "label": f"Lac d'{name}", "est": 100 * ratio, "ratio": ratio, "capacity": 100.0, "fishers": 4,
-            "days": days, "factor": round(1 / (1 + 2 * days), 3), "cost": cost, "hold": hold}
+            "days": days, "lost": round(6 * (1 - 1 / (1 + 2 * days))), "factor": round(1 / (1 + 2 * days), 3), "cost": cost, "hold": hold}
 
 
 # ============================================================ la route
@@ -49,18 +49,20 @@ def test_the_lake_centres_of_the_engine_are_those_of_the_map():
         assert found == centres, (n, found)
 
 
-def test_a_longer_outing_catches_less_and_the_road_costs_money(tmp_path):
+def test_the_road_costs_outings_and_money(tmp_path):
     world, bus, _ = make_world(tmp_path, "route", population__fishers=8, lake__lakes=BIG_AND_POOR, economy__luck=0.0)
     home, away = world.lakes["Vellmor"], world.lakes["Orsane"]
     days = world.distance(home, away)
     assert days == pytest.approx(0.38 * 1.5) and world.distance(home, home) == 0.0
-    assert world.travel_factor(0.0) == 1.0 and world.travel_factor(1.0) == pytest.approx(1 / 3)
     assert world.travel_cost(days) == pytest.approx(10 * 2 * days * 6)
     a = next(f for f in world.fishers if world.lake_of(f) is home)
     here = world.outings(a, 1)
     a.outings.clear()
     there = world.outings(a, 1, lake=away)
-    assert [t["yield"] for t in there] == pytest.approx([h["yield"] * world.travel_factor(days) for h in here], abs=0.002)
+    assert [t["yield"] for t in there] == pytest.approx([h["yield"] for h in here[:len(there)]], abs=0.002)      # chaque sortie rapporte pareil…
+    assert len(there) < len(here) and len(there) == len(world.outing_days(a, days))                                # … mais la route en prend
+    opt = next(o for o in world.lake_options(a, 90.0, 0.0) if o["name"] == "Orsane")
+    assert opt["lost"] == len(here) - len(there) and opt["factor"] == pytest.approx(len(there) / len(here), abs=1e-3)
 
 
 def test_catching_in_another_lake_empties_that_lake_and_pays_the_road(tmp_path):
@@ -80,7 +82,7 @@ def test_catching_in_another_lake_empties_that_lake_and_pays_the_road(tmp_path):
     assert ev["travel_days"] == pytest.approx(days, abs=0.01) and ev["travel_cost"] == pytest.approx(world.travel_cost(days), abs=0.1)
     assert ev["stock_observed"] == 77.0 and ev["stock_before"] == 100.0 and away.stock < 100.0 and home.stock == 100.0
     assert a.wealth == pytest.approx(wealth + ev["landed"] * 100 - world.travel_cost(days))
-    assert ev["landed"] == pytest.approx(3.0 * world.travel_factor(days), abs=0.05)         # la route a pris du temps de pêche
+    assert len(ev["outings"]) < len(world.outing_days(a)) and ev["landed"] < 3.0                # la route a pris des sorties
     assert a.lake_choice[world.clock.season_of()] == "Orsane"
     trip = world.trips[world.clock.season_of()][-1]
     assert trip["zone"] == "large-Orsane" and world.zone_lake(trip["zone"]) is away
@@ -147,7 +149,7 @@ def test_an_ai_sees_the_other_lakes_the_road_and_what_it_costs(tmp_path):
     text = asks[0]["user"]
     assert "Tu pêches d'ordinaire dans le lac de Vellmor, celui de ton village" in text
     assert re.search(r"Lac d'Orsane : d'ici, on le dit à \d+ %", text)
-    assert re.search(r"à 0\.6 jour de route, chaque sortie dure 2\.1 fois plus longtemps : tu ramènerais environ 47 %", text)
+    assert re.search(r"à 0\.6 jour de route \(aller et retour compris, 1.1 jours en mer\), tu perdrais \d sorties? sur la saison : tu ramènerais environ \d+ %", text)
     assert re.search(r"la route te coûterait 68 écus \(0\.7 t de poisson\) ; tu y viserais jusqu'à [\d.]+ t, soit au mieux [\d.]+ t une fois "
                      r"la route payée \(contre [\d.]+ t au mieux chez toi\)", text)
     assert re.search(r"\"prise\": <tonnes dans le lac que tu choisis : entre [\d.]+ et [\d.]+ chez toi ; jusqu'à [\d.]+ t dans le lac d'Orsane>",

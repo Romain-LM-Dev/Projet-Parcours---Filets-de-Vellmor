@@ -248,16 +248,52 @@ def test_rule_agents_want_a_patrol_according_to_their_character():
     assert not patrol_vote("nouveau_venu", 2, "patrouille") and patrol_vote("nouveau_venu", 3, "patrouille")     # il rechigne à payer
 
 
-# ============================================================ synchrone / asynchrone
-def test_synchronous_dialogues_depend_on_each_other(tmp_path):
-    """À tour de rôle : chacun entend tout ce que les précédents ont dit, et rien de plus."""
+# ============================================================ la veillée au fil de l'eau
+def test_replies_are_prepared_together_and_spoken_one_at_a_time(tmp_path):
+    """Tous préparent sur le compte rendu du début ; une seule personne parle à la fois, `speech_minutes` chacune ; chacun entend ceux
+    qui ont parlé avant elle n'est dit que si sa réplique a été préparée après (`heard` : ce que son auteur savait en la préparant)."""
     rec = Recorder()
-    world, events, _ = fake_game(tmp_path, "sync", rec, population=THREE_VILLAGES, seasons=1, elder=True,
-                                 scenario__assembly_rounds=1)
-    heard = [len(transcript_lines(u)) for u in speeches(rec)]
-    assert heard == list(range(len(heard))) and len(heard) == 4              # l'ancien, puis trois élus : 0, 1, 2, 3 paroles entendues
-    first, later = kinds(events, "utterance")[0], kinds(events, "utterance")[-1]
-    assert first["payload"]["heard"] == [] and len(later["payload"]["heard"]) == 3
+    world, events, _ = fake_game(tmp_path, "fil", rec, population=THREE_VILLAGES, seasons=1, elder=True, scenario__assembly_rounds=1)
+    assert [len(transcript_lines(u)) for u in speeches(rec)] == [0, 0, 0, 0]          # préparées toutes sur la même salle
+    spoken = kinds(events, "utterance")
+    assert [len(u["payload"]["heard"]) for u in spoken] == [0, 0, 0, 0]       # (aucune ne répond à une autre)
+    times = [u["sim_time"] for u in spoken]
+    assert all(b - a == pytest.approx(20 / 1440, abs=2e-6) for a, b in zip(times, times[1:]))     # l'un après l'autre, 20 minutes chacun
+    assert times[0] == pytest.approx(world.T["assembly_day"] + 20 / 1440, abs=2e-6)
+
+
+def test_the_order_of_speech_is_the_same_in_every_game_of_the_same_seed(tmp_path):
+    def order(run_id):
+        world, events, _ = fake_game(tmp_path, run_id, Recorder(), population=THREE_VILLAGES, seasons=1, elder=True)
+        return [u["payload"]["speaker"] for u in kinds(events, "utterance")]
+    assert order("o1") == order("o2")
+
+
+def test_a_reply_nobody_answers_is_not_prepared_again(tmp_path):
+    rec = Recorder()
+    fake_game(tmp_path, "sans-echo", rec, population=THREE_VILLAGES, seasons=1, elder=True, scenario__assembly_rounds=1)
+    assert len(speeches(rec)) == 4                       # une préparation par participant, aucune de plus
+
+
+def test_someone_who_is_spoken_to_speaks_next_on_the_new_account(tmp_path):
+    rec = Recorder(speech={"destinataire": "F02"})
+    world, events, _ = fake_game(tmp_path, "adresse2", rec, population=THREE_VILLAGES, seasons=1, scenario__council="all")
+    order = [u["payload"]["speaker"] for u in kinds(events, "utterance")]
+    first_other = next(i for i, who in enumerate(order) if who != "F02")
+    assert order[first_other + 1] == "F02" or order[0] == "F02"      # dès qu'on lui a parlé, c'est à elle
+    again = [u for u in kinds(events, "utterance") if u["payload"]["speaker"] == "F02" and u["payload"]["round"] == 2]
+    assert again and again[0]["payload"]["heard"]                    # préparée de nouveau : elle entend ce qu'on lui a dit
+
+
+def test_two_village_evenings_run_side_by_side(tmp_path):
+    rec = Recorder()
+    world, events, _ = fake_game(tmp_path, "deux", rec, population=THREE_VILLAGES, seasons=1, scenario__communication="hamlet")
+    by_scope = {}
+    for u in kinds(events, "utterance"):
+        by_scope.setdefault(u["payload"]["scope"], []).append(u["sim_time"])
+    assert len(by_scope) >= 2
+    starts = {min(t) for t in by_scope.values()}
+    assert len({round(t, 3) for t in starts}) == 1 or max(starts) - min(starts) < 20 / 1440      # chaque village a sa propre salle, qui s'ouvre à la même heure
 
 
 def test_synchronous_speakers_are_told_what_was_said_to_them(tmp_path):

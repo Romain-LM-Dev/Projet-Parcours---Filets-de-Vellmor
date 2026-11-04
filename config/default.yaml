@@ -129,6 +129,8 @@ time:
   # le jour de départ de chaque pêcheur est tiré de la graine dans cet intervalle (jours après l'ouverture) ; sa décision de prise a
   # ce jour pour horizon (ancien nom : async_offset_days)
   departure_spread_days: [0.0, 4.0]
+  # la veillée : une seule personne parle à la fois, et une réplique dure ce nombre de minutes simulées
+  speech_minutes: 20
   # rythme d'affichage : heures simulées par seconde réelle (à ×1). Il ne règle que ce que montre l'interface : la latence d'un LLM
   # n'a plus aucun effet sur le monde.
   sim_hours_per_second: 3

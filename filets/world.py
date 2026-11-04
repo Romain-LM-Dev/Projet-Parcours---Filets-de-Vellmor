@@ -384,6 +384,14 @@ class World:
                                     if a.profile.kind == "llm" and a.profile.tier})
 
     # ------------------------------------------------------------ utilitaires
+    def heal_event_ids(self, renamed: dict[str, str]) -> None:
+        """Les événements d'une décision parallèle reçoivent leur identifiant définitif quand ils sont émis (voir `EventFactory.flush`) :
+        ce que les agents ont retenu de l'identifiant provisoire est corrigé ici."""
+        for a in self.agents.values():
+            for e in a.stock_seen:
+                if e["event_id"] in renamed:
+                    e["event_id"] = renamed[e["event_id"]]
+
     def incident(self, agent: str, itype: str, detail: str, handled_by: str, call_id: str | None = None):
         self.events.emit("incident", {"agent": agent, "incident_type": itype, "detail": detail[:300],
                                       "handled_by": handled_by, "llm_call_id": call_id}, actor=agent)
@@ -458,12 +466,6 @@ class World:
         names = list(self.lakes)
         return lake_distance(len(names), names.index(a.name), names.index(b.name), self.travel_days)
 
-    @staticmethod
-    def travel_factor(days: float) -> float:
-        """Ce qu'une sortie rapporte, comparée à la même sortie chez soi, quand la route fait `days` jours à l'aller : la sortie dure
-        1 + 2 × `days` jours au lieu d'un, le temps de pêche n'en est que la part correspondante."""
-        return 1.0 / (1.0 + 2.0 * days)
-
     def travel_cost(self, days: float) -> float:
         """Ce que la route coûte pour la saison : `economy.travel_cost` écus par jour de mer, aller et retour, à chaque sortie."""
         return self.travel_price * 2.0 * days * max(1, int(self.econ.get("outings", 6)))
@@ -488,7 +490,8 @@ class World:
                         "rules": [self.norm_words(n) + (" (règle de ce lac)" if n.scope.startswith("lake:") else "")
                                   for n in view["norms"].values()],
                         "fishers": self.lake_fishers[lake.name], "days": round(days, 2),
-                        "factor": round(self.travel_factor(days), 3), "cost": round(self.travel_cost(days), 1),
+                        "lost": len(self.outing_days(agent)) - len(self.outing_days(agent, days)),
+                        "factor": round(len(self.outing_days(agent, days)) / max(1, len(self.outing_days(agent))), 3), "cost": round(self.travel_cost(days), 1),
                         "hold": round(self.hold_of(agent, min(far, lake.capacity), lake), 2)})
         return out
 
@@ -946,6 +949,15 @@ class World:
         """Le temps de chaque jour de la fenêtre de pêche de la saison, le même pour tout le lac (voir `Climate.calendar`)."""
         return self.climate.calendar(season, int(self.T["fishing_close_day"]))
 
+    def outing_days(self, agent: Agent, route: float = 0.0) -> list[float]:
+        """Les jours de départ de ses sorties : espacées pareil chez soi et ailleurs, de son départ à la fermeture ; ailleurs, l'aller
+        les décale de `route` jours, et celles dont le retour (encore `route` jours) tomberait après la fermeture sont perdues."""
+        n, (lo, hi) = max(1, int(self.econ.get("outings", 6))), (self.T["fishing_open_day"], self.T["fishing_close_day"])
+        start = lo + agent.offset_days
+        step = max(0.0, hi - 1.0 - start) / max(1, n - 1)           # (une sortie dure un jour)
+        days = [round(start + k * step + route, 2) for k in range(n)]
+        return [d for d in days if d + 1.0 <= hi - route + 1e-9]
+
     def outings(self, agent: Agent, season: int, stock: float | None = None, lake: Lake | None = None) -> list[dict]:
         """Les sorties de ce pêcheur cette saison : d'un jour chacune, étalées de son départ (`offset_days`, tiré dans
         `time.departure_spread_days`) à la fermeture de la pêche. Dans un autre lac, la route ajoute ses jours à l'aller et au retour :
@@ -960,13 +972,10 @@ class World:
             return agent.outings[season]
         seed, boat = self.cfg["run"]["seed"], agent.profile.boat
         amp, keep = float(self.econ.get("luck", 0.0)), float(self.econ.get("luck_streak", 0.5))
-        n, (lo, hi) = max(1, int(self.econ.get("outings", 6))), (self.T["fishing_open_day"], self.T["fishing_close_day"])
+        n = max(1, int(self.econ.get("outings", 6)))
         lake = lake or self.lake_of(agent)           # le lac où il pêche (le sien, sauf s'il est allé ailleurs)
-        route = self.distance(self.lake_of(agent), lake)
-        first = lo + agent.offset_days + route                 # début de sa première sortie
-        step = max(0.0, hi - route - 1.0 - first) / max(1, n - 1)       # (une sortie dure un jour)
+        slots = self.outing_days(agent, self.distance(self.lake_of(agent), lake))       # (la route prend des jours : des sorties en moins)
         base, weather = self.climate.yield_for(boat), self.weather(season)
-        base *= self.travel_factor(self.distance(self.lake_of(agent), lake))      # la route prend du temps de pêche
         if amp > 0:
             ratio = (lake.stock if stock is None else stock) / lake.capacity
             base *= (1 + SKILL_STEP * (min(max(agent.profile.experience, 0), 40) - 15)) * \
@@ -976,9 +985,9 @@ class World:
         mood = rng.gauss(0, 1)
         outs = []
         for k in range(n):
-            day = round(first + k * step, 2)
-            if day + 1.0 > hi - route + 1e-9:
-                break                                  # elle finirait après la fermeture : pas planifiée
+            if k >= len(slots):
+                break
+            day = slots[k]
             label = weather[min(int(day), len(weather) - 1)]
             mood = max(-2.5, min(2.5, keep * mood + fresh * rng.gauss(0, 1)))
             luck = max(0.1, 1 + amp * (0.6 * agent.form + 0.8 * mood))
@@ -1539,7 +1548,8 @@ class World:
         # ce que le lac lui laisse prendre : sa part du poisson qu'il y avait à l'ouverture de la saison (le même pour tous, quel que
         # soit l'ordre des retours ; ceux qui rentrent tard peuvent trouver le lac déjà vidé par les autres)
         hold = self.hold_of(agent, self.season_stock[lake.name] if stock_at_action is None else stock_at_action, lake)
-        wanted = [min(requested * o["yield"] * spot, hold) / len(full) * ration for o in outs]     # (moins de sorties : moins de prise)
+        n_all = max(len(full), len(self.outing_days(agent)))             # (les sorties qu'il ferait chez lui)
+        wanted = [min(requested * o["yield"] * spot, hold) / n_all * ration for o in outs]     # (moins de sorties, ou la route : moins de prise)
         if zone == agent.profile.hamlet:
             agent.spot, agent.spots[cell] = cell, spot
         return Trip(agent, requested, decision, horizon, declared, lake, home, days, zone, cell, spot, view, pick, place, secret,
@@ -1568,7 +1578,7 @@ class World:
         tonnes = [round(g, 3) for g in trip.got]
         if tonnes:
             tonnes[-1] = round(landed - sum(tonnes[:-1]), 3)
-        factor = sum(o["yield"] for o in outs) / len(full) * spot if outs else 0.0
+        factor = sum(o["yield"] for o in outs) / max(len(full), len(self.outing_days(trip.agent))) * spot if outs else 0.0
         luck = sum(o["luck"] for o in outs) / len(outs) if outs else 1.0
         # ce qu'il a enfreint (la vérité, que les indices diront peut-être) : pêche dans un lac au repos ou une zone réservée, trop
         # de sorties, plus de prise que la cale permise

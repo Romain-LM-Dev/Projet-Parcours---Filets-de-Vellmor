@@ -117,3 +117,31 @@ def test_the_road_to_another_lake_adds_its_days_to_both_ends(tmp_path):
     assert there[0]["day"] == pytest.approx(here[0]["day"] + route, abs=0.01)                    # l'aller
     assert there[-1]["day"] + 1.0 + route <= close + 1e-6 and here[-1]["day"] + 1.0 <= close + 1e-6       # le retour tient avant la fermeture
     assert there[-1]["day"] < here[-1]["day"]
+
+
+def test_events_of_parallel_decisions_come_out_in_queue_order_not_in_answer_order(tmp_path, monkeypatch):
+    """Le premier de la file répond le dernier : ses événements restent les premiers du journal."""
+    orig = ScriptedClient.complete
+    calls = {"n": 0}
+
+    async def uneven(self, model, messages, hint, tier):
+        calls["n"] += 1
+        await asyncio.sleep(0.2 if calls["n"] % 8 == 1 else 0.01 * (calls["n"] % 3))     # inégal, le premier appel est le plus lent
+        return await orig(self, model, messages, hint, tier)
+    monkeypatch.setattr(ScriptedClient, "complete", uneven)
+    _, events = play(tmp_path, "inegal", seasons=1, time__departure_spread_days=[0.0, 0.2])
+    seq = [e["seq"] for e in events]
+    assert seq == sorted(seq) and len(set(seq)) == len(seq)
+    first = [e for e in events if e["type"] == "decision" and e["payload"]["decision_type"] == "catch"]
+    assert [e["actor"] for e in first] == sorted((e["actor"] for e in first), key=lambda a: [x["actor"] for x in first].index(a))
+    _, even = play(tmp_path, "egal", seasons=1, time__departure_spread_days=[0.0, 0.2])
+    order = lambda evs: [(e["type"], e["actor"]) for e in evs if e["type"] in ("decision", "llm_call")]
+    monkeypatch.undo()
+    assert order(events) == order(even)
+
+
+def test_the_evening_has_the_same_journal_in_two_games(tmp_path):
+    def journal(run_id):
+        _, events = play(tmp_path, run_id, seasons=2)
+        return [(e["type"], e["sim_time"], e["actor"]) for e in events if e["type"] in ("utterance", "proposal", "support", "decision")]
+    assert journal("v1") == journal("v2")

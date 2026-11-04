@@ -37,7 +37,7 @@ def test_per_lake_detail_matches_the_raw_events(tmp_path):
             assert d["catch"] == pytest.approx(caught[s][n], abs=1e-3)
         assert sum(d["catch"] for d in v["lakes"].values()) == pytest.approx(v["total_catch"], abs=1e-2)
         assert v["stock"] == pytest.approx(sum(d["stock"] for d in v["lakes"].values()), abs=1e-2)   # les totaux restent
-    assert sum(caught[1].values()) > 0 and len([n for n in caught[1] if caught[1][n] > 0]) == 2
+    assert sum(caught[1].values()) > 0 and len([n for n in caught[1] if caught[1][n] > 0]) >= 1      # (la route coûte des sorties : le lac pauvre se vide vers l'autre)
     gaps = [abs(e["payload"]["stock_at_action"] - e["payload"]["stock_at_horizon"]) / caps[e["payload"]["lake"]]
             for e in ev if e["type"] == "catch"]
     assert eng.last_values["mean_staleness_ratio"] == pytest.approx(statistics.mean(gaps), abs=1e-3)

@@ -26,8 +26,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from .agents import decide_catch, speak
+from .agents import ballot, decide_catch, speak
 from .clock import SimClock
+from .events import EventFactory
 
 # l'ordre des acteurs à instant égal
 MONDE, LACS, PECHEURS, PATROUILLE, CONSEIL, FERMETURE = range(6)
@@ -44,7 +45,6 @@ class Decision:
 
 class SeasonScheduler:
     TICK = 0.02
-    ROUND_STEP = 0.05          # ≈ 1 h 12 simulées entre deux tours de parole
 
     def __init__(self, w, season: int):
         self.w = w
@@ -109,20 +109,30 @@ class SeasonScheduler:
             batch.append(nxt)
             limit = min(limit, t + nxt[4].lag)
         await self.show(batch[0][0])
-        names = [d[4].agent for d in batch]
-        self.think(names, True)
-
-        async def one(t: float, d: Decision):
-            with SimClock.local(t):           # elle se prend à son horizon, quel que soit l'affichage
-                return await d.make()
-        try:
-            results = await self.w.ctl.guard(asyncio.gather(*(one(d[0], d[4]) for d in batch)))
-        finally:
-            self.think(names, False)
-            self.last = time.monotonic()
+        results = await self.parallel([(d[0], d[4].agent, d[4].make) for d in batch])
         for d, res in zip(batch, results):
             with SimClock.local(d[0]):
                 d[4].then(res)
+
+    async def parallel(self, jobs: list[tuple[float, str, Callable[[], Awaitable[Any]]]]) -> list:
+        """Lance ces décisions `(horizon, agent, make)` en même temps. Leurs événements sortent dans l'ordre des `jobs` (celui de la
+        file), et non dans celui où les modèles répondent : à graine égale, même journal, quelle que soit la lenteur de chacun."""
+        names, bufs = [j[1] for j in jobs], [[] for _ in jobs]
+        self.think(names, True)
+
+        async def one(t: float, make, buf: list):
+            with SimClock.local(t), EventFactory.defer(buf):         # elle se prend à son horizon, quel que soit l'affichage
+                return await make()
+        try:
+            results = await self.w.ctl.guard(asyncio.gather(*(one(j[0], j[2], b) for j, b in zip(jobs, bufs))))
+        finally:
+            self.think(names, False)
+            self.last = time.monotonic()
+        for buf in bufs:
+            self.w.events.flush(buf)
+        self.w.heal_event_ids(self.w.events.renamed)
+        self.w.events.renamed.clear()
+        return results
 
     def think(self, names: list[str], on: bool):
         """Qui réfléchit en ce moment (l'interface le montre, dans l'état du moteur)."""
@@ -159,20 +169,40 @@ class SeasonScheduler:
         back = self.t0 + trip.outs[-1]["day"] + 1.0 + trip.days if trip.outs else h + 2 * trip.days
         self.at(back, PECHEURS, a.id, lambda: w.finish_trip(trip))
 
-    # ------------------------------------------------------------------ la veillée (provisoire : tours dépendants)
+    # ------------------------------------------------------------------ la veillée
     async def evening(self):
-        """Chacun parle à son tour et entend ceux qui ont parlé avant lui ; les veillées de villages différents sont indépendantes
-        et se déroulent en parallèle. (Provisoire : elle sera refaite au fil de l'eau, voir `docs/temps.md`.)"""
+        """La veillée au fil de l'eau (docs/temps.md). Les répliques se préparent en parallèle sur le compte rendu du moment ; une
+        seule personne parle à la fois (`time.speech_minutes` chacune), d'abord quelqu'un à qui l'on vient de s'adresser, puis selon la
+        clé de la graine ; une réplique est préparée de nouveau si, avant son tour, on s'est adressé à son auteur ou une autre règle
+        a concurrencé la sienne. Les veillées de villages différents avancent de front : leurs décisions partent ensemble, et
+        leurs effets s'appliquent village par village, dans le même ordre à chaque partie. Puis les bulletins, en parallèle."""
         w, T, t0 = self.w, self.w.T, self.t0
         ta = t0 + T["assembly_day"]
         asms = w.open_assemblies(self.season, t0 + T["assembly_close_day"])
         if not asms:
             return
         w.events.emit("phase", {"name": "assembly", "state": "open"})
-        await asyncio.gather(*(self.village(asm, ta) for asm in asms))
-        with SimClock.local(ta + int(w.scn["assembly_rounds"]) * self.ROUND_STEP):
-            await w.ballots(asms)                      # le bulletin de ceux qui n'ont rien soutenu
-        self.last = time.monotonic()
+        villages = [Village(self, asm, ta) for asm in asms]
+        while True:
+            live = [v for v in villages if not v.done]
+            jobs = [j for v in live for j in v.prep_jobs()]
+            await self.prepare(jobs)
+            picks = [(v, v.pick()) for v in live]
+            redo = []
+            for v, aid in picks:
+                if aid is not None:
+                    rnd, make = v.redo(aid)
+                    if make:
+                        redo.append((v, aid, rnd, v.t, make))
+            await self.prepare(redo)
+            spoke = False
+            for v, aid in picks:
+                spoke = v.speak(aid) or spoke
+            if not spoke and not jobs:
+                break
+        ballots = [(v.t, a.id, lambda a=a, asm=v.asm: ballot(w, a, asm)) for v in villages for a in w.ballot_candidates(v.asm)]
+        if ballots:
+            await self.parallel(ballots)
 
         def close():
             for asm in asms:
@@ -180,21 +210,13 @@ class SeasonScheduler:
             w.events.emit("phase", {"name": "assembly", "state": "close"})
         self.at(t0 + T["assembly_close_day"], CONSEIL, "clôture", close)
 
-    async def village(self, asm, ta: float):
-        w = self.w
-        step = self.ROUND_STEP / (len(asm.participants) + 1)
-        for rnd in range(1, int(w.scn["assembly_rounds"]) + 1):
-            for k, aid in enumerate(asm.participants):
-                await w.ctl.checkpoint()
-                a, h = w.agents[aid], ta + (rnd - 1) * self.ROUND_STEP + k * step
-                with SimClock.local(h):
-                    if w.has_reason_to_speak(a, asm, rnd):
-                        self.think([aid], True)
-                        try:
-                            o = await speak(w, a, asm, rnd, h)
-                        finally:
-                            self.think([aid], False)
-                        w.post_utterance(a, asm, o, rnd, h)
+    async def prepare(self, jobs: list[tuple]):
+        """Prépare ces répliques `(village, agent, tour, horizon, make)` en parallèle et les range, prêtes, dans leur village."""
+        if not jobs:
+            return
+        outs = await self.parallel([(h, aid, make) for v, aid, rnd, h, make in jobs])
+        for (v, aid, rnd, h, _), out in zip(jobs, outs):
+            v.prepared[aid] = (out, h, rnd, len(v.asm.utterances), frozenset(v.asm.proposals))
 
     # ------------------------------------------------------------------ la fin
     def regrowth(self):
@@ -206,3 +228,75 @@ class SeasonScheduler:
             with SimClock.local(t):             # le récit est de la fin de la saison, même s'il s'écrit pendant la suivante
                 await w.narrate(self.season)
         self.recit = asyncio.ensure_future(narrate())
+
+
+class Village:
+    """La veillée d'un village (ou du conseil de la vallée) : qui a préparé quoi, qui a parlé, et l'heure qu'il est dans la salle."""
+
+    def __init__(self, sched: SeasonScheduler, asm, ta: float):
+        self.s, self.w, self.asm, self.t = sched, sched.w, asm, round(ta, 6)
+        self.rounds = int(self.w.scn["assembly_rounds"])
+        self.duration = float(self.w.T.get("speech_minutes", 20)) / 1440.0
+        self.close_t = asm.close_t
+        self.spoken: dict[str, int] = {aid: 0 for aid in asm.participants}
+        self.prepared: dict[str, tuple] = {}         # agent -> (réponse, horizon, tour, paroles connues, propositions connues)
+        self.done = False
+
+    def prep_jobs(self) -> list[tuple]:
+        """Les répliques à préparer maintenant : celles de ceux qui n'en ont pas de prête, ont encore droit à la parole et ont quelque
+        chose à dire (voir `World.has_reason_to_speak`)."""
+        if self.done or self.t + self.duration > self.close_t:
+            return []
+        w, asm = self.w, self.asm
+        out = []
+        for aid in asm.participants:
+            a, rnd = w.agents[aid], self.spoken[aid] + 1
+            if aid not in self.prepared and rnd <= self.rounds and w.has_reason_to_speak(a, asm, rnd):
+                out.append((self, aid, rnd, self.t, lambda a=a, rnd=rnd, h=self.t: speak(w, a, asm, rnd, h)))
+        return out
+
+    def pick(self) -> str | None:
+        """Qui parle ensuite : d'abord celui à qui l'on vient de s'adresser, puis les autres selon la clé de la graine."""
+        if not self.prepared:
+            self.done = True
+            return None
+        last = self.asm.utterances[-1]["payload"]["to"] if self.asm.utterances else None
+        if last in self.prepared:
+            return last
+        return min(self.prepared, key=lambda aid: self.s.key(f"{self.asm.scope}|{aid}"))
+
+    def stale(self, aid: str) -> bool:
+        """Depuis qu'elle est préparée, a-t-on répondu à son auteur (adressé, nommé, accusé) ou concurrencé sa règle ?"""
+        w, asm = self.w, self.asm
+        _, h, _, n_utt, props = self.prepared[aid]
+        new = [u for u in asm.utterances[n_utt:] if u["payload"]["speaker"] != aid]
+        if any(u["payload"]["to"] == aid for u in new) or any(t > h and a == aid for t, a in asm.accused):
+            return True
+        if aid in w.named_fishers([u["payload"]["text"] for u in new]):
+            return True
+        return any(p.author == aid for p in asm.proposals.values()) and \
+            any(p.author != aid and p.id not in props for p in asm.proposals.values())
+
+    def redo(self, aid: str):
+        """(tour, `make`) pour préparer de nouveau la réplique de `aid` si elle est périmée, sinon (tour, None)."""
+        rnd = self.prepared[aid][2]
+        if not self.stale(aid):
+            return rnd, None
+        del self.prepared[aid]
+        a, h = self.w.agents[aid], self.t
+        return rnd, lambda: speak(self.w, a, self.asm, rnd, h)
+
+    def speak(self, aid: str | None) -> bool:
+        if aid is None or aid not in self.prepared:
+            return False
+        out, h, rnd, _, _ = self.prepared.pop(aid)
+        if self.t + self.duration > self.close_t:
+            self.done = True
+            return False
+        w = self.w
+        end = round(self.t + self.duration, 6)         # (arrondi comme le temps des événements : ceux-ci passent avant les horizons suivants)
+        with SimClock.local(end):          # la réplique dure ; ses effets s'appliquent à sa fin
+            w.post_utterance(w.agents[aid], self.asm, out, rnd, h)
+        self.t = end
+        self.spoken[aid] += 1
+        return True

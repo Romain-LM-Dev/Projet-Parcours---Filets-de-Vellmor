@@ -67,3 +67,22 @@ Une simulation à événements discrets.
 - `time.mode` et la commande `set_mode` sont acceptés et ignorés (un avertissement dans le journal du moteur) ; `run_start.mode`
   vaut `"unique"` (le schéma l'accepte en plus de `sync`/`async` pour les anciens journaux).
 - L'interface retire le choix Synchrone / Asynchrone et montre plutôt qui réfléchit en ce moment.
+
+## Choix faits là où la spécification laissait une marge
+
+- **Départ** : `time.departure_spread_days` donne le décalage de chaque pêcheur après `fishing_open_day` ; ses sorties sont espacées
+  pareil chez lui et ailleurs (de son départ à la fermeture, `economy.outings` sorties). Dans un autre lac, l'aller décale chaque sortie
+  de `route` jours et celles dont le retour (encore `route` jours) tomberait après `fishing_close_day` sont perdues : la route
+  se paie en sorties perdues (plus de facteur de rendement), et en écus (`economy.travel_cost`).
+- **Lot de décisions** : une décision porte un délai minimal avant son effet (`lag`, 1 jour pour une prise) ; le lot s'arrête à la première
+  dont l'horizon dépasse ce délai. Leurs événements (`decision`, `llm_call`…) sortent dans l'ordre de la file (mis en attente par
+  `EventFactory.defer`, numérotés à `flush`), pas dans l'ordre des réponses.
+- **Veillée** : toutes les répliques sont préparées d'abord à l'ouverture (`assembly_day`), sur la salle vide. Une réplique, quand elle
+  est dite, dure `time.speech_minutes` (20) et ses effets (parole, proposition, soutien…) s'appliquent à sa fin ; `utterance.heard` est
+  ce que son auteur savait en la préparant. Prochain orateur : celui à qui la dernière réplique s'adressait (s'il a une réplique prête),
+  sinon la clé de la graine (`{graine}|order|{saison}|{village}|{agent}`). Une réplique prête est **préparée de nouveau** si, depuis, on
+  s'est adressé à son auteur (`destinataire`), on l'a nommé ou accusé, ou une autre règle a concurrencé la sienne. Après avoir parlé,
+  chacun prépare sa réplique suivante seulement s'il en a une raison (`World.has_reason_to_speak`, `scenario.quiet_listeners`), au plus
+  `assembly_rounds` répliques. Plus de parole après `assembly_close_day`.
+- **Villages** : les veillées avancent de front (leurs décisions partent ensemble) mais leurs effets s'appliquent village par village, dans
+  l'ordre des assemblées. Puis les bulletins de ceux qui n'ont rien soutenu, en parallèle, et le vote de clôture à `assembly_close_day`.
