@@ -11,7 +11,7 @@ func set_villages(names: Array) -> void:
 
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(0, 34)
+	custom_minimum_size = Vector2(0, 38)
 
 
 func _draw() -> void:
@@ -19,8 +19,8 @@ func _draw() -> void:
 	var x := 10.0
 	var y := size.y / 2.0
 	for h in villages + ["ancien"]:
-		Art.draw_token(self, Vector2(x + 9, y), {"hamlet": h, "role": "ancien" if h == "ancien" else "pecheur",
-			"kind": "llm", "tier": "petit", "name": " "}, 0.7)
+		Art.draw_token(self, Vector2(x + 9, y - 5), {"hamlet": h, "role": "ancien" if h == "ancien" else "pecheur",
+			"kind": "llm", "tier": "petit", "name": " "}, 0.85)
 		var lbl: String = "l'ancien" if h == "ancien" else h
 		draw_string(f, Vector2(x + 22, y + 4), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Art.MUTED)
 		x += 30 + f.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
@@ -32,7 +32,7 @@ func _draw() -> void:
 	for k in kinds:
 		var info: Dictionary = k[0].duplicate()
 		info["name"] = " "
-		Art.draw_token(self, Vector2(x + 9, y), info, 0.7)
+		Art.draw_token(self, Vector2(x + 9, y - 5), info, 0.85)
 		draw_string(f, Vector2(x + 22, y + 4), k[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Art.MUTED)
 		x += 30 + f.get_string_size(k[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
 	x += 10

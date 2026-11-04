@@ -1479,6 +1479,7 @@ func _draw_patrol_boat(ci: CanvasItem, p: Vector2, idx: int) -> void:
 	ci.draw_colored_polygon(PackedVector2Array([p - dir * 2.0 - side * 1.0, p - dir * 2.0 - side * 16.0, p + dir * 8.0 - side * 1.0]),
 		Color("#e9fff6"))
 	ci.draw_line(p - dir * 2.0, p - dir * 2.0 - side * 18.0, Color("#0b1f1a"), 1.4)
+	Art.draw_token(ci, p + Vector2(0, -9), {"role": "patrouille", "kind": "rule"}, 0.7, 1.0, false, 0.0, "row", t + float(idx))
 	ci.draw_colored_polygon(PackedVector2Array([p - dir * 2.0 - side * 18.0, p - dir * 2.0 - side * 24.0 + dir * 4.0,
 		p - dir * 2.0 - side * 24.0 - dir * 4.0]), Color("#ff6a5c"))
 	Art.pill(ci, p + Vector2(-26, 26), "patrouille" if patrol_routes.size() < 2 else "patrouille %d" % (idx + 1), Color(col, 0.9),
@@ -1900,8 +1901,7 @@ func _draw_salon(ci: CanvasItem) -> void:
 			continue
 		var info: Dictionary = agents[id]["info"]
 		var p := _seat(str(id))
-		_ellipse(ci, p + Vector2(2, 2), Vector2(15, 6), Color(0, 0, 0, 0.3))
-		Art.draw_token(ci, p + Vector2(0, -8), info, 1.25, 1.0, id == selected, t)
+		Art.draw_token(ci, p + Vector2(0, -8), info, 1.25, 1.0, id == selected, t, "sit", t + float(hash(str(id)) % 97))
 		if bool(agents[id].get("rep", false)):
 			_star(ci, p + Vector2(0, -42), 7.0, Color("#f2c14e"), 5)
 		var lbl := str(info.get("name", id)).split(" ")[0] + (" · ancien" if str(info.get("role", "")) == "ancien" else "")
@@ -2001,8 +2001,16 @@ func _draw_boat_local(ci: CanvasItem, heading: float, col: Color, fishing: float
 		ci.draw_line(p - dir * 4.0, c + Vector2(-9, 0).rotated(heading), Color(1, 1, 1, 0.4 * fishing), 1.0)
 
 
+func _lbl_hit(r: Rect2, placed: Array) -> bool:
+	for q in placed:
+		if r.intersects(q):
+			return true
+	return false
+
+
 func _draw_tokens(ci: CanvasItem) -> void:
 	var f := Art.font("ui_bold")
+	var placed: Array = []
 	var by_y := order.duplicate()
 	by_y.sort_custom(func(x, y): return _px(agents[x]["pos"]).y < _px(agents[y]["pos"]).y)
 	for id in by_y:
@@ -2013,10 +2021,13 @@ func _draw_tokens(ci: CanvasItem) -> void:
 		if on_water:
 			_draw_boat(ci, p, float(a["heading"]), Art.agent_color(info), float(a["fishing"]),
 				float(BOAT_SCALE.get(str(info.get("boat", "chaloupe")), 1.0)))
-		else:                                   # à terre, le pion se tient debout : son ombre est sur le sol
-			_ellipse(ci, p + Vector2(2, 1), Vector2(12, 5), Color(0, 0, 0, 0.28))
+		var pose := "stand"
+		if on_water:                            # dans la barque : buste seul, il rame ou relève le filet
+			pose = "net" if float(a["fishing"]) > 0.0 else "row"
+		elif not (a["path"] as Array).is_empty():
+			pose = "walk"
 		var stand := Vector2(0, -7) if on_water else Vector2(0, -10)
-		Art.draw_token(ci, p + stand, info, 0.78 if on_water else 1.0, 1.0, id == selected, t)
+		Art.draw_token(ci, p + stand, info, 0.78 if on_water else 1.0, 1.0, id == selected, t, pose, t + float(hash(str(id)) % 97))
 		if bool(a.get("rep", false)):           # l'élu de son village au conseil : un astre doré
 			_star(ci, p + stand + Vector2(0, -24 if not on_water else -22), 6.5, Color("#f2c14e"), 5)
 		if bool(a.get("banned", false)):        # interdit de pêche : un anneau barré rouge
@@ -2028,9 +2039,19 @@ func _draw_tokens(ci: CanvasItem) -> void:
 		var fs := 11
 		var tw := f.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 10
 		var lr := Rect2(p + Vector2(-tw / 2.0, 7), Vector2(tw, fs + 6))
-		Art.box(Color(0.05, 0.07, 0.12, 0.72 if id != hovered else 0.92), 8).draw(ci.get_canvas_item(), lr)
-		ci.draw_string(f, lr.position + Vector2(5, fs + 1.5), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
-			Art.INK if id != selected else Color("#ffffff"))
+		var mine: bool = id == hovered or id == selected
+		var show_lbl := true
+		if not mine:                            # deux étiquettes qui se recouvrent : on décale, ou on masque la plus basse
+			var tries := 0
+			while tries < 3 and _lbl_hit(lr, placed):
+				lr.position.y += fs + 6
+				tries += 1
+			show_lbl = tries < 3
+		if show_lbl:
+			placed.append(lr)
+			Art.box(Color(0.05, 0.07, 0.12, 0.72 if id != hovered else 0.92), 8).draw(ci.get_canvas_item(), lr)
+			ci.draw_string(f, lr.position + Vector2(5, fs + 1.5), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
+				Art.INK if id != selected else Color("#ffffff"))
 		if badges.has(id):
 			Art.pill(ci, p + Vector2(15, -34), badges[id], Art.PROPOSAL, Color("#2a1d05"), 11)
 
@@ -2223,14 +2244,19 @@ func _draw_banner(ci: CanvasItem) -> void:
 		var col: Color = bn["col"]
 		var tw: float = max(tf.get_string_size(bn["title"], HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x,
 			f.get_string_size(bn["sub"], HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x) + 60
+		var fk := 1.0                          # réduction de police si la place manque
 		var bx := size.x / 2 - tw / 2
-		if lakes.size() > 1:               # jamais sur les jauges des lacs (haut droite)
+		if lakes.size() > 1:               # entre la carte météo et les jauges des lacs (haut droite)
+			var room := maxf(size.x - 354.0 - 10.0 - 262.0, 120.0)
+			if tw > room:
+				fk = maxf((room - 24.0) / (tw - 60.0 + 24.0), 0.5)
+				tw = room
 			bx = clampf(bx, 262.0, size.x - 354.0 - 10.0 - tw)
 		var br := Rect2(Vector2(bx, 18 - (1.0 - a) * 10.0), Vector2(tw, 66))
 		Art.box(Color(0.05, 0.07, 0.12, 0.9 * a), 16, Color(col, 0.7 * a), 1, 14).draw(ci.get_canvas_item(), br)
 		ci.draw_rect(Rect2(br.position + Vector2(24, 62), Vector2(tw - 48, 2)), Color(col, 0.8 * a), true)
-		ci.draw_string(tf, br.position + Vector2(0, 34), bn["title"], HORIZONTAL_ALIGNMENT_CENTER, tw, 28, Color(col.lightened(0.3), a))
-		ci.draw_string(f, br.position + Vector2(0, 54), bn["sub"], HORIZONTAL_ALIGNMENT_CENTER, tw, 14, Color(Art.INK, 0.85 * a))
+		ci.draw_string(tf, br.position + Vector2(0, 34), bn["title"], HORIZONTAL_ALIGNMENT_CENTER, tw, int(28 * fk), Color(col.lightened(0.3), a))
+		ci.draw_string(f, br.position + Vector2(0, 54), bn["sub"], HORIZONTAL_ALIGNMENT_CENTER, tw, int(14 * fk), Color(Art.INK, 0.85 * a))
 
 
 ## Le dessus du monde (il suit la caméra) : panneaux, salle de la veillée, feux, liens, pions, étiquettes ; et les mailles (touche G).

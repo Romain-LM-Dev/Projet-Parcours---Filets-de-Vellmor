@@ -125,38 +125,106 @@ static func box(bg: Color, radius: int = 10, border: Color = Color(0, 0, 0, 0), 
 	return sb
 
 
-## Pion d'un agent. Forme = nature de l'agent (rond = LLM, carré arrondi = agent à règles),
-## anneau = taille du modèle (épais doré = grand, fin = petit), couleur = hameau.
+## Ellipse pleine ou anneau (un cercle écrasé : le sol vu en perspective).
+static func _ell(ci: CanvasItem, c: Vector2, rx: float, ry: float, col: Color, w: float = 0.0) -> void:
+	var pts := PackedVector2Array()
+	for i in 17:
+		pts.append(c + Vector2(cos(TAU * i / 16.0) * rx, sin(TAU * i / 16.0) * ry))
+	if w > 0.0:
+		ci.draw_polyline(pts, col, w, true)
+	else:
+		ci.draw_colored_polygon(pts, col)
+
+
+## Un bonhomme. p = centre du corps (les pieds sont à p + 12*scale). Couleur du vêtement = hameau ; chapeau rond = IA,
+## bonnet carré = agent à règles ; anneau doré au sol = grand modèle ; ancien = barbe blanche, manteau long, bâton ;
+## rôle "patrouille" = uniforme sarcelle. pose : stand, walk, sit (veillée), row / net (dans une barque, buste seul).
+## anim : le temps (balancement des bras et des jambes).
 static func draw_token(ci: CanvasItem, p: Vector2, info: Dictionary, scale: float = 1.0, alpha: float = 1.0,
-		selected: bool = false, pulse: float = 0.0) -> void:
+		selected: bool = false, pulse: float = 0.0, pose: String = "stand", anim: float = 0.0) -> void:
 	var role := str(info.get("role", "pecheur"))
 	var kind := str(info.get("kind", "llm"))
 	var tier := str(info.get("tier", ""))
-	var col := agent_color(info)
-	var r := (13.0 if role == "ancien" else 11.0) * scale
-	# ombre portée
-	ci.draw_circle(p + Vector2(1.5, 2.5) * scale, r + 2.0 * scale, Color(0, 0, 0, 0.30 * alpha))
+	var elder := role == "ancien"
+	var patrol := role == "patrouille"
+	var col := Color("#1f8f86") if patrol else agent_color(info)
+	var u := scale * (1.12 if elder else 1.0)
+	var boat := pose == "row" or pose == "net"
+	var drop := (4.0 if pose == "sit" else 5.0 if boat else 0.0) * u
+	var y0 := p.y + 12.0 * scale                          # le sol sous ses pieds
+	var hip := y0 - 10.0 * u + drop
+	var sh := hip - 9.0 * u                               # ligne des épaules
+	var x := p.x
+	var skin := Color("#f0cfa4", alpha)
+	var dark := Color(col.darkened(0.45), alpha)
+	var cc := Color(col, alpha)
+	var sw := sin(anim * 9.0) * 3.2 * u if pose == "walk" else 0.0
+	if not boat:
+		_ell(ci, Vector2(x, y0), 8.0 * u, 3.0 * u, Color(0, 0, 0, 0.28 * alpha))
 	if selected:
-		var halo := r + (7.0 + 2.0 * sin(pulse * 4.0)) * scale
-		ci.draw_arc(p, halo, 0, TAU, 48, Color(1, 1, 1, 0.85 * alpha), 2.0 * scale, true)
-		ci.draw_circle(p, halo, Color(1, 1, 1, 0.08 * alpha))
-	var ring_col := Color("#f6e3a8") if tier == "grand" or role == "ancien" else Color("#f4f1ea")
-	var ring_w := (3.2 if tier == "grand" or role == "ancien" else 1.6) * scale
-	if kind == "rule":
-		var rr := Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0)
-		var sb := box(Color(col, alpha), int(5 * scale), Color(Color("#d9dce6"), alpha), int(max(2.0, 2.4 * scale)))
-		sb.draw(ci.get_canvas_item(), rr)
-		ci.draw_rect(Rect2(p - Vector2(3, 3) * scale, Vector2(6, 6) * scale), Color(1, 1, 1, 0.9 * alpha), true)
-	else:
-		ci.draw_circle(p, r + ring_w * 0.5, Color(ring_col, alpha))
-		ci.draw_circle(p, r - ring_w * 0.5, Color(col, alpha))
-		# reflet
-		ci.draw_circle(p + Vector2(-r * 0.3, -r * 0.35), r * 0.28, Color(1, 1, 1, 0.22 * alpha))
-		var letter := str(info.get("name", "?")).substr(0, 1)
-		var f := font("ui_black")
-		var fs := int(11 * scale) if role != "ancien" else int(13 * scale)
-		ci.draw_string(f, p + Vector2(-r, fs * 0.36), letter, HORIZONTAL_ALIGNMENT_CENTER, r * 2.0, fs,
-			Color(Color("#10131c"), 0.75 * alpha))
+		_ell(ci, Vector2(x, y0), (11.0 + 1.5 * sin(pulse * 4.0)) * u, 4.4 * u, Color(1, 1, 1, 0.9 * alpha), 2.0)
+		ci.draw_circle(Vector2(x, hip - 5.0 * u), 15.0 * u, Color(1, 1, 1, 0.07 * alpha))
+	if tier == "grand" or elder:
+		_ell(ci, Vector2(x, y0), 9.5 * u, 3.6 * u, Color(Color("#f6d878"), alpha), 1.8 * u)
+	var leg := Color("#3a3f52", alpha) if not elder else dark
+	# jambes
+	if not boat:
+		for sd in [-1.0, 1.0]:
+			var foot := Vector2(x + sd * 2.4 * u, y0 - 0.5 * u + (-absf(sw) * 0.3 if sd * sw < 0.0 else 0.0))
+			var top := Vector2(x + sd * 2.0 * u, hip)
+			if pose == "sit":
+				foot = Vector2(x + sd * 3.0 * u, hip + 4.0 * u)
+			else:
+				foot.y -= 0.0
+				foot.x += sd * sw * 0.5
+			ci.draw_line(top, foot, leg, 3.0 * u, true)
+	# bâton de l'ancien
+	if elder:
+		ci.draw_line(Vector2(x + 8.0 * u, y0 + 0.5 * u), Vector2(x + 8.0 * u, sh - 4.0 * u), Color("#8a6238", alpha), 1.8 * u, true)
+	# torse (l'ancien porte un long manteau)
+	var hem := y0 - 2.0 * u if elder and pose != "sit" else hip + 1.0 * u
+	var bw := 5.4 * u if elder else 4.4 * u
+	var torso := PackedVector2Array([Vector2(x - 4.2 * u, sh), Vector2(x + 4.2 * u, sh), Vector2(x + bw, hem), Vector2(x - bw, hem)])
+	ci.draw_colored_polygon(torso, cc)
+	ci.draw_polyline(PackedVector2Array([torso[0], torso[3], torso[2], torso[1]]), Color(0.04, 0.05, 0.1, 0.55 * alpha), 1.0, true)
+	if patrol:
+		ci.draw_line(Vector2(x - 4.0 * u, sh + 0.5 * u), Vector2(x + 4.0 * u, hip), Color("#e9fff6", alpha), 1.8 * u, true)
+	elif kind == "rule":                                   # signe sur la poitrine des agents à règles
+		ci.draw_rect(Rect2(x - 1.5 * u, sh + 2.0 * u, 3.0 * u, 3.0 * u), Color(1, 1, 1, 0.9 * alpha), true)
+	if tier == "grand" or elder:                           # ceinture dorée
+		ci.draw_line(Vector2(x - bw, hip - 0.5 * u), Vector2(x + bw, hip - 0.5 * u), Color("#f6d878", alpha), 1.6 * u)
+	# bras
+	for sd in [-1.0, 1.0]:
+		var sp := Vector2(x + sd * 4.6 * u, sh + 1.0 * u)
+		var hand := Vector2(x + sd * 6.4 * u, sh + 8.5 * u)
+		if pose == "walk":
+			hand += Vector2(0, -sd * sw * 0.8)
+		elif pose == "row":
+			hand = Vector2(x + sd * 7.0 * u, sh + 5.0 * u + sin(anim * 4.0 + (0.0 if sd < 0.0 else PI)) * 3.0 * u)
+		elif pose == "net":
+			hand = Vector2(x + sd * 4.0 * u, sh - 2.0 * u - maxf(0.0, sin(anim * 3.0 + (0.0 if sd < 0.0 else 1.2))) * 5.0 * u)
+		elif pose == "sit":
+			hand = Vector2(x + sd * 4.5 * u, sh + 8.0 * u)
+		ci.draw_line(sp, hand, cc if not elder else dark, 2.4 * u, true)
+		ci.draw_circle(hand, 1.3 * u, skin)
+	# tête
+	var hc := Vector2(x, sh - 3.8 * u)
+	if elder:
+		ci.draw_colored_polygon(PackedVector2Array([hc + Vector2(-3.4, 1.0) * u, hc + Vector2(3.4, 1.0) * u, hc + Vector2(0, 7.0) * u]),
+			Color("#f4f4f0", alpha))
+	ci.draw_circle(hc, 4.0 * u, skin)
+	if elder:
+		ci.draw_arc(hc, 4.3 * u, PI, TAU, 10, Color("#f4f4f0", alpha), 2.2 * u, true)
+	elif patrol or kind != "rule":                         # chapeau rond (casquette pour la patrouille)
+		var cap := PackedVector2Array()
+		for i in 9:
+			cap.append(hc + Vector2(cos(PI + PI * i / 8.0) * 4.6, sin(PI + PI * i / 8.0) * 3.8 - 0.4) * u)
+		ci.draw_colored_polygon(cap, dark if not patrol else Color("#0f4a47", alpha))
+		ci.draw_line(hc + Vector2(-5.6, -0.4) * u, hc + Vector2(5.6, -0.4) * u, dark if not patrol else Color("#0f4a47", alpha), 1.6 * u)
+	else:                                                  # bonnet carré
+		ci.draw_rect(Rect2(hc + Vector2(-4.2, -5.0) * u, Vector2(8.4, 4.4) * u), dark, true)
+	if tier == "grand" and not elder:                      # galon doré du chapeau
+		ci.draw_line(hc + Vector2(-4.6, -1.0) * u, hc + Vector2(4.6, -1.0) * u, Color("#f6d878", alpha), 1.3 * u)
 
 
 static func pill(ci: CanvasItem, pos: Vector2, text: String, bg: Color, fg: Color, size: int = 11,

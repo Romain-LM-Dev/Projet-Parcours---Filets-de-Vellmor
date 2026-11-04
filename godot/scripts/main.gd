@@ -265,6 +265,11 @@ func _kpi(parent: Control, key: String, title: String, sub: String, accent: Colo
 	ind_labels[key] = v
 	if sub != "":
 		var sl := _label(sub, 11, "ui", Color(Art.MUTED, 0.85))
+		sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART          # un KPI n'élargit jamais sa colonne
+		sl.clip_text = true
+		sl.max_lines_visible = 3
+		sl.custom_minimum_size.x = 10
+		sl.mouse_filter = Control.MOUSE_FILTER_PASS
 		vb.add_child(sl)
 		ind_sub[key] = sl
 
@@ -1363,7 +1368,9 @@ func _norm_card() -> void:
 	var parts := PackedStringArray()
 	for n in norms_now:
 		parts.append(_rule_text(n) + (" (%s)" % _scope(str(n.get("scope", ""))) if str(n.get("scope", "")).begins_with("lake:") else ""))
-	ind_sub["norme"].text = ind_sub["norme"].text.get_slice("\n", 0).split(" · règles")[0] + "\n" + " ; ".join(parts)
+	var full := " ; ".join(parts)
+	ind_sub["norme"].text = ind_sub["norme"].text.get_slice("\n", 0).split(" · règles")[0] + "\n" + (full if full.length() <= 70 else full.substr(0, 69) + "…")
+	ind_sub["norme"].tooltip_text = full
 
 
 ## Une jauge en texte : vingt espaces sur fond coloré (la police du projet n'a pas de caractère « bloc »), la part pleine
