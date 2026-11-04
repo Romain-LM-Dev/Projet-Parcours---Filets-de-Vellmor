@@ -126,9 +126,12 @@ var sail := AStarGrid2D.new()       # les barques : l'eau seulement
 var hamlet_lake := {}               # village -> indice de son lac
 var patrol_routes := {}             # la route de chaque patrouille cette saison (capitaine -> étapes {zone, from_day, to_day})
 var patrol_season := 0
-var seats := 0                      # sièges occupés à la veillée (le conseil des élus, ou toute la vallée)
+var salon_ids: Array = []           # les assis de la veillée de la vallée (l'ancien d'abord), dans la scène à part
+var salon: Control                  # la scène de la veillée : à l'écran, par-dessus la carte (qui vit derrière, assombrie)
+var btn_salon_min: Button           # « Réduire » (aussi Échap), dans la scène
+var btn_salon_open: Button          # « Rouvrir la veillée », sur la carte réduite
+var _salon_draw := false            # vrai pendant le dessin de la scène : les points des pions sont alors leurs sièges
 var hamlet_fires: Array = []        # hameaux qui tiennent veillée
-var room_alpha := 0.0
 var dry := 0.0
 var t := 0.0
 var banners: Array = []
@@ -160,6 +163,23 @@ func _ready() -> void:
 	add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	lights.material = add
 	top = _layer(Control.new())
+	salon = Control.new()                 # sous `over` : bandeaux et cadrans restent visibles
+	salon.set_anchors_preset(Control.PRESET_FULL_RECT)
+	salon.mouse_filter = Control.MOUSE_FILTER_STOP
+	salon.visible = false
+	add_child(salon)
+	salon.draw.connect(func() -> void: _draw_salon(salon))
+	btn_salon_min = Button.new()
+	btn_salon_min.text = "Réduire (Échap)"
+	btn_salon_min.focus_mode = Control.FOCUS_NONE
+	btn_salon_min.pressed.connect(func() -> void: set_salon(false))
+	salon.add_child(btn_salon_min)
+	btn_salon_open = Button.new()
+	btn_salon_open.text = "Rouvrir la veillée"
+	btn_salon_open.focus_mode = Control.FOCUS_NONE
+	btn_salon_open.visible = false
+	btn_salon_open.pressed.connect(func() -> void: set_salon(true))
+	add_child(btn_salon_open)
 	over = Control.new()
 	over.set_anchors_preset(Control.PRESET_FULL_RECT)
 	over.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -187,6 +207,11 @@ func _on_resized() -> void:
 	if size.x < 10:
 		return
 	var first := cam_off == Vector2.ZERO
+	var sr := _salon_rect()
+	btn_salon_min.position = Vector2(sr.end.x - 150.0, sr.position.y + 10.0)
+	btn_salon_min.size = Vector2(140.0, 30.0)
+	btn_salon_open.position = Vector2(size.x * 0.5 - 80.0, size.y - 52.0)
+	btn_salon_open.size = Vector2(160.0, 34.0)
 	_layout_world()
 	if first:
 		_center_view()
@@ -302,6 +327,10 @@ func _scroll(dt: float) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	var k := event as InputEventKey
 	if k == null or not k.pressed or k.echo or not is_visible_in_tree():
+		return
+	if k.keycode == KEY_ESCAPE and _salon_on():
+		set_salon(false)                      # réduit la scène pour regarder la carte
+		get_viewport().set_input_as_handled()
 		return
 	var fo := get_viewport().gui_get_focus_owner()
 	if fo is LineEdit or fo is TextEdit:
@@ -569,9 +598,37 @@ func _nm(p: Vector2) -> Vector2:
 	return Vector2((u + w) * 0.5, (w - u) * 0.5)
 
 
-## Une fraction du panneau → l'écran (la salle du conseil, les bulles : ce qui ne se pose pas sur le sol).
-func _sp(n: Vector2) -> Vector2:
-	return Vector2(n.x * size.x, n.y * size.y) + _px(council_c) - size * 0.5     # un cadre posé autour de l'anneau du conseil
+## Le cadre de la scène de la veillée, à l'écran.
+func _salon_rect() -> Rect2:
+	return Rect2(ROOM.position * size, ROOM.size * size)
+
+
+## Le siège d'un pion dans la scène (écran) ; Vector2.INF s'il n'y siège pas.
+func _seat(id: String) -> Vector2:
+	var i := salon_ids.find(id)
+	if i < 0:
+		return Vector2.INF
+	var r := _salon_rect()
+	var ang := -PI / 2.0 + TAU * float(i) / float(max(salon_ids.size(), 1))
+	return r.position + r.size * Vector2(0.5, 0.56) + Vector2(cos(ang) * r.size.x * 0.34, sin(ang) * r.size.y * 0.30)
+
+
+## Le point d'un pion : sur le sol de la carte, ou à son siège quand on dessine la scène.
+func _apt(id: String) -> Vector2:
+	return _seat(id) if _salon_draw else _px(agents[id]["pos"])
+
+
+func _salon_on() -> bool:
+	return salon != null and salon.visible
+
+
+## Ouvre ou réduit la scène (la veillée de la vallée doit durer pour l'ouvrir).
+func set_salon(on: bool) -> void:
+	if salon == null:
+		return
+	salon.visible = on and assembly_scope == "valley"
+	btn_salon_open.visible = not salon.visible and assembly_scope == "valley"
+	salon.queue_redraw()
 
 
 func _update_iso() -> void:
@@ -1047,7 +1104,8 @@ func reset_world(agent_list: Array, cap: float, days: float = 30.0, hamlets: Arr
 	assembly_scope = ""
 	patrol_routes.clear()
 	patrol_season = 0
-	seats = 0
+	salon_ids.clear()
+	set_salon(false)
 	hamlet_fires.clear()
 	var per_hamlet := {}
 	for a in agent_list:
@@ -1224,11 +1282,8 @@ func on_event(ev: Dictionary) -> void:
 						ids.append(sx)
 				for aid in agents:                   # les villageois qui n'y siègent pas restent chez eux : on ne les montre pas dans la salle
 					agents[aid]["absent"] = not ids.has(str(aid))
-				seats = ids.size()
-				glide_to_ground(council_c)
-				for i in ids.size():
-					var ang := -PI / 2.0 + TAU * float(i) / float(max(ids.size(), 1))
-					_move(ids[i], council_c + Vector2(cos(ang), sin(ang)) * council_r)
+				salon_ids = ids                      # les pions restent chez eux sur la carte ; la veillée a sa scène
+				set_salon(true)
 			else:
 				assembly_scope = "hamlet"
 				var h := scope.substr(7)
@@ -1248,7 +1303,8 @@ func on_event(ev: Dictionary) -> void:
 				_banner("Pas d'accord ce soir", "Aucune règle n'a réuni la moitié des pêcheurs", Art.MUTED)
 			if scope2 == "valley":
 				assembly_scope = ""
-				seats = 0
+				salon_ids = []
+				set_salon(false)
 			else:
 				hamlet_fires.erase(scope2.substr(7))
 				if hamlet_fires.is_empty():
@@ -1501,7 +1557,8 @@ func _process(delta: float) -> void:
 	if assembly_scope != "":
 		target = min(target, 0.12)
 	light = move_toward(light, target, delta * 2.0) if animate else target
-	room_alpha = move_toward(room_alpha, 1.0 if assembly_scope == "valley" else 0.0, delta * (3.5 if animate else 100.0))
+	if _salon_on():
+		salon.queue_redraw()
 	dry = max(0.0, dry - delta * 0.004)
 	_push_lakes()
 	mat.set_shader_parameter("dry", dry)
@@ -1767,63 +1824,73 @@ func _draw_fire(ci: CanvasItem, p: Vector2, s: float) -> void:
 		ci.draw_colored_polygon(pts, col)
 
 
-func _draw_room(ci: CanvasItem) -> void:
-	var a := room_alpha
-	if a <= 0.01:
-		return
-	ci.draw_rect(Rect2(Vector2.ZERO, world), Color(0.02, 0.03, 0.07, 0.45 * a), true)
-	var r := Rect2(_sp(ROOM.position), Vector2(ROOM.size.x * size.x, ROOM.size.y * size.y))
-	var sb := Art.box(Color(Color("#4a3123"), 0.96 * a), 26, Color(Color("#22150e"), a), 6, 24)
-	sb.draw(ci.get_canvas_item(), r)
-	# plancher
-	var y := r.position.y + 14.0
+## La scène de la veillée de la vallée, à l'écran : la salle, le foyer, les assis en cercle, puis liens, marques et bulles
+## (les mêmes fonctions que pour la carte, mais les points des pions sont leurs sièges).
+func _draw_salon(ci: CanvasItem) -> void:
+	_salon_draw = true
+	var full := Rect2(Vector2.ZERO, size)
+	ci.draw_rect(full, Color(0.02, 0.03, 0.07, 0.62), true)     # la carte, derrière, s'assombrit
+	var r := _salon_rect()
+	Art.box(Color(Color("#4a3123"), 0.97), 26, Color("#22150e"), 6, 24).draw(ci.get_canvas_item(), r)
+	var y := r.position.y + 14.0                                  # plancher
 	var row := 0
 	while y < r.end.y - 10.0:
-		ci.draw_line(Vector2(r.position.x + 10, y), Vector2(r.end.x - 10, y), Color(0, 0, 0, 0.22 * a), 1.0)
+		ci.draw_line(Vector2(r.position.x + 10, y), Vector2(r.end.x - 10, y), Color(0, 0, 0, 0.22), 1.0)
 		var x := r.position.x + 30.0 + fmod(row * 97.0, 160.0)
 		while x < r.end.x - 20:
-			ci.draw_line(Vector2(x, y), Vector2(x, y + 22), Color(0, 0, 0, 0.18 * a), 1.0)
+			ci.draw_line(Vector2(x, y), Vector2(x, y + 22), Color(0, 0, 0, 0.18), 1.0)
 			x += 160.0
 		y += 22.0
 		row += 1
-	# tapis, foyer
-	var c := _px(council_c)
-	_ground_ellipse(ci, council_c, council_r * 1.12, Color(Color("#6e2a26"), 0.95 * a), 64)         # le tapis, posé sur le sol
-	_ground_ellipse(ci, council_c, council_r * 1.06, Color(Color("#8c3a31"), 0.95 * a), 64)
-	var ring := PackedVector2Array()
-	for i in 65:
-		var ang := TAU * i / 64.0
-		ring.append(_px(council_c + Vector2(cos(ang) * council_r.x * 0.95, sin(ang) * council_r.y * 0.95)))
-	ci.draw_polyline(ring, Color(Color("#d8a957"), 0.55 * a), 2.0, true)
-	_ground_ellipse(ci, council_c, council_r * 0.55, Color(Color("#7a302a"), 0.9 * a), 48)
-	Art.glow(ci, c, council_r.x * iso_a * 0.9, Color(1.0, 0.55, 0.2, 0.30 * a))
+	var c := r.position + r.size * Vector2(0.5, 0.56)
+	var rr := Vector2(r.size.x * 0.34, r.size.y * 0.30)
+	_ellipse(ci, c, rr * 1.22, Color(Color("#6e2a26"), 0.95), 64)              # le tapis
+	_ellipse(ci, c, rr * 1.14, Color(Color("#8c3a31"), 0.95), 64)
+	_ellipse(ci, c, rr * 0.5, Color(Color("#7a302a"), 0.9), 48)
+	Art.glow(ci, c, rr.x * 0.8, Color(1.0, 0.55, 0.2, 0.30))
 	for i in 10:
 		var ang := TAU * i / 10.0
-		ci.draw_circle(c + Vector2(cos(ang) * 22, sin(ang) * 11), 5.0, Color(Color("#6f6a64"), a))
-	_draw_fire(ci, c - Vector2(0, 4), 1.8 * a)
-	# coussins aux places de la veillée
-	var n_seats := seats if seats > 0 else agents.size()
-	for i in n_seats:
-		var ang := -PI / 2.0 + TAU * float(i) / float(max(n_seats, 1))
-		var sp := _px(council_c + Vector2(cos(ang), sin(ang)) * council_r)
-		_ellipse(ci, sp + Vector2(0, 3), Vector2(19, 10), Color(Color("#2a1a12"), 0.55 * a))
-		_ellipse(ci, sp, Vector2(18, 9), Color(Color("#b0823f"), 0.9 * a))
-	var away := 0
-	for aid in agents:
-		if bool(agents[aid].get("absent", false)) and str(agents[aid]["info"].get("role", "")) != "ancien":
-			away += 1
-	if away > 0:
-		ci.draw_string(Art.font("ui"), Vector2(r.position.x + 26, r.end.y - 18), "%d villageois attendent chez eux" % away,
-			HORIZONTAL_ALIGNMENT_LEFT, 250, 13, Color(Color("#d8bf8c"), 0.85 * a))
-	var title := "Veillée chez Maître Oswin"
-	var tf := Art.font("title")
-	ci.draw_string(tf, Vector2(r.position.x, r.position.y + 40), title, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 24,
-		Color(Color("#f3dca8"), a))
+		ci.draw_circle(c + Vector2(cos(ang) * 22, sin(ang) * 11), 5.0, Color("#6f6a64"))
+	_draw_fire(ci, c - Vector2(0, 4), 1.8)
+	for id in salon_ids:                                          # coussins
+		var sp := _seat(str(id))
+		_ellipse(ci, sp + Vector2(0, 18), Vector2(26, 11), Color(Color("#2a1a12"), 0.55))
+		_ellipse(ci, sp + Vector2(0, 15), Vector2(24, 10), Color(Color("#b0823f"), 0.9))
+	ci.draw_string(Art.font("title"), Vector2(r.position.x, r.position.y + 40), "Veillée chez Maître Oswin",
+		HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 24, Color("#f3dca8"))
 	ci.draw_string(Art.font("title_italic"), Vector2(r.position.x, r.position.y + 62),
 		"« La parole se donne le soir, le poisson se prend le matin. »", HORIZONTAL_ALIGNMENT_CENTER, r.size.x, 14,
-		Color(Color("#d8bf8c"), 0.8 * a))
-
-
+		Color(Color("#d8bf8c"), 0.8))
+	var away := agents.size() - salon_ids.size()
+	if away > 0:
+		ci.draw_string(Art.font("ui"), Vector2(r.position.x + 26, r.end.y - 18), "%d villageois restent chez eux" % away,
+			HORIZONTAL_ALIGNMENT_LEFT, 280, 13, Color(Color("#d8bf8c"), 0.85))
+	_draw_links(ci)
+	var f := Art.font("ui_bold")
+	var by_y: Array = salon_ids.duplicate()
+	by_y.sort_custom(func(a, b): return _seat(str(a)).y < _seat(str(b)).y)
+	for id in by_y:
+		if not agents.has(id):
+			continue
+		var info: Dictionary = agents[id]["info"]
+		var p := _seat(str(id))
+		_ellipse(ci, p + Vector2(2, 2), Vector2(15, 6), Color(0, 0, 0, 0.3))
+		Art.draw_token(ci, p + Vector2(0, -8), info, 1.25, 1.0, id == selected, t)
+		if bool(agents[id].get("rep", false)):
+			_star(ci, p + Vector2(0, -42), 7.0, Color("#f2c14e"), 5)
+		var lbl := str(info.get("name", id)).split(" ")[0] + (" · ancien" if str(info.get("role", "")) == "ancien" else "")
+		var tw := f.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 10
+		var lr := Rect2(p + Vector2(-tw / 2.0, 10), Vector2(tw, 18))
+		Art.box(Color(0.05, 0.07, 0.12, 0.78), 8).draw(ci.get_canvas_item(), lr)
+		ci.draw_string(f, lr.position + Vector2(5, 13.5), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Art.INK)
+		if badges.has(id):
+			Art.pill(ci, p + Vector2(18, -50), badges[id], Art.PROPOSAL, Color("#2a1d05"), 11)
+	_draw_marks(ci)
+	var keep: Array = [Rect2(r.position.x + r.size.x * 0.25, r.position.y + 6, r.size.x * 0.5, 64)]     # le titre, puis les pions : les bulles les évitent
+	for id in salon_ids:
+		keep.append(Rect2(_seat(str(id)) + Vector2(-34, -50), Vector2(68, 82)))
+	_draw_bubbles(ci, keep)
+	_salon_draw = false
 func _bez_pts(pa: Vector2, pb: Vector2, bend: float, n: int = 22) -> PackedVector2Array:
 	return _curve(pa, pb, bend, n)
 
@@ -1831,9 +1898,11 @@ func _bez_pts(pa: Vector2, pb: Vector2, bend: float, n: int = 22) -> PackedVecto
 func _draw_links(ci: CanvasItem) -> void:
 	for e in effects:
 		var a: float = clamp(float(e["ttl"]) / float(e["max"]), 0.0, 1.0)
+		if _salon_draw and (_seat(str(e["a"])) == Vector2.INF or (e["kind"] == "link" and _seat(str(e["b"])) == Vector2.INF)):
+			continue     # un absent de la scène
 		if e["kind"] == "link" and agents.has(e["a"]) and agents.has(e["b"]):
-			var pa := _px(agents[e["a"]]["pos"])
-			var pb := _px(agents[e["b"]]["pos"])
+			var pa := _apt(e["a"])
+			var pb := _apt(e["b"])
 			var dir := (pb - pa).normalized()
 			pa += dir * 14.0
 			pb -= dir * 16.0
@@ -1863,7 +1932,7 @@ func _draw_links(ci: CanvasItem) -> void:
 				Art.glow(ci, q, 14.0, Color(col, 0.8))
 				ci.draw_circle(q, 3.5, Color(1, 1, 1, 0.95))
 		elif e["kind"] == "wave" and agents.has(e["a"]):
-			var pw := _px(agents[e["a"]]["pos"])
+			var pw := _apt(e["a"])
 			for k in 2:
 				var aa: float = clamp(a * 1.4 - k * 0.3, 0.0, 1.0)
 				ci.draw_arc(pw, 16.0 + (1.0 - a) * (46.0 + k * 22.0), 0, TAU, 48, Color(Art.TALK, aa * 0.7), 2.0, true)
@@ -1914,9 +1983,7 @@ func _draw_tokens(ci: CanvasItem) -> void:
 		var a: Dictionary = agents[id]
 		var p := _px(a["pos"])
 		var info: Dictionary = a["info"]
-		if assembly_scope == "valley" and bool(a.get("absent", false)):
-			continue
-		var on_water := is_water(a["pos"]) and assembly_scope != "valley"
+		var on_water := is_water(a["pos"])
 		if on_water:
 			_draw_boat(ci, p, float(a["heading"]), Art.agent_color(info), float(a["fishing"]),
 				float(BOAT_SCALE.get(str(info.get("boat", "chaloupe")), 1.0)))
@@ -1945,10 +2012,10 @@ func _draw_tokens(ci: CanvasItem) -> void:
 func _draw_marks(ci: CanvasItem) -> void:
 	var f := Art.font("ui_black")
 	for e in effects:
-		if not agents.has(e["a"]):
+		if not agents.has(e["a"]) or (_salon_draw and _seat(str(e["a"])) == Vector2.INF):
 			continue
 		var a: float = clamp(float(e["ttl"]) / float(e["max"]), 0.0, 1.0)
-		var pm := _px(agents[e["a"]]["pos"])
+		var pm := _apt(e["a"])
 		if e["kind"] == "mark":
 			var pop: float = 1.0 + 0.25 * max(0.0, 1.0 - (1.0 - a) * float(e["max"]) * 4.0)
 			var col: Color = e["col"]
@@ -1959,21 +2026,19 @@ func _draw_marks(ci: CanvasItem) -> void:
 			ci.draw_string(f, pm + Vector2(-30, y), e["txt"], HORIZONTAL_ALIGNMENT_CENTER, 60, 13, Color(Color("#fff3c4"), a))
 
 
-func _draw_bubbles(ci: CanvasItem) -> void:
+## `reserved` : des zones d'écran à laisser libres (le titre de la scène). Dans la scène, les bulles partent des sièges.
+func _draw_bubbles(ci: CanvasItem, reserved: Array = []) -> void:
 	var f := Art.font("ui")
 	var fb := Art.font("ui_black")
-	var placed: Array = []
-	if room_alpha > 0.5:     # le titre de la salle reste lisible
-		var rt := Rect2(cam_off + _sp(ROOM.position) * zoom, Vector2(ROOM.size.x * size.x, 70) * zoom)
-		placed.append(Rect2(rt.position + Vector2(rt.size.x * 0.25, 10), Vector2(rt.size.x * 0.5, 60)))
+	var placed: Array = reserved.duplicate()
 	var ids := bubbles.keys()
 	ids.sort_custom(func(x, y): return float(bubbles[x]["born"]) < float(bubbles[y]["born"]))
 	for id in ids:
-		if not agents.has(id):
+		if not agents.has(id) or (_salon_draw and _seat(str(id)) == Vector2.INF):
 			continue
 		var b: Dictionary = bubbles[id]
 		var a: float = clamp(float(b["ttl"]) / 0.6, 0.0, 1.0) * clamp((t - float(b["born"])) / 0.2, 0.0, 1.0)
-		var pb := _scr(agents[id]["pos"]) + Vector2(0, -10) * zoom
+		var pb := _seat(str(id)) + Vector2(0, -30) if _salon_draw else _scr(agents[id]["pos"]) + Vector2(0, -10) * zoom
 		var info: Dictionary = agents[id]["info"]
 		var w := 196.0
 		var fs := 12
@@ -1986,8 +2051,8 @@ func _draw_bubbles(ci: CanvasItem) -> void:
 			Vector2(-bs.x - 24, -bs.y / 2), Vector2(18, -bs.y - 18), Vector2(-bs.x - 18, -bs.y - 18),
 			Vector2(18, 26), Vector2(-bs.x - 18, 26)]
 		# vers l'intérieur du cercle d'abord pendant la veillée, pour garder le bord libre
-		if assembly_scope == "valley":
-			var inward := (_scr(council_c) - pb).normalized()
+		if _salon_draw:
+			var inward := (_salon_rect().get_center() + Vector2(0, _salon_rect().size.y * 0.06) - pb).normalized()
 			cands.sort_custom(func(x, y): return (x + bs / 2).normalized().dot(inward) > (y + bs / 2).normalized().dot(inward))
 		# position qui chevauche le moins les bulles déjà posées (zéro si possible)
 		var rect := Rect2(pb + cands[0], bs)
@@ -2022,9 +2087,7 @@ func _draw_bubbles(ci: CanvasItem) -> void:
 
 
 func _draw_signs(ci: CanvasItem) -> void:
-	var sa := 1.0 - room_alpha
-	if sa <= 0.01:
-		return
+	var sa := 1.0
 	var tf := Art.font("title")
 	for h in hamlet_pos:
 		var c := _px(hamlet_pos[h]) + Vector2(0, -96)
@@ -2148,11 +2211,9 @@ func _draw_banner(ci: CanvasItem) -> void:
 func _draw_top(ci: CanvasItem) -> void:
 	_draw_mesh(ci)
 	_draw_signs(ci)
-	_draw_room(ci)
 	for h in hamlet_fires:
 		_draw_fire(ci, _px(hamlet_pos[h]), 1.2)
-	if room_alpha < 0.5:
-		_draw_fire(ci, _fire_pos(), 0.9 * (0.4 + 0.6 * _darkness()))
+	_draw_fire(ci, _fire_pos(), 0.9 * (0.4 + 0.6 * _darkness()))
 	_draw_links(ci)
 	_draw_tokens(ci)
 	_draw_marks(ci)
@@ -2160,7 +2221,8 @@ func _draw_top(ci: CanvasItem) -> void:
 
 ## À l'écran, par-dessus : les bulles (lisibles quel que soit le zoom), les cadrans, les bandeaux.
 func _draw_over(ci: CanvasItem) -> void:
-	_draw_bubbles(ci)
+	if not _salon_on():
+		_draw_bubbles(ci)
 	_draw_hud(ci)
 	_draw_mini(ci)
 	var f := Art.font("ui")

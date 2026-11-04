@@ -92,6 +92,8 @@ var last_error := ""
 var transport: PanelContainer
 var btn_pause: Button
 var btn_stop: Button
+var btn_stop_top: Button            # le même arrêt, par-dessus le menu de démarrage
+var stop_dlg: ConfirmationDialog
 var btn_new: Button
 var speed_buttons := {}
 var mode_buttons := {}
@@ -101,7 +103,6 @@ var btn_slow: Button             # « Ralentir » : proposé quand une IA locale
 var lbl_lost: Label
 var lost_this_season := 0        # répliques et sorties perdues depuis le début de la saison
 var slow_target := 0.25          # la vitesse que « Ralentir » demandera
-var stop_armed_ms := 0
 var end_overlay: Control
 var end_title: Label
 var end_text: Label
@@ -463,6 +464,7 @@ func _build_ui() -> void:
 	tabs = TabContainer.new()
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_child(tabs)
+	tabs.get_tab_bar().focus_mode = Control.FOCUS_NONE      # les flèches ne pilotent que la carte
 	var feed_box := VBoxContainer.new()
 	feed_box.name = "Interactions"
 	tabs.add_child(feed_box)
@@ -575,6 +577,20 @@ func _build_ui() -> void:
 	menu.start_requested.connect(_on_menu_start)
 	menu.generate_requested.connect(_on_menu_generate)
 	menu.cancelled.connect(func() -> void: menu.close())
+	btn_stop_top = Button.new()
+	btn_stop_top.text = "Arrêter la partie"
+	btn_stop_top.focus_mode = Control.FOCUS_NONE
+	btn_stop_top.visible = false
+	btn_stop_top.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 12)
+	btn_stop_top.pressed.connect(_on_stop_pressed)
+	add_child(btn_stop_top)                       # après le menu : par-dessus lui
+	stop_dlg = ConfirmationDialog.new()
+	stop_dlg.title = "Arrêter la partie"
+	stop_dlg.dialog_text = "Arrêter la partie ?\nElle ne pourra pas être reprise."
+	stop_dlg.ok_button_text = "Oui, arrêter"
+	stop_dlg.cancel_button_text = "Non"
+	stop_dlg.confirmed.connect(func() -> void: _send({"type": "stop"}))
+	add_child(stop_dlg)
 
 
 # ------------------------------------------------------------------ pilotage de la partie
@@ -599,15 +615,9 @@ func _toggle_pause() -> void:
 		_send({"type": "resume" if engine_state == "paused" else "pause"})
 
 
-## Arrêter est irréversible : un premier clic arme le bouton, un second (dans les 3 s) confirme.
+## Arrêter est irréversible : une boîte « Oui / Non » demande confirmation.
 func _on_stop_pressed() -> void:
-	var now := Time.get_ticks_msec()
-	if stop_armed_ms > 0 and now - stop_armed_ms < 3000:
-		stop_armed_ms = 0
-		_send({"type": "stop"})
-	else:
-		stop_armed_ms = now
-	_update_transport()
+	stop_dlg.popup_centered()
 
 
 func _on_menu_start(cfg: Dictionary) -> void:
@@ -635,7 +645,6 @@ func _on_status(s: Dictionary) -> void:
 	menu.set_engine(st, true, "" if s.get("detail") == null else str(s.get("detail")))
 	if st != engine_state:
 		engine_state = st
-		stop_armed_ms = 0
 		match st:
 			"idle":
 				menu.open(not run.is_empty())
@@ -710,7 +719,6 @@ func _update_transport() -> void:
 	else:
 		lbl_progress.text = ""
 	btn_stop.visible = live
-	btn_stop.text = "Confirmer l'arrêt ?" if stop_armed_ms > 0 else "Arrêter la partie"
 	btn_new.visible = st == "ended" and bool(engine.get("lobby", false))
 
 
@@ -1609,9 +1617,7 @@ func _process(delta: float) -> void:
 			engine_state = ""
 			menu.set_engine("", false)
 			_update_transport()
-		if stop_armed_ms > 0 and Time.get_ticks_msec() - stop_armed_ms >= 3000:
-			stop_armed_ms = 0
-			_update_transport()
+		btn_stop_top.visible = btn_stop.visible and menu.visible
 		if end_overlay.visible:
 			_refresh_end_text()
 	var el := (Time.get_ticks_msec() - t0_ms) / 1000.0
