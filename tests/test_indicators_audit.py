@@ -91,11 +91,10 @@ def gini_pairs(v):
 
 
 CASES = {
-    "synchrone": dict(time__mode="sync"),
-    "asynchrone": dict(time__mode="async"),
-    "veillees_par_hameau": dict(time__mode="sync", scenario__communication="hamlet", population__fishers=9),
-    "sans_communication": dict(time__mode="sync", scenario__communication="none"),
-    "baseline_a_regles": dict(time__mode="sync", population__rule_fraction=1.0),
+    "defaut": dict(),
+    "veillees_par_hameau": dict(scenario__communication="hamlet", population__fishers=9),
+    "sans_communication": dict(scenario__communication="none"),
+    "baseline_a_regles": dict(population__rule_fraction=1.0),
 }
 
 
@@ -118,7 +117,7 @@ def test_season_indicators_match_independent_recomputation(tmp_path, name):
 
 
 def test_live_indicators_count_what_the_log_counts(tmp_path):
-    events = play(tmp_path, seasons=3, time__mode="sync")
+    events = play(tmp_path, seasons=3)
     eng, outs = engine_run(events)
     last = outs[-1]["values"]
     by_type = defaultdict(int)
@@ -137,10 +136,9 @@ def test_live_indicators_count_what_the_log_counts(tmp_path):
     assert last["stock_ratio"] == pytest.approx(final_stock / cap, abs=1e-3)
 
 
-def test_staleness_is_zero_in_sync_and_positive_in_async(tmp_path):
-    sync_eng, _ = engine_run(play(tmp_path, run_id="s", seasons=3, time__mode="sync"))
-    assert sync_eng.last_values["mean_staleness_ratio"] == 0.0
-    async_events = play(tmp_path, run_id="a", seasons=3, time__mode="async")
+def test_staleness_is_the_gap_between_the_decision_and_the_opening_snapshot(tmp_path):
+    """Un pêcheur qui part plus tard décide sur un lac déjà entamé, mais sa cale se calcule sur l'instantané d'ouverture."""
+    async_events = play(tmp_path, run_id="a", seasons=3)
     cap = async_events[0]["payload"]["lake"]["capacity"]
     gaps = [abs(e["payload"]["stock_at_action"] - e["payload"]["stock_at_horizon"]) / cap
             for e in async_events if e["type"] == "catch"]
@@ -152,7 +150,7 @@ def test_staleness_is_zero_in_sync_and_positive_in_async(tmp_path):
 def test_engine_refuses_to_compute_without_run_start(tmp_path):
     """Un service qui rejoint le flux après `run_start` ne connaît ni la capacité ni les pêcheurs :
     il ne doit rien publier plutôt que des chiffres faux (stock de 76 « t sur 1 » = 7600 %)."""
-    events = play(tmp_path, seasons=2, time__mode="sync")
+    events = play(tmp_path, seasons=2)
     late = [e for e in events if e["type"] != "run_start"]
     eng, outs = engine_run(late)
     assert outs == []
@@ -161,8 +159,8 @@ def test_engine_refuses_to_compute_without_run_start(tmp_path):
 
 def test_engine_rebuilds_from_the_last_run_start(tmp_path):
     """Démarré n'importe quand, mais depuis le dernier run_start, le moteur retrouve les mêmes chiffres."""
-    a = play(tmp_path, run_id="a", seasons=2, time__mode="sync")
-    b = play(tmp_path, run_id="b", seasons=3, time__mode="sync", population__fishers=6)
+    a = play(tmp_path, run_id="a", seasons=2)
+    b = play(tmp_path, run_id="b", seasons=3, population__fishers=6)
     eng = IndicatorEngine(TOL)
     outs = [o for o in (eng.ingest(e) for e in a + b) if o]       # deux runs d'affilée, comme dans le topic Kafka
     from_b = [o for o in outs if o["run_id"] == "b" and o["trigger"] == "season_end"]
@@ -173,8 +171,8 @@ def test_engine_rebuilds_from_the_last_run_start(tmp_path):
 
 
 def test_engine_ignores_events_of_another_run(tmp_path):
-    a = play(tmp_path, run_id="a", seasons=2, time__mode="sync")
-    b = play(tmp_path, run_id="b", seasons=2, time__mode="sync")
+    a = play(tmp_path, run_id="a", seasons=2)
+    b = play(tmp_path, run_id="b", seasons=2)
     eng = IndicatorEngine(TOL)
     for e in a:
         eng.ingest(e)
@@ -187,7 +185,7 @@ def test_engine_ignores_events_of_another_run(tmp_path):
 
 def test_replay_gives_identical_indicators(tmp_path):
     """Le moteur de rejeu et le moteur en direct sont le même code : mêmes valeurs, événement par événement."""
-    events = play(tmp_path, seasons=3, time__mode="async")
+    events = play(tmp_path, seasons=3)
     _, first = engine_run(events)
     _, second = engine_run(events)
     assert [o["values"] for o in first] == [o["values"] for o in second]

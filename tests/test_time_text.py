@@ -4,6 +4,7 @@ avec ce que fait la saison à cet instant et son calendrier."""
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -60,14 +61,15 @@ def test_the_agents_read_the_time_the_phase_and_the_calendar(tmp_path):
     rec = Recorder()
     fake_game(tmp_path, "agents", rec, population=[fisher("Mathis", "Ostrel", "ancienne_famille"),
                                                    fisher("Inès", "Tilque", "nouveau_venu")],
-              seasons=2, mode="sync", scenario__council="all", climate__enabled=True)
+              seasons=2, scenario__council="all", climate__enabled=True)
     catch = [r["user"] for r in rec.requests if '"prise"' in r["user"]]
     speech = [r["user"] for r in rec.requests if "Veillée chez l'ancien" in r["user"]]
     assert catch and speech
-    assert catch[0].startswith("Nous sommes en saison 1 (printemps), jour 0, le matin (6 h) : la pêche est ouverte, encore 20 jours.")
+    # (la décision de prise a pour horizon le jour de départ du pêcheur, tiré dans `time.departure_spread_days`)
+    assert re.match(r"Nous sommes en saison 1 \(printemps\), jour \d+, [^:]+ : la pêche est ouverte, encore \d+ jours\.", catch[0])
     assert speech[0].startswith("Nous sommes en saison 1 (printemps), jour 25, le soir (18 h) : veillée chez l'ancien.")
     for prompt in catch + speech:
         assert "Une saison compte 30 jours, numérotés depuis 0" in prompt
         assert "S1 ·" not in prompt and " · J" not in prompt                    # plus d'étiquette codée dans ce que lit un agent
     second = [u for u in catch if u.startswith("Nous sommes en saison 2")][0]
-    assert "saison 1, jour 0 (ouverture de la pêche)" in second and "[saison 1" in second
+    assert re.search(r"saison 1, jour \d+ \(ouverture de la pêche\)", second) and "[saison 1" in second

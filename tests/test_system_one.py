@@ -237,8 +237,8 @@ def test_without_the_decision_model_qwen_answers_and_no_decision_is_lost(tmp_pat
     s1.close()
     failed = [e for e in events if e["type"] == "llm_call" and e["payload"]["tier"] == "reflexe"]
     assert failed and all(e["payload"]["status"] == "error" for e in failed)
-    # essayé par les réflexes partis ensemble au premier instant, puis écarté pour toute la partie
-    assert len({e["sim_time"] for e in failed}) == 1 and len(s1.asked()) == len(failed)
+    # essayé par les réflexes demandés ensemble dans le premier lot (moins d'un jour d'écart), puis écarté pour toute la partie
+    assert max(e["sim_time"] for e in failed) - min(e["sim_time"] for e in failed) < 1.0 and len(s1.asked()) == len(failed)
     decisions = [e["payload"] for e in events if e["type"] == "decision" and e["payload"].get("system") == "S1"]
     assert len(decisions) > len(failed) and all(d["tier"] == "petit" and not d["fallback"] for d in decisions)
     assert [r for r in chat if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["prise"]]

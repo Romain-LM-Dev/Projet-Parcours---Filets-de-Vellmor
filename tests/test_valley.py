@@ -141,7 +141,7 @@ def test_a_bigger_boat_costs_more_to_keep(tmp_path):
 
 
 def test_no_catch_ever_exceeds_the_hold_of_the_boat(tmp_path):
-    world, bus, _ = make_world(tmp_path, "plein", seasons=4, time__mode="sync", economy__luck=0.4, climate__enabled=True,
+    world, bus, _ = make_world(tmp_path, "plein", seasons=4, economy__luck=0.4, climate__enabled=True,
                                climate__event_rate=1.0, population__boat_mix={"barque": 1.0, "chaloupe": 1.0, "cotre": 1.0})
     asyncio.run(world.run())
     for e in kinds(read_events(tmp_path, "plein"), "catch"):
@@ -154,7 +154,7 @@ def mean(outs, key):
 
 
 def test_the_catch_is_not_always_the_target(tmp_path):
-    world, bus, _ = make_world(tmp_path, "chance", seasons=5, time__mode="sync", economy__luck=0.4, climate__enabled=True,
+    world, bus, _ = make_world(tmp_path, "chance", seasons=5, economy__luck=0.4, climate__enabled=True,
                                population__fishers=8)
     asyncio.run(world.run())
     catches = [e["payload"] for e in kinds(read_events(tmp_path, "chance"), "catch")]
@@ -251,7 +251,7 @@ def test_a_low_lake_is_harder_to_fish_and_experience_helps(tmp_path):
 
 
 def test_no_luck_means_the_target_is_the_catch(tmp_path):
-    world, bus, _ = make_world(tmp_path, "sans-chance", seasons=2, time__mode="sync")
+    world, bus, _ = make_world(tmp_path, "sans-chance", seasons=2)
     asyncio.run(world.run())
     for e in kinds(read_events(tmp_path, "sans-chance"), "catch"):
         p = e["payload"]
@@ -269,7 +269,7 @@ def test_the_patrol_measures_a_boat_in_proportion_to_the_outings_it_met(tmp_path
 
 
 def test_a_season_of_fishing_is_remembered_with_its_weather(tmp_path):
-    world, bus, _ = make_world(tmp_path, "carnet", seasons=2, time__mode="sync", economy__luck=0.4, climate__enabled=True)
+    world, bus, _ = make_world(tmp_path, "carnet", seasons=2, economy__luck=0.4, climate__enabled=True)
     asyncio.run(world.run())
     for a in world.fishers:
         notes = [m.text for m in a.memory.items if m.kind == "peche"]

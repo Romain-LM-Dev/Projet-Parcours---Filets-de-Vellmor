@@ -1,14 +1,14 @@
-"""Pilotage d'une partie en cours : pause, vitesse, mode de temps, arrêt.
+"""Pilotage d'une partie en cours : pause, vitesse, arrêt.
 
 Les commandes arrivent de l'interface (Godot) par le bus ; `World.handle_command` les applique
-ici, et les orchestrateurs (synchrone / asynchrone) consultent cet objet aux points de passage :
+ici, et l'ordonnanceur (`scheduler.py`) consulte cet objet aux points de passage :
 
 * `checkpoint()` bloque tant que la partie est en pause et lève `StopRun` si l'arrêt est demandé ;
 * `sleep()` est une attente (vitesse ×1) qui respecte la pause et les changements de vitesse ;
 * `guard()` fait la course entre un travail (appels LLM en cours) et l'arrêt demandé.
 
-Le mode (synchrone / asynchrone) ne change qu'aux frontières de saison : c'est le seul moment
-où les deux orchestrations parlent de la même chose (voir `world.World.run`).
+Il n'y a plus qu'un seul mode de temps (voir `docs/temps.md`) : `time.mode` et la commande `set_mode`
+sont acceptés et ignorés.
 """
 from __future__ import annotations
 
@@ -20,18 +20,14 @@ from .clock import SimClock
 
 T = TypeVar("T")
 
-MODES = ("sync", "async")
-
 
 class StopRun(Exception):
     """L'arrêt de la partie a été demandé : remonte jusqu'à `World.run`."""
 
 
 class GameControl:
-    def __init__(self, clock: SimClock, mode: str):
+    def __init__(self, clock: SimClock):
         self.clock = clock
-        self.mode = mode                      # mode de la saison en cours
-        self.pending_mode: str | None = None  # mode demandé, appliqué au début de la prochaine saison
         self._run = asyncio.Event()           # levé = la partie avance
         self._run.set()
         self._stop = asyncio.Event()
@@ -75,19 +71,6 @@ class GameControl:
     def set_fast(self, fast: bool) -> None:
         self.clock.fast = bool(fast)
         self._changed()
-
-    def request_mode(self, mode: str) -> bool:
-        if mode not in MODES:
-            return False
-        self.pending_mode = None if mode == self.mode else mode
-        self._changed()
-        return True
-
-    def take_mode(self) -> str:
-        """Appelé au début de chaque saison : applique le mode demandé, le cas échéant."""
-        if self.pending_mode:
-            self.mode, self.pending_mode = self.pending_mode, None
-        return self.mode
 
     def request_stop(self) -> None:
         if not self._stop.is_set():

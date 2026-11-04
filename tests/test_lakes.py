@@ -37,7 +37,7 @@ def test_the_limit_follows_the_fish_in_the_lake_and_the_size_of_the_boats(tmp_pa
 
 
 def test_a_boat_never_lands_more_than_the_lake_lets_it(tmp_path):
-    world, bus, _ = make_world(tmp_path, "limite", seasons=4, population__fishers=8, lake__initial_ratio=0.4, time__mode="sync")
+    world, bus, _ = make_world(tmp_path, "limite", seasons=4, population__fishers=8, lake__initial_ratio=0.4)
     asyncio.run(world.run())
     for e in kinds(read_events(tmp_path, "limite"), "catch"):
         p = e["payload"]
@@ -100,7 +100,7 @@ def test_each_lake_has_its_own_fish_growth_and_villages(tmp_path):
 
 
 def test_a_catch_empties_only_the_lake_of_the_fisher_and_events_say_which(tmp_path):
-    world, bus, _ = make_world(tmp_path, "pris", seasons=2, population__fishers=8, lake__lakes=TWO_LAKES, time__mode="sync")
+    world, bus, _ = make_world(tmp_path, "pris", seasons=2, population__fishers=8, lake__lakes=TWO_LAKES)
     asyncio.run(world.run())
     events = read_events(tmp_path, "pris")
     start = kinds(events, "run_start")[0]["payload"]
@@ -216,7 +216,7 @@ def test_the_random_setting_draws_the_whole_valley_and_the_manual_one_does_not()
 
 def test_a_random_valley_plays_through_with_its_lakes_and_boats(tmp_path):
     for seed in (3, 11):
-        cfg = cfg_for(tmp_path, seasons=2, run__seed=seed, population__random=True, time__mode="sync")
+        cfg = cfg_for(tmp_path, seasons=2, run__seed=seed, population__random=True)
         events = play(tmp_path, f"hasard{seed}", cfg=cfg)
         start = kinds(events, "run_start")[0]["payload"]
         v = random_valley(seed)
@@ -232,7 +232,7 @@ def patrols(count, **extra):
 
 
 def test_each_patrol_has_its_captain_its_route_and_its_price(tmp_path):
-    world, bus, _ = make_world(tmp_path, "deux-patrouilles", seasons=2, population__fishers=8, time__mode="sync",
+    world, bus, _ = make_world(tmp_path, "deux-patrouilles", seasons=2, population__fishers=8,
                                scenario__patrol=patrols(2))
     assert [a.id for a in world.patrol_agents] == ["PAT", "PAT2"] and world.patrol_agent is world.patrol_agents[0]
     assert world.patrol_cost() == 30.0
@@ -263,7 +263,7 @@ def test_no_patrol_when_there_are_none_to_send(tmp_path):
 
 
 def test_patrols_can_go_to_the_open_water_of_each_lake(tmp_path):
-    world, bus, _ = make_world(tmp_path, "larges", seasons=3, population__fishers=8, lake__lakes=TWO_LAKES, time__mode="sync",
+    world, bus, _ = make_world(tmp_path, "larges", seasons=3, population__fishers=8, lake__lakes=TWO_LAKES,
                                scenario__patrol=patrols(2, legs=3))
     asyncio.run(world.run())
     legs = [leg for r in kinds(read_events(tmp_path, "larges"), "patrol_route") for leg in r["payload"]["legs"]]

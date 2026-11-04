@@ -60,7 +60,7 @@ def build_cfg(args) -> dict:
 
 def new_run_id(cfg: dict) -> str:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    return f"{stamp}-{cfg['time']['mode']}-n{cfg['population']['fishers']}-s{cfg['run']['seed']}"
+    return f"{stamp}-unique-n{cfg['population']['fishers']}-s{cfg['run']['seed']}"
 
 
 def make_api(cfg: dict, port: int, on_command, catalog: dict | None):

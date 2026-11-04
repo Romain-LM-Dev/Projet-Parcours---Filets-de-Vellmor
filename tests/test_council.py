@@ -31,11 +31,11 @@ def kinds(events, kind):
     return [e for e in events if e["type"] == kind]
 
 
-def fake_game(tmp_path, run_id, rec, population=TWO_VILLAGES, seasons=2, mode="sync", elder=False, schema=False, s1=None, **over):
+def fake_game(tmp_path, run_id, rec, population=TWO_VILLAGES, seasons=2, elder=False, schema=False, s1=None, **over):
     """Une partie dont toutes les IA (grand et petit modèle) sont `rec`, un faux fournisseur qui enregistre ce qu'on lui demande
     (`schema` : il sait recevoir le schéma de la réponse, que `rec` enregistre alors)."""
     cfg = cfg_for(tmp_path, seasons=seasons, population__custom=population, population__elder=elder,
-                  population__elder_kind="llm", time__mode=mode, **over)
+                  population__elder_kind="llm", **over)
     cfg["llm"]["providers"]["fake"] = {"base_url": rec.url, "api_key_env": None, "rpm": 0, "json_schema": schema}
     cfg["llm"]["tiers"] = {"grand": {"provider": "fake", "model": "m"}, "petit": {"provider": "fake", "model": "m"}}
     if s1 is not None:                                   # `s1` : un faux modèle de décision (palier `reflexe`)
@@ -77,7 +77,7 @@ def test_each_village_elects_one_representative(tmp_path):
 
 
 def test_only_the_elected_speak_and_the_others_still_hear_the_rule(tmp_path):
-    world, bus, _ = make_world(tmp_path, "conseil", seasons=2, time__mode="sync", population__fishers=8)
+    world, bus, _ = make_world(tmp_path, "conseil", seasons=2, population__fishers=8)
     asyncio.run(world.run())
     events = read_events(tmp_path, "conseil")
     for season in (1, 2):
@@ -98,7 +98,7 @@ def test_the_agreement_counts_the_fishers_an_elected_delegate_speaks_for(tmp_pat
     """Seuls les élus soutiennent une règle, mais chaque pêcheur compte comme l'ayant soutenue si l'élu de son village l'a fait."""
     from filets.indicators import IndicatorEngine
 
-    world, bus, _ = make_world(tmp_path, "accord", seasons=3, time__mode="sync", population__fishers=8)
+    world, bus, _ = make_world(tmp_path, "accord", seasons=3, population__fishers=8)
     asyncio.run(world.run())
     eng = IndicatorEngine(world.cfg["scenario"]["quota_tolerance"])
     ends = [o["values"] for o in (eng.ingest(e) for e in read_events(tmp_path, "accord")) if o and o["trigger"] == "season_end"]
@@ -115,7 +115,7 @@ def test_the_agreement_counts_the_fishers_an_elected_delegate_speaks_for(tmp_pat
 
 
 def test_the_council_can_be_everyone_again(tmp_path):
-    world, bus, _ = make_world(tmp_path, "tous", seasons=1, time__mode="sync", population__fishers=8, scenario__council="all")
+    world, bus, _ = make_world(tmp_path, "tous", seasons=1, population__fishers=8, scenario__council="all")
     asyncio.run(world.run())
     events = read_events(tmp_path, "tous")
     assert not kinds(events, "election")
@@ -252,7 +252,7 @@ def test_rule_agents_want_a_patrol_according_to_their_character():
 def test_synchronous_dialogues_depend_on_each_other(tmp_path):
     """À tour de rôle : chacun entend tout ce que les précédents ont dit, et rien de plus."""
     rec = Recorder()
-    world, events, _ = fake_game(tmp_path, "sync", rec, population=THREE_VILLAGES, seasons=1, elder=True, mode="sync",
+    world, events, _ = fake_game(tmp_path, "sync", rec, population=THREE_VILLAGES, seasons=1, elder=True,
                                  scenario__assembly_rounds=1)
     heard = [len(transcript_lines(u)) for u in speeches(rec)]
     assert heard == list(range(len(heard))) and len(heard) == 4              # l'ancien, puis trois élus : 0, 1, 2, 3 paroles entendues
@@ -260,50 +260,15 @@ def test_synchronous_dialogues_depend_on_each_other(tmp_path):
     assert first["payload"]["heard"] == [] and len(later["payload"]["heard"]) == 3
 
 
-def test_asynchronous_dialogues_are_independent(tmp_path):
-    """Chacun s'exprime de son côté : personne n'entend personne, un seul tour, puis tous votent."""
-    rec = Recorder(propose_first=2.0)
-    world, events, _ = fake_game(tmp_path, "async", rec, population=THREE_VILLAGES, seasons=1, elder=True, mode="async")
-    asked = speeches(rec)
-    assert len(asked) == 4 and all("sans entendre les autres" in u and not transcript_lines(u) for u in asked)
-    assert all("Ce qui a déjà été dit ce soir" not in u and "Propositions de règle sur la table" not in u for u in asked)
-    utterances = kinds(events, "utterance")
-    assert len(utterances) == 4 and all(u["payload"]["heard"] == [] and u["payload"]["round"] == 1 for u in utterances)
-    assert len({u["payload"]["speaker"] for u in utterances}) == 4           # chacun une seule fois
-
-
 def test_synchronous_speakers_are_told_what_was_said_to_them(tmp_path):
     """Les échanges sont liés : celui à qui l'on s'adresse le voit, à part, dans l'invite de sa réplique suivante."""
     rec = Recorder(speech={"destinataire": "F02"})
-    fake_game(tmp_path, "adresse", rec, population=THREE_VILLAGES, seasons=1, mode="sync", scenario__council="all")
+    fake_game(tmp_path, "adresse", rec, population=THREE_VILLAGES, seasons=1, scenario__council="all")
     asked = [(re.search(r"Tu es (\S+)", r["system"]).group(1), r["user"]) for r in rec.requests if "Veillée chez l'ancien" in r["user"]]
     told = {who for who, user in asked if "On s'est adressé à toi :" in user}
     assert told == {"Inès"}                                              # elle seule, et jamais ses propres paroles
     assert all("Inès" not in user.split("On s'est adressé à toi :")[1].split("\n\n")[0] for _, user in asked
                if "On s'est adressé à toi :" in user)
-
-
-def test_asynchronous_speeches_are_laid_down_together(tmp_path, monkeypatch):
-    """Les paroles étant indépendantes, elles sont déposées au même instant, même si chaque IA a mis un temps différent."""
-    original = World.observe
-
-    async def uneven(self, agent, *args, **kwargs):
-        if "speak" in args:
-            await asyncio.sleep(0.04 * (sum(map(ord, agent.id)) % 5))        # des IA plus ou moins lentes
-        return await original(self, agent, *args, **kwargs)
-
-    monkeypatch.setattr(World, "observe", uneven)
-    world, bus, _ = make_world(tmp_path, "ensemble", seasons=1, time__mode="async", time__fast=False,
-                               time__sim_hours_per_second=100, population__fishers=8)
-    asyncio.run(world.run())
-    events = read_events(tmp_path, "ensemble")
-    spoken = kinds(events, "utterance")
-    thought = [e for e in kinds(events, "decision") if e["payload"]["decision_type"] == "speak"]
-    assert len(spoken) >= 3
-    assert len({e["sim_time"] for e in spoken}) == 1                   # déposées ensemble
-    assert len({e["sim_time"] for e in thought}) > 1                   # alors qu'elles n'ont pas été pensées en même temps
-    order = kinds(events, "assembly_start")[0]["payload"]["participants"]
-    assert [e["payload"]["speaker"] for e in spoken] == [a for a in order if a in {e["payload"]["speaker"] for e in spoken}]
 
 
 def test_an_elected_delegate_knows_whom_he_speaks_for(tmp_path):
@@ -341,14 +306,13 @@ def test_every_event_of_a_full_game_obeys_its_schema(tmp_path):
     assert kinds(events, "world_event") and kinds(events, "patrol") and kinds(events, "election")
 
 
-@pytest.mark.parametrize("mode", ["sync", "async"])
-def test_a_full_default_game_runs_in_both_modes(tmp_path, mode):
-    world, bus, _ = make_world(tmp_path, f"plein-{mode}", seasons=3, time__mode=mode, economy__luck=0.25,
+def test_a_full_default_game_runs(tmp_path):
+    world, bus, _ = make_world(tmp_path, "plein", seasons=3, economy__luck=0.25,
                                climate__enabled=True, population__fishers=10, population__villages=5,
                                population__boat_mix={"barque": 0.3, "chaloupe": 0.4, "cotre": 0.3})
     dead = []
     bus.subscribe("deadletter", dead.append)
     asyncio.run(world.run())
-    events = read_events(tmp_path, f"plein-{mode}")
+    events = read_events(tmp_path, "plein")
     assert not dead and kinds(events, "run_end")[0]["payload"]["seasons_completed"] == 3
     assert len(world.hamlets) == 5 and len(world.reps) == 5

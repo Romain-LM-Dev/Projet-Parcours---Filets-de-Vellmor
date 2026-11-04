@@ -12,7 +12,7 @@ from helpers import make_world, read_events
 
 
 def world_with_assembly(tmp_path, run_id="vote", **over):
-    world, bus, _ = make_world(tmp_path, run_id, seasons=1, time__mode="sync", population__rule_fraction=0.0, **over)
+    world, bus, _ = make_world(tmp_path, run_id, seasons=1, population__rule_fraction=0.0, **over)
     asm = Assembly("valley", [a.id for a in world.agents.values()], 1, 29.0)
     return world, asm
 
@@ -110,7 +110,7 @@ def test_the_tolerances_are_settings(tmp_path):
 
 def test_a_full_scripted_game_still_verifies(tmp_path):
     from filets.cli import verify
-    world, bus, _ = make_world(tmp_path, "vote-game", seasons=3, time__mode="sync")
+    world, bus, _ = make_world(tmp_path, "vote-game", seasons=3)
     asyncio.run(world.run())
     assert verify("vote-game", world.cfg)
 
@@ -121,15 +121,12 @@ from test_rumors import FOUR, Recorder, play_with_announcement
 BALLOT_PROVIDERS = {"fake": {"api_key_env": None, "rpm": 0, "json_schema": True}, "scripted": {"latency_scale": 0.0}}
 
 
-def run_ballot_game(tmp_path, run_id, mode="sync"):
+def run_ballot_game(tmp_path, run_id):
     rec = Recorder(prise=3.0, propose_first=3.0)
     prov = {k: dict(v) for k, v in BALLOT_PROVIDERS.items()}
     prov["fake"]["base_url"] = rec.url
-    over = {"time__mode": mode}
-    if mode == "async":
-        over.update(time__fast=False, time__sim_hours_per_second=60)
     world, events = play_with_announcement(tmp_path, run_id, None, provider=rec, seasons=1, population=FOUR,
-                                           llm_overrides={"providers": prov}, **over)
+                                           llm_overrides={"providers": prov})
     rec.close()
     return world, events, rec
 
@@ -147,14 +144,9 @@ def test_ai_fishers_who_supported_nothing_get_a_ballot_and_a_rule_is_voted(tmp_p
 
 
 def test_ballots_are_not_asked_of_the_fake_llm_or_of_those_who_already_voted(tmp_path):
-    world, bus, _ = make_world(tmp_path, "ballot-fake", seasons=1, time__mode="sync", population__rule_fraction=0.0)
+    world, bus, _ = make_world(tmp_path, "ballot-fake", seasons=1, population__rule_fraction=0.0)
     asm = Assembly("valley", [a.id for a in world.agents.values()], 1, 29.0)
     speak(world, asm, world.fishers[0], proposition_quota=3.0)
     assert world.ballot_candidates(asm) == []                       # faux LLM : on compte ce que chacun a dit
 
 
-def test_a_slow_ai_loses_its_vote_but_the_game_goes_on(tmp_path):
-    world, events, rec = run_ballot_game(tmp_path, "ballot-async", mode="async")
-    assert [e for e in events if e["type"] == "run_end"][0]["payload"]["reason"] == "completed"
-    votes = [e["payload"] for e in events if e["type"] == "llm_call" and e["payload"]["purpose"] == "vote"]
-    assert votes and all(v["status"] in ("ok", "cancelled") for v in votes)

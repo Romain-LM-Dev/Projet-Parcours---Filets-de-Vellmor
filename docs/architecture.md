@@ -62,16 +62,20 @@ fait la saison à cet instant, `World.calendar_text()` le calendrier. Chaque év
 (`prompts.time_lines`), chaque souvenir et chaque ligne du suivi du lac aussi, si bien qu'un agent sait quand il agit, ce qu'il reste de pêche et
 quand aura lieu la veillée, sans déchiffrer une étiquette codée (`sim_label`, « S2 · J25 18:00 », ne sert plus qu'à l'interface).
 
-Deux manières de le faire avancer, au choix à chaque saison :
+Il n'y a qu'un seul mode de temps (spécification : [temps.md](temps.md)), mené par un **ordonnanceur à événements** (`scheduler.py`, un par saison) :
 
-* **Synchrone** : tous les pêcheurs décident sur le même instantané du monde, puis agissent ensemble. La lenteur d'une IA ne change rien au temps du monde. Les attentes ne servent qu'à l'affichage (au plus 4 s par étape, divisées par la vitesse). À la veillée, on parle **à tour de rôle** : l'horloge avance d'un tour à l'autre et chacun entend ceux qui ont parlé avant lui (dialogues dépendants).
-* **Asynchrone** : chacun va à son rythme (décalage de 0 à 4 jours) et le temps du monde suit le temps réel, à `sim_hours_per_second × vitesse` (3 heures simulées par seconde à × 1) **tant qu'une IA réfléchit**. Une IA qui met 30 s agit 90 heures plus tard dans le monde, sur un lac qui a changé, et peut rater sa fenêtre : c'est l'effet étudié. À la veillée, chacun s'exprime **une fois, de son côté, sans entendre les autres** (dialogues indépendants : `Assembly.independent`, aucune parole ni proposition dans le contexte, `utterance.heard` vide), puis tous votent au bulletin.
+* **Réfléchir ne prend pas de temps, agir en prend.** Une décision d'agent (IA ou règle) est instantanée dans le monde : elle a un *horizon* (l'instant dont elle ne voit pas la suite), et l'horloge ne le dépasse pas tant qu'elle n'est pas rendue. Une sortie en mer (un jour), la route vers un autre lac, une prise de parole durent. La lenteur d'une IA ne fait donc perdre aucune sortie et ne change rien au monde.
+* **La file** est classée sur (temps simulé, classe d'acteur, clé tirée de la graine). Les décisions dont l'horizon tombe dans un intervalle où aucun effet ne s'applique sont demandées **ensemble** et tournent en parallèle (limite : `ModelGate`) ; si une décision peut changer ce que voit la suivante (une sortie finie entre leurs horizons), la suivante attend : c'est une chaîne. Les résultats sont appliqués dans l'ordre de la file, jamais dans celui où les modèles répondent : à graine égale, même journal.
+* **La pêche** : chaque pêcheur a un jour de départ tiré dans `time.departure_spread_days` ; sa décision de prise a ce jour pour horizon ; ses sorties d'un jour (plus la route dans un autre lac) retirent leur poisson du lac **à leur fin**, avec la cale et le coin de l'instantané d'ouverture ; rien n'est planifié après `fishing_close_day` ; le retour déclenche la vente, la déclaration et les indices.
+* **La veillée** : provisoirement, on parle à tour de rôle et chacun entend ceux qui ont parlé avant lui (`utterance.heard`) ; les veillées de villages différents se déroulent en parallèle. Elle sera refaite au fil de l'eau (voir `temps.md`).
+* **L'affichage** : entre deux échéances, l'horloge avance à `sim_hours_per_second × vitesse`, accélérée de `idle_speedup` ; pendant une décision, `SimClock.now()` vaut son horizon (`SimClock.local`). Pause, vitesse et arrêt viennent de `control.py`. L'état du moteur dit qui réfléchit (`thinking`).
+* `time.mode` (synchrone / asynchrone) et la commande `set_mode` sont acceptés et ignorés (avertissement) ; `run_start.mode` vaut `unique`.
 
 Ce qui réduit l'attente sans fausser le monde :
 
-* quand **personne ne réfléchit**, l'horloge accélère (`idle_speedup`, × 40) : on ne regarde pas un monde vide ;
+* entre deux échéances, l'horloge accélère (`idle_speedup`, × 40) : on ne regarde pas un monde vide ;
 * la **vitesse** (× 1/16 à × 16, ou « max ») se change à tout moment ; **la pause** fige tout, y compris les appels aux IA ;
-* à la **fermeture d'une fenêtre** (pêche, veillée), les appels des IA qui réfléchissent encore sont abandonnés : leur réponse ne servirait plus ;
+* les IA lentes ne ratent plus de fenêtre : le monde les attend (l'incident `missed_window` ne reste que dans les anciens journaux) ;
 * le **système 1** (§ 4) réduit le temps de réflexion lui-même, et le modèle de décision open plus encore.
 
 ## 3. Communication et mémoire

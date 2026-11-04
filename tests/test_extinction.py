@@ -19,14 +19,12 @@ def kinds(events, kind):
     return [e for e in events if e["type"] == kind]
 
 
-def tiny_lake(tmp_path, seasons=6, mode="sync", **over):
+def tiny_lake(tmp_path, seasons=6, **over):
     """Huit pêcheurs sur un lac de 15 t parti à 40 % (6 t), où tout le poisson est pêchable et se voit bien (`hold_fraction` 1 et
-    aucune erreur d'estimation : d'ordinaire un bateau n'en prend que la moitié de sa part) : en synchrone, la pêche le vide dès la
-    première saison. En asynchrone chacun voit le lac que les autres ont déjà entamé et n'en demande pas plus : une sécheresse le
-    vide d'emblée (c'est l'arrêt à l'extinction que l'on éprouve, pas la pêche)."""
-    if mode == "async":
-        over.setdefault("scenario__scheduled_injections", [{"season": 1, "type": "drought", "factor": 0.0}])
-    return cfg_for(tmp_path, seasons=seasons, time__mode=mode, lake__capacity=15.0, lake__initial_ratio=0.4,
+    aucune erreur d'estimation : d'ordinaire un bateau n'en prend que la moitié de sa part). Chacun voit le lac que les autres ont déjà
+    entamé et n'en demande pas plus : une sécheresse le vide d'emblée (c'est l'arrêt à l'extinction que l'on éprouve, pas la pêche)."""
+    over.setdefault("scenario__scheduled_injections", [{"season": 1, "type": "drought", "factor": 0.0}])
+    return cfg_for(tmp_path, seasons=seasons, lake__capacity=15.0, lake__initial_ratio=0.4,
                    economy__hold_fraction=1.0, lake__observation_noise=0.0, **over)
 
 
@@ -49,15 +47,13 @@ def test_the_empty_lake_is_also_collapsed_but_the_two_are_different_things():
 
 
 # ---------------------------------------------------------------- la partie
-@pytest.mark.parametrize("mode", ["sync", "async"])
-def test_the_game_stops_as_soon_as_the_lake_is_empty(tmp_path, mode):
-    cfg = tiny_lake(tmp_path, mode=mode, time__fast=False, time__sim_hours_per_second=7200) if mode == "async" else tiny_lake(tmp_path)
-    events = play(tmp_path, f"ext-{mode}", cfg=cfg)
+def test_the_game_stops_as_soon_as_the_lake_is_empty(tmp_path):
+    events = play(tmp_path, "ext", cfg=tiny_lake(tmp_path))
     end = kinds(events, "run_end")
     assert len(end) == 1 and end[0]["payload"]["reason"] == "extinction"
     assert end[0]["payload"]["seasons_completed"] < 6                        # elle n'est pas allée au bout
     last_stock = kinds(events, "lake_update")[-1]["payload"]["stock"]
-    assert last_stock < EXTINCT_BELOW                                        # elle s'arrête sur le lac vide
+    assert last_stock <= EXTINCT_BELOW                                       # (stock arrondi à 3 décimales) elle s'arrête sur le lac vide
     assert events[-1]["type"] == "run_end"                                   # et rien ne se passe après
     # aucune saison n'a commencé après l'extinction
     t_empty = next(e["seq"] for e in kinds(events, "lake_update") if e["payload"]["stock"] < EXTINCT_BELOW)
@@ -65,7 +61,7 @@ def test_the_game_stops_as_soon_as_the_lake_is_empty(tmp_path, mode):
 
 
 def test_the_stop_is_immediate_not_at_the_end_of_the_season(tmp_path):
-    """En synchrone, la pêche vide le lac au jour 1 ; ni veillée ni bilan n'ont lieu après."""
+    """Le lac est vide dès l'ouverture de la saison ; ni pêche, ni veillée, ni bilan n'ont lieu après."""
     events = play(tmp_path, "ext-now", cfg=tiny_lake(tmp_path))
     assert not kinds(events, "assembly_start") and not kinds(events, "season_end")
     assert kinds(events, "season_start")[-1]["season"] == 1
@@ -85,7 +81,7 @@ def test_a_healthy_lake_is_never_stopped(tmp_path):
 
 
 def test_a_drought_that_dries_the_lake_ends_the_game(tmp_path):
-    world, bus, _ = make_world(tmp_path, "ext-dry", seasons=4, time__mode="sync", time__fast=False, time__sim_hours_per_second=7200)
+    world, bus, _ = make_world(tmp_path, "ext-dry", seasons=4, time__fast=False, time__sim_hours_per_second=7200)
 
     def dry(ev):
         if ev["type"] == "season_start" and ev["season"] == 2:
@@ -99,7 +95,7 @@ def test_a_drought_that_dries_the_lake_ends_the_game(tmp_path):
 
 
 def test_a_user_stop_keeps_its_own_reason(tmp_path):
-    world, bus, _ = make_world(tmp_path, "ext-user", seasons=4, time__mode="sync", time__fast=False, time__sim_hours_per_second=7200)
+    world, bus, _ = make_world(tmp_path, "ext-user", seasons=4, time__fast=False, time__sim_hours_per_second=7200)
 
     def stop(ev):
         if ev["type"] == "season_start" and ev["season"] == 2:

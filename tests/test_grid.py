@@ -74,7 +74,7 @@ def test_a_boat_empties_its_own_corner_first_and_the_lake_regrows_as_a_whole():
 
 
 def test_each_fisher_fishes_a_corner_of_his_own_shore_and_leaves_a_bad_one(tmp_path):
-    world, bus, _ = make_world(tmp_path, "coins", seasons=4, time__mode="sync", economy__luck=0.4, climate__enabled=True)
+    world, bus, _ = make_world(tmp_path, "coins", seasons=4, economy__luck=0.4, climate__enabled=True)
     asyncio.run(world.run())
     events = read_events(tmp_path, "coins")
     start = kinds(events, "run_start")[0]["payload"]

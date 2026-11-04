@@ -13,7 +13,7 @@ from filets.schemas import validate_status
 from helpers import make_world, read_events
 
 # 30 jours simulés par seconde réelle : une saison dure environ une seconde, de quoi piloter sans attendre.
-SLOW = dict(time__fast=False, time__sim_hours_per_second=720)
+SLOW = dict(time__fast=False, time__sim_hours_per_second=720, time__idle_speedup=1)
 
 
 async def drive(world, script):
@@ -44,7 +44,7 @@ def types(events, kind):
 def test_sleep_follows_speed_and_stops_during_pause():
     async def scenario():
         clock = SimClock(30, 3, 20, False)
-        ctl = GameControl(clock, "sync")
+        ctl = GameControl(clock)
         t = time.monotonic()
         await ctl.sleep(0.3)
         normal = time.monotonic() - t
@@ -73,7 +73,7 @@ def test_sleep_follows_speed_and_stops_during_pause():
 
 def test_checkpoint_blocks_while_paused_and_raises_on_stop():
     async def scenario():
-        ctl = GameControl(SimClock(30, 3, 20, False), "sync")
+        ctl = GameControl(SimClock(30, 3, 20, False))
         assert await ctl.checkpoint() is False
         ctl.pause()
         waiter = asyncio.create_task(ctl.checkpoint())
@@ -109,7 +109,7 @@ def test_speed_is_clamped():
 
 # ---------------------------------------------------------------- pause
 def test_pause_freezes_the_world_and_resume_continues(tmp_path):
-    world, bus, _ = make_world(tmp_path, "pause", seasons=2, time__mode="sync", **SLOW)
+    world, bus, _ = make_world(tmp_path, "pause", seasons=2, **SLOW)
     seen = collect(bus)
     report = {}
 
@@ -156,7 +156,7 @@ def test_pause_does_not_publish_results_of_calls_already_in_flight(tmp_path, mon
         return await real(self, model, messages, hint, tier)
 
     monkeypatch.setattr(ScriptedClient, "complete", slow_complete)
-    world, bus, _ = make_world(tmp_path, "inflight", seasons=1, time__mode="sync", **SLOW)
+    world, bus, _ = make_world(tmp_path, "inflight", seasons=1, **SLOW)
     seen = collect(bus)
     report = {}
 
@@ -176,7 +176,7 @@ def test_pause_does_not_publish_results_of_calls_already_in_flight(tmp_path, mon
 
 
 def test_pause_and_resume_are_idempotent(tmp_path):
-    world, bus, _ = make_world(tmp_path, "idem", seasons=1, time__mode="sync", **SLOW)
+    world, bus, _ = make_world(tmp_path, "idem", seasons=1, **SLOW)
     seen = collect(bus)
 
     async def script(w):
@@ -200,7 +200,7 @@ async def started(seen):
 
 def test_speed_changes_how_long_a_season_takes(tmp_path):
     def run(speed):
-        world, bus, _ = make_world(tmp_path, f"v{speed}", seasons=1, time__mode="sync", **SLOW)
+        world, bus, _ = make_world(tmp_path, f"v{speed}", seasons=1, **SLOW)
         seen = collect(bus)
 
         async def script(w):
@@ -217,7 +217,7 @@ def test_speed_changes_how_long_a_season_takes(tmp_path):
 
 
 def test_max_speed_removes_waiting_and_bad_values_are_ignored(tmp_path):
-    world, bus, _ = make_world(tmp_path, "max", seasons=2, time__mode="sync", **SLOW)
+    world, bus, _ = make_world(tmp_path, "max", seasons=2, **SLOW)
     seen = collect(bus)
 
     async def script(w):
@@ -234,82 +234,44 @@ def test_max_speed_removes_waiting_and_bad_values_are_ignored(tmp_path):
 
 
 # ---------------------------------------------------------------- mode
-def test_mode_can_be_switched_between_seasons_both_ways(tmp_path):
-    world, bus, _ = make_world(tmp_path, "mode", seasons=4, time__mode="sync")
-    seen = collect(bus)
-    loop_box = {}
-
-    def later(cmd):
-        # comme en jeu : la commande est traitée par la boucle, pas à l'intérieur de l'émission d'un événement
-        loop_box["loop"].call_soon(world.handle_command, cmd)
-
-    def on_event(ev):
-        if ev["type"] == "season_start" and ev["season"] == 1:
-            later({"type": "set_mode", "value": "async"})
-        if ev["type"] == "season_start" and ev["season"] == 3:
-            later({"type": "set_mode", "value": "sync"})
-
-    bus.subscribe("events", on_event)
-
-    async def script(w):
-        loop_box["loop"] = asyncio.get_running_loop()
-
-    asyncio.run(drive(world, script))
-    events = read_events(tmp_path, "mode")
-    assert [e["payload"]["mode"] for e in types(events, "season_start")] == ["sync", "async", "async", "sync"]
-    assert len(types(events, "season_end")) == 4
-    assert [e["payload"]["params"]["value"] for e in types(events, "injection")] == ["async", "sync"]
-    assert verify("mode", world.cfg)          # schémas valides, ordre et temps simulé monotones à travers les bascules
-    announced = [s["pending_mode"] for s in seen["status"] if s["pending_mode"]]
-    assert announced and set(announced) == {"async", "sync"}   # la bascule est annoncée avant d'être appliquée
-    assert seen["status"][-1]["mode"] == "sync" and seen["status"][-1]["pending_mode"] is None
-
-
-def test_requesting_the_current_mode_changes_nothing_and_a_request_can_be_cancelled(tmp_path):
-    world, bus, _ = make_world(tmp_path, "mode2", seasons=2, time__mode="sync")
+def test_set_mode_is_accepted_and_ignored(tmp_path, caplog):
+    """Il n'y a plus qu'un mode de temps (docs/temps.md) : l'ancienne commande est reçue, avertie, sans effet."""
+    world, bus, _ = make_world(tmp_path, "mode", seasons=2)
     seen = collect(bus)
 
     async def script(w):
         await started(seen)
-        w.handle_command({"type": "set_mode", "value": "sync"})        # déjà le cas
         w.handle_command({"type": "set_mode", "value": "async"})
-        assert seen["status"][-1]["pending_mode"] == "async"
-        w.handle_command({"type": "set_mode", "value": "sync"})        # annulation
-        assert seen["status"][-1]["pending_mode"] is None
-        w.handle_command({"type": "set_mode", "value": "turbo"})       # inconnu : ignoré
 
     asyncio.run(drive(world, script))
-    events = read_events(tmp_path, "mode2")
-    assert [e["payload"]["mode"] for e in types(events, "season_start")] == ["sync", "sync"]
+    events = read_events(tmp_path, "mode")
+    assert [e["payload"]["mode"] for e in types(events, "season_start")] == ["unique", "unique"]
+    assert not [e for e in types(events, "injection") if e["payload"]["injection_type"] == "set_mode"]
+    assert seen["status"][-1]["mode"] == "unique" and seen["status"][-1]["pending_mode"] is None
+    assert any("set_mode" in r.message for r in caplog.records)
+    assert verify("mode", world.cfg)
 
 
-@pytest.mark.parametrize("first", ["sync", "async"])
-def test_a_switched_game_keeps_valid_indicators(tmp_path, first):
-    from test_indicators_audit import engine_run, reference
+def test_status_tells_who_is_thinking(tmp_path, monkeypatch):
+    from filets.scripted import ScriptedClient
+    real = ScriptedClient.complete
 
-    other = "async" if first == "sync" else "sync"
-    world, bus, _ = make_world(tmp_path, "mixed", seasons=3, time__mode=first)
-    loop_box = {}
-    bus.subscribe("events", lambda ev: ev["type"] == "season_start" and ev["season"] == 1
-                  and loop_box["loop"].call_soon(world.handle_command, {"type": "set_mode", "value": other}))
-
-    async def script(w):
-        loop_box["loop"] = asyncio.get_running_loop()
-
-    asyncio.run(drive(world, script))
-    events = read_events(tmp_path, "mixed")
-    _, outs = engine_run(events)
-    ref = reference(events)
-    got = {o["season"]: o["values"] for o in outs if o["trigger"] == "season_end"}
-    assert set(got) == set(ref) == {1, 2, 3}
-    for s in ref:
-        assert got[s]["total_catch"] == pytest.approx(ref[s]["total_catch"], abs=2e-3)
-        assert got[s]["stock_ratio"] == pytest.approx(ref[s]["stock_ratio"], abs=2e-3)
+    async def slow(self, model, messages, hint, tier):
+        await asyncio.sleep(0.05)
+        return await real(self, model, messages, hint, tier)
+    monkeypatch.setattr(ScriptedClient, "complete", slow)
+    world, bus, _ = make_world(tmp_path, "pense", seasons=1, population__fishers=8, population__rule_fraction=0.0)
+    seen = collect(bus)
+    asyncio.run(drive(world, lambda w: started(seen)))
+    thinking = [s["thinking"] for s in seen["status"] if s.get("thinking")]
+    assert thinking and all(set(t) <= {a.id for a in world.agents.values()} for t in thinking)
+    assert seen["status"][-1]["thinking"] == []
+    assert all(validate_status(s) == [] for s in seen["status"])
 
 
 # ---------------------------------------------------------------- arrêt
 def test_stop_ends_the_game_promptly_even_while_models_think(tmp_path):
-    world, bus, _ = make_world(tmp_path, "stop", seasons=5, time__mode="sync", latency_scale=3.0, **SLOW)
+    world, bus, _ = make_world(tmp_path, "stop", seasons=5, latency_scale=3.0, **SLOW)
     seen = collect(bus)
 
     async def script(w):
@@ -327,7 +289,7 @@ def test_stop_ends_the_game_promptly_even_while_models_think(tmp_path):
 
 
 def test_stop_while_paused(tmp_path):
-    world, bus, _ = make_world(tmp_path, "stoppause", seasons=3, time__mode="async", **SLOW)
+    world, bus, _ = make_world(tmp_path, "stoppause", seasons=3, **SLOW)
     seen = collect(bus)
 
     async def script(w):
@@ -346,7 +308,7 @@ def test_stop_while_paused(tmp_path):
 def test_collapse_still_stops_at_the_end_of_the_season(tmp_path):
     # un lac à 6 % de sa capacité, huit pêcheurs : il s'effondre pendant la saison 1, qui va à son terme. L'arrêt à l'extinction
     # (immédiat, actif par défaut) est coupé ici : il l'emporterait, le lac étant aussi vidé par la pêche (voir test_extinction.py).
-    world, bus, _ = make_world(tmp_path, "collapse", seasons=6, time__mode="sync", run__stop_on_collapse=True,
+    world, bus, _ = make_world(tmp_path, "collapse", seasons=6, run__stop_on_collapse=True,
                                run__stop_on_extinction=False, lake__initial_ratio=0.06)
     asyncio.run(drive(world, lambda w: asyncio.sleep(0)))
     events = read_events(tmp_path, "collapse")
@@ -356,7 +318,7 @@ def test_collapse_still_stops_at_the_end_of_the_season(tmp_path):
 
 # ---------------------------------------------------------------- état publié
 def test_every_status_message_is_valid_and_tells_the_story(tmp_path):
-    world, bus, _ = make_world(tmp_path, "status", seasons=2, time__mode="sync", **SLOW)
+    world, bus, _ = make_world(tmp_path, "status", seasons=2, **SLOW)
     seen = collect(bus)
 
     async def script(w):
@@ -382,7 +344,7 @@ def test_every_status_message_is_valid_and_tells_the_story(tmp_path):
 def test_a_failing_subscriber_never_stops_the_game_or_the_command_pump(tmp_path):
     """Un affichage qui lève (caractère non encodable sur une sortie redirigée…) ne doit ni arrêter la partie ni
     rendre le moteur sourd aux commandes : c'est ce qui figeait la reprise après une pause."""
-    world, bus, _ = make_world(tmp_path, "fragile", seasons=2, time__mode="sync", **SLOW)
+    world, bus, _ = make_world(tmp_path, "fragile", seasons=2, **SLOW)
     calls = {"n": 0}
 
     def broken(ev):
@@ -417,8 +379,8 @@ async def until_true(cond, timeout=10.0):
 
 
 def test_an_error_inside_the_game_is_recorded_as_such(tmp_path):
-    world, bus, _ = make_world(tmp_path, "boom", seasons=2, time__mode="sync")
-    world.apply_catch = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("panne simulée"))
+    world, bus, _ = make_world(tmp_path, "boom", seasons=2)
+    world.plan_trip = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("panne simulée"))
     with pytest.raises(RuntimeError, match="panne"):
         asyncio.run(drive(world, lambda w: asyncio.sleep(0)))
     events = read_events(tmp_path, "boom")

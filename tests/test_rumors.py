@@ -129,7 +129,7 @@ def play_with_announcement(tmp_path, run_id, text, seasons=3, population=FOUR, e
                            llm_overrides=None, **over):
     """Joue une partie ; `text` est annoncé au début de la saison `announce_at` (None : aucune annonce)."""
     cfg = cfg_for(tmp_path, seasons=seasons, population__custom=population, population__elder=elder,
-                  population__elder_kind="rule", **{"time__mode": "sync", **over})
+                  population__elder_kind="rule", **over)
     cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
     if provider is not None:
         cfg["llm"]["providers"]["fake"] = {"base_url": provider.url, "api_key_env": None, "rpm": 0}
@@ -267,14 +267,14 @@ def test_a_harmless_rumor_is_echoed_in_speech_without_accusing_anyone(tmp_path):
 
 # ---------------------------------------------------------------- la commande elle-même
 def test_announcements_are_trimmed_and_empty_ones_ignored(tmp_path):
-    world, bus, _ = make_world(tmp_path, "cmd", seasons=1, time__mode="sync")
+    world, bus, _ = make_world(tmp_path, "cmd", seasons=1)
     world.handle_command({"type": "announcement", "text": "   "})
     world.handle_command({"type": "announcement", "text": "x" * 500})
     assert len(world.rumors) == 1 and len(world.rumors[0]["text"]) == 300
 
 
 def test_named_fishers_are_found_without_regard_to_accents_or_case(tmp_path):
-    world, bus, _ = make_world(tmp_path, "names", seasons=1, time__mode="sync", population__custom=FOUR,
+    world, bus, _ = make_world(tmp_path, "names", seasons=1, population__custom=FOUR,
                                population__elder=False)
     ids = {a.profile.first_name: a.id for a in world.fishers}
     assert world.named_fishers(["INES ment"]) == [ids["Inès"]]

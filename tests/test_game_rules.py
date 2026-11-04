@@ -16,7 +16,7 @@ PERSONA = type("P", (), {"name": "Théo", "archetype_label": "beau parleur", "ha
 
 # ---------------------------------------------------------------- jamais bredouille
 def test_no_trip_comes_back_empty(tmp_path):
-    catches = [e["payload"] for e in play(tmp_path, run_id="bredouille", seasons=3, time__mode="sync") if e["type"] == "catch"]
+    catches = [e["payload"] for e in play(tmp_path, run_id="bredouille", seasons=3) if e["type"] == "catch"]
     assert catches and all(c["requested"] >= 1.0 and c["landed"] > 0 for c in catches)
 
 
@@ -46,7 +46,7 @@ def test_a_quota_or_a_promise_below_the_minimum_counts_as_the_minimum(tmp_path):
 
 # ---------------------------------------------------------------- au plus capacité du lac / (2 × pêcheurs)
 def test_no_trip_takes_more_than_the_lake_capacity_over_twice_the_fishers(tmp_path):
-    events = play(tmp_path, run_id="plafond", seasons=3, time__mode="sync")
+    events = play(tmp_path, run_id="plafond", seasons=3)
     start = events[0]["payload"]
     limit = start["lake"]["capacity"] / (2 * start["population"]["fishers"])
     catches = [e["payload"] for e in events if e["type"] == "catch"]

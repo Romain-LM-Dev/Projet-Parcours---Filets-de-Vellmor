@@ -89,7 +89,7 @@ class Counting(HashEmbedder):
 
 
 def pg_game_cfg(tmp_path, dsn, seasons=2, **over):
-    cfg = cfg_for(tmp_path, seasons=seasons, time__mode="sync", **over)
+    cfg = cfg_for(tmp_path, seasons=seasons, **over)
     cfg["rag"]["backend"] = "pgvector"
     cfg["rag"]["embeddings"] = {"kind": "hash", "dim": 64}
     cfg["storage"]["postgres"]["dsn"] = dsn
@@ -184,7 +184,7 @@ def test_local_objects_store_list_and_refuse_keys_outside_their_folder(tmp_path)
 
 @needs_s3
 def test_s3_objects_round_trip_and_archive_a_game(tmp_path):
-    play(tmp_path, run_id="arch", seasons=1, time__mode="sync")
+    play(tmp_path, run_id="arch", seasons=1)
     run_dir = tmp_path / "runs" / "arch"
     tag = uuid.uuid4().hex[:8]
 
@@ -406,7 +406,7 @@ def test_the_api_searches_the_collective_memory_of_a_run(pg_dsn, tmp_path):
 @needs_pg
 def test_the_postgres_history_holds_the_same_run_as_sqlite_and_ignores_replays(pg_dsn, tmp_path):
     run_id = f"hist-{uuid.uuid4().hex[:8]}"
-    play(tmp_path, run_id=run_id, seasons=2, time__mode="sync")
+    play(tmp_path, run_id=run_id, seasons=2)
     run_dir = tmp_path / "runs" / run_id
     sq = HistoryStore(tmp_path / "h.db")
     sq.ingest_run_dir(run_dir)
@@ -450,7 +450,7 @@ def test_the_store_service_writes_to_postgres_then_commits_its_kafka_position(pg
     from filets.services import store as store_service
 
     run_id = f"svc-{uuid.uuid4().hex[:8]}"
-    play(tmp_path, run_id=run_id, seasons=1, time__mode="sync")
+    play(tmp_path, run_id=run_id, seasons=1)
     events = read_events(tmp_path, run_id)
     cfg = cfg_for(tmp_path)
     tag = uuid.uuid4().hex[:8]

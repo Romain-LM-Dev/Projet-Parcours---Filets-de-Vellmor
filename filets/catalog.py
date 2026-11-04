@@ -175,7 +175,7 @@ def build_catalog(cfg: dict, llm: str = "scripted") -> dict:
         ],
         "base_population": base,
         "defaults": {
-            "mode": cfg["time"]["mode"], "seasons": int(cfg["run"]["seasons"]), "seed": int(cfg["run"]["seed"]),
+            "mode": "sync", "seasons": int(cfg["run"]["seasons"]), "seed": int(cfg["run"]["seed"]),
             "communication": scn["communication"], "catches_visible": bool(scn["catches_visible"]),
             "council": scn.get("council", "delegates"), "patrol": bool((scn.get("patrol") or {}).get("enabled", True)),
             "speed": 1.0, "llm": option["id"],

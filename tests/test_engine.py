@@ -71,12 +71,12 @@ def test_build_game_config_applies_the_menu_choices(tmp_path):
     base = cfg_for(tmp_path)
     cfg = build_game_config(base, request(mode="async", seasons=5, seed=99, communication="hamlet",
                                           catches_visible=False))
-    assert cfg["time"]["mode"] == "async" and cfg["run"]["seasons"] == 5 and cfg["run"]["seed"] == 99
+    assert "mode" not in cfg["time"] and cfg["run"]["seasons"] == 5 and cfg["run"]["seed"] == 99
     assert cfg["scenario"]["communication"] == "hamlet" and cfg["scenario"]["catches_visible"] is False
     assert cfg["population"]["fishers"] == 3 and cfg["lake"]["capacity_resolved"] == pytest.approx(37.5)
     assert cfg["llm"]["tiers"]["grand"]["provider"] == "scripted"
     assert base["population"].get("custom") in (None, [])        # la base du moteur n'est pas modifiée
-    assert base["time"]["mode"] == "async" and base["run"]["seasons"] == 3
+    assert base["run"]["seasons"] == 3
     cfg = build_game_config(base, request(llm="ollama"))
     assert cfg["llm"]["tiers"]["grand"] == {"provider": "ollama", "model": "qwen2.5:7b"}
     assert cfg["llm"]["tiers"]["petit"]["model"] == "qwen2.5:1.5b"
@@ -134,11 +134,11 @@ def test_lobby_plays_a_game_then_another(tmp_path):
         assert validate_status(s) == [], s
     ev1, ev2 = read_events(tmp_path, first), read_events(tmp_path, second)
     a1, a2 = ev1[0]["payload"], ev2[0]["payload"]
-    assert a1["mode"] == "sync" and a1["seasons"] == 2 and a1["seed"] == 7
+    assert a1["mode"] == "unique" and a1["seasons"] == 2 and a1["seed"] == 7
     assert [a["name"] for a in a1["agents"] if a["role"] == "pecheur"] == \
            ["Aldric d’Ostrel", "Odile de Tilque", "Rémi de Tilque"]
     assert a1["lake"]["capacity"] == pytest.approx(37.5)
-    assert a2["mode"] == "async" and a2["seasons"] == 1 and len([a for a in a2["agents"] if a["role"] == "pecheur"]) == 2
+    assert a2["mode"] == "unique" and a2["seasons"] == 1 and len([a for a in a2["agents"] if a["role"] == "pecheur"]) == 2
     assert a2["lake"]["capacity"] == pytest.approx(25.0)
     assert ev1[-1]["payload"]["reason"] == "completed" and ev2[-1]["payload"]["reason"] == "completed"
     # l'identifiant d'agent et le monde sont ceux de la partie, pas de la précédente

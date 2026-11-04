@@ -85,7 +85,7 @@ def test_a_player_session_against_a_real_engine_process(tmp_path):
     proc = subprocess.Popen(
         [sys.executable, "-m", "filets", "serve", "--ws-port", str(port), "--mode", "sync",
          "--set", f"output.runs_dir={tmp_path / 'runs'}", "--set", "time.sim_hours_per_second=720"],
-        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
+        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
 
     async def session():
         ws = await connect_when_up(port)
@@ -114,13 +114,10 @@ def test_a_player_session_against_a_real_engine_process(tmp_path):
         await c.send(type="resume")
         await c.until(lambda: c.status.get("state") == "running" and len(c.of("events")) > frozen, what="reprise")
 
-        # --- 4. changement de mode : annoncé tout de suite, appliqué à la saison suivante
+        # --- 4. l'ancien changement de mode est reçu et ignoré : un seul mode de temps
         await c.send(type="set_mode", value="async")
-        await c.until(lambda: c.status.get("pending_mode") == "async", what="mode annoncé")
-        n_seasons = len(c.events("season_start"))
-        await c.until(lambda: any(e["payload"].get("mode") == "async" for e in c.events("season_start")),
-                      what="saison asynchrone")
-        assert c.status["pending_mode"] is None or c.status["mode"] == "async"
+        await c.until(lambda: len(c.events("season_start")) >= 2, what="saison suivante")
+        assert c.status["pending_mode"] is None and c.status["mode"] == "unique"
 
         # --- 5. vitesse maximale : la fin arrive vite
         await c.send(type="set_speed", value="max")
@@ -128,9 +125,9 @@ def test_a_player_session_against_a_real_engine_process(tmp_path):
         await c.until(lambda: c.status.get("state") == "ended", 40, "fin de partie")
         assert c.status["end_reason"] == "completed" and c.status["lobby"] is True
         modes = [e["payload"]["mode"] for e in c.events("season_start")]
-        assert modes[0] == "sync" and "async" in modes and len(modes) == 4
+        assert set(modes) == {"unique"} and len(modes) == 4
         injected = [e["payload"]["injection_type"] for e in c.events("injection")]
-        assert injected[:2] == ["pause", "resume"] and "set_mode" in injected and "set_speed" in injected
+        assert injected[:2] == ["pause", "resume"] and "set_mode" not in injected and "set_speed" in injected
 
         # --- 6. une deuxième partie, autre composition, sans rien relancer
         req2 = request(seasons=2, mode="async", speed="max")

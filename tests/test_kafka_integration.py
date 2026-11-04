@@ -76,8 +76,8 @@ def read_topic(cfg, key, expected, timeout=20.0):
 def test_service_started_late_still_finds_the_start_of_the_current_run(kcfg, tmp_path):
     """Le bug d'origine : un service qui rejoint après `run_start` calculait des pourcentages de stock sur une
     capacité inconnue (7600 % au lieu de 76 %). Reprendre au dernier `run_start` donne les chiffres du run."""
-    a = play(tmp_path, run_id="a", seasons=2, time__mode="sync")
-    b = play(tmp_path, run_id="b", seasons=3, time__mode="sync", population__fishers=6)
+    a = play(tmp_path, run_id="a", seasons=2)
+    b = play(tmp_path, run_id="b", seasons=3, population__fishers=6)
     bus = KafkaBus(BOOTSTRAP, kcfg["bus"]["topics"], consume_commands=False)
     publish_all(bus, a + b)
 
@@ -110,13 +110,13 @@ def test_service_started_late_still_finds_the_start_of_the_current_run(kcfg, tmp
 def test_scan_handles_empty_topic_and_topic_without_run_start(kcfg, tmp_path):
     bus = KafkaBus(BOOTSTRAP, kcfg["bus"]["topics"], consume_commands=False)
     assert last_run_start_offset(kcfg) == 0
-    events = play(tmp_path, seasons=1, time__mode="sync")
+    events = play(tmp_path, seasons=1)
     publish_all(bus, [e for e in events if e["type"] != "run_start"])
     assert last_run_start_offset(kcfg) == 0                  # rien à retrouver : on repart du début
 
 
 def test_scan_finds_a_run_start_buried_deep_in_a_long_topic(kcfg, tmp_path):
-    events = play(tmp_path, seasons=5, time__mode="sync")
+    events = play(tmp_path, seasons=5)
     tail = [e for e in events if e["type"] != "run_start"]
     bus = KafkaBus(BOOTSTRAP, kcfg["bus"]["topics"], consume_commands=False)
     publish_all(bus, events + tail + tail)                   # run_start à plus de 2 000 messages de la fin : plusieurs blocs

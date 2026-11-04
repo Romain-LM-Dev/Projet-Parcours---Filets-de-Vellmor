@@ -198,18 +198,9 @@ fois** et ne garde pas deux gros modèles en mémoire :
   coûte plus que la lecture du prompt. La **réflexion rapide** (`llm.reflection: rapide`) demande une phrase courte par champ, allège
   le contexte (8 dernières prises, 4 souvenirs, 2 documents, 8 dernières répliques) et borne la réponse (110 tokens pour une prise,
   150 pour une réplique, contre 350). `complete` reste le profil de référence des expériences : à utiliser pour les mesures.
-* *Appels devenus inutiles.* En asynchrone, quand la pêche ou la veillée se ferme, les IA qui réfléchissent encore ont raté leur
-  tour. Leur appel est **abandonné à cet instant** (événement `llm_call` de statut `cancelled`, compté à part des erreurs) au lieu
-  d'attendre une réponse qui ne servirait plus : c'est ce qui faisait traîner la fin de chaque saison.
-
-**En asynchrone, le monde attend les IA lentes.** Le temps du monde suit le temps réel : pendant qu'une IA locale réfléchit 30 s, la
-veillée (78 heures simulées, soit 26 s réelles à 3 h/s et à × 1) avance. Par défaut (`time.wait_for_ai`), une fenêtre (fin de la pêche,
-fin de la veillée et ses bulletins) **ne se ferme pas tant qu'une IA réfléchit encore** : le temps du monde est suspendu jusqu'à sa
-réponse, et la barre du haut dit « le monde attend N IA qui réfléchissent encore ». La partie ralentit avec une IA lente, mais aucune
-sortie, réplique ni bulletin n'est perdu, et le fil des échanges reste cohérent. Avec `time.wait_for_ai: false`, l'IA qui n'a pas fini
-rate sa fenêtre : le fil affiche `RÉPLIQUE PERDUE` (ou `SORTIE PERDUE`) et l'incident `missed_window` est enregistré. Dans les deux
-cas, plus on va vite, plus l'IA paraît lente : le menu propose une vitesse de départ par moteur d'IA (× ¼ pour Ollama rapide, × 1/8
-pour le 7B) et le jeu un bouton **Ralentir**. En **synchrone**, la lenteur d'une IA n'a aucun effet sur le temps du monde.
+* *Les IA lentes ne font rien perdre.* Une décision est instantanée dans le monde : le monde l'attend (l'état du moteur dit qui
+  réfléchit, `thinking`), plus aucune sortie, réplique ni bulletin n'est perdu pour cause de lenteur. L'incident `missed_window`
+  ne reste que dans les anciens journaux. Plus on va vite, plus l'IA paraît lente à l'écran seulement.
 
 **Sur un portable, la carte graphique chauffe.** Une partie longue avec Ollama la maintient à 100 % : vers 88 °C la fréquence tombe
 (mesuré : de 2100 MHz à 210–580 MHz) et chaque réponse met 5 à 10 fois plus de temps qu'à froid. Les IA paraissent alors « lentes »
@@ -602,16 +593,17 @@ chance de la mesurer `scenario.detection.patrol` (90 %) fois cette part ; la cha
 note après chaque saison où il est passé, qui il a mesuré et si cela collait avec ce qui était déclaré ; il le relit avant de choisir sa
 route suivante. Un capitaine ne peut être partout : couvrir une zone, c'est en laisser d'autres sans surveillance.
 
-## Synchrone et asynchrone : les dialogues
+## Le temps : un seul mode, et les dialogues
 
-* **Synchrone — dialogues dépendants.** À la veillée, on parle **à tour de rôle** (l'ancien ouvre, puis les élus, en commençant chaque
-  saison par un village différent) et chacun **entend tout ce qui a été dit avant lui** : l'horloge avance d'un tour à l'autre, et la
-  parole de chacun est visible du suivant (`utterance.heard`). On peut répondre, soutenir, contester : ce qu'on t'a dit directement
-  (`destinataire`) est rappelé à part dans l'invite (« On s'est adressé à toi »).
-* **Asynchrone — dialogues indépendants.** Chacun s'exprime **une fois**, à son rythme, **sans rien entendre ni voir** de ce que les autres
-  disent ou déposent (`heard` vide, ni échange, ni propositions sur la table) ; les IA réfléchissent en parallèle, et leurs paroles sont
-  **déposées toutes au même instant**, quand la dernière est prête (dans l'ordre du conseil). Puis tous votent sur tout ce qui a été
-  proposé (bulletins 6 h avant la fin de la veillée). Le nombre de tours de parole ne compte qu'en synchrone.
+Il n'y a plus de choix Synchrone / Asynchrone : un **ordonnanceur à événements** mène chaque saison (spécification : [docs/temps.md](docs/temps.md)).
+Réfléchir ne prend pas de temps simulé, agir en prend : une IA lente ne fait perdre aucune sortie et ne change pas le monde, et les
+décisions qu'aucun événement ne sépare sont demandées **en parallèle**.
+
+* **Veillée (provisoire).** On parle **à tour de rôle** (l'ancien ouvre, puis les élus, en commençant chaque saison par un village
+  différent) et chacun **entend tout ce qui a été dit avant lui** (`utterance.heard`). On peut répondre, soutenir, contester : ce qu'on
+  t'a dit directement (`destinataire`) est rappelé à part dans l'invite (« On s'est adressé à toi »). Les veillées de villages différents
+  se déroulent en parallèle. Elle sera refaite « au fil de l'eau » (répliques préparées en parallèle, une seule personne parle à la fois).
+* `time.mode` et la commande `set_mode` sont acceptés et ignorés (avertissement) ; `run_start.mode` vaut `unique`.
 
 **Proposer une règle.** Quand une règle est en vigueur, la rappeler ne la reconduit pas : `proposition_quota: null` la garde (elle reste
 valable sans nouveau vote), un chiffre en propose une **nouvelle**. L'invite donne aussi le bilan de la règle (combien de pêcheurs l'ont
@@ -747,25 +739,17 @@ des parties synchrones, asynchrones, par hameau, sans communication et à règle
 
 Chaque événement porte `sim_time` (moment dans le monde) et `processed_at` (moment réel).
 
-* **Synchrone** : à chaque pas, tous les agents observent le même instantané ; le temps simulé ne
-  bouge pas pendant qu'ils réfléchissent ; les actions s'appliquent ensemble (rationnement au
-  prorata si la demande dépasse le stock). À la veillée, on parle à tour de rôle et chacun entend ceux
-  qui ont parlé avant lui (dialogues dépendants).
-* **Asynchrone** : le temps simulé suit le temps réel (`sim_hours_per_second`, 3 h/s par défaut).
-  Chaque pêcheur a son propre rythme ; sa prise s'applique au lac *tel qu'il est quand il a fini
-  de réfléchir*. À la veillée, chacun s'exprime dès qu'il est prêt, sans entendre les autres
-  (dialogues indépendants), puis tous votent. Quand personne ne réfléchit, l'horloge accélère (`idle_speedup`) : nul n'est désavantagé.
+* **Un seul mode** (ordonnanceur, voir [docs/temps.md](docs/temps.md)) : le temps simulé ne bouge pas pendant qu'un agent
+  réfléchit ; ses actions durent (une sortie d'un jour, la route vers un autre lac) et s'appliquent à leur fin, dans l'ordre de la
+  file (temps, classe, clé de la graine), jamais dans celui où les modèles répondent. Entre deux échéances, l'horloge d'affichage
+  avance à `sim_hours_per_second` (3 h/s par défaut), accélérée de `idle_speedup`.
 
-`sim_hours_per_second` convertit la latence d'un modèle en durée dans le monde : c'est un
-paramètre du modèle de temps dont l'effet doit être mesuré. Aucun agent ne peut utiliser une
+`sim_hours_per_second` ne règle plus que le rythme d'affichage : la latence d'un modèle n'a aucun effet sur le monde. Aucun agent ne peut utiliser une
 information postérieure à son horizon : mémoire, archives, paroles et propositions sont filtrées,
 et toute violation est détectée et comptée.
 
-**Changer de mode en cours de partie.** Chaque saison est jouée par l'une des deux orchestrations, choisie à son début :
-c'est la frontière où elles parlent de la même chose (le calendrier d'une saison est identique). Une demande de changement
-est donc appliquée à la saison suivante ; le journal garde la demande (`injection set_mode`) et le mode réel de chaque
-saison (`season_start.mode`), et le temps simulé reste monotone à travers la bascule (vérifié par `filets verify`).
-La pause et la vitesse sont tracées de la même façon (`injection pause|resume|set_speed|stop`).
+**Plus de changement de mode.** La commande `set_mode` est reçue et ignorée (avertissement dans le journal du moteur). La pause, la
+vitesse et l'arrêt restent tracés par des `injection pause|resume|set_speed|stop`.
 
 ## Données (F1–F6)
 
@@ -796,7 +780,7 @@ miniopy-async, aiokafka, httpx). Voir [docs/architecture.md § 6](docs/architect
 ## Arborescence
 
 ```
-filets/            moteur : world.py (calendrier, sync/async), control.py (pause, vitesse, mode, arrêt),
+filets/            moteur : world.py (le monde), scheduler.py (l'ordonnanceur, voir docs/temps.md), control.py (pause, vitesse, arrêt),
                    engine.py (le salon : validation de la demande, vérification des IA, parties successives),
                    catalog.py (ce que propose le menu), agents.py, prompts.py, policies.py, profiles.py,
                    memory.py, rag.py, llm.py, routing.py, scripted.py, indicators.py, console.py, cli.py,

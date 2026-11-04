@@ -34,7 +34,7 @@ ROSTER = [{"first_name": name, "hamlet": hamlet, "archetype": arch, "experience"
 
 def slow_async_run_with_announcement(tmp_path, run_id="gdfeed"):
     """Mode asynchrone, modèle 5 fois plus lent que la veillée : des répliques et des sorties sont perdues ; annonce en saison 1."""
-    cfg = cfg_for(tmp_path, seasons=2, time__mode="async", time__fast=False, time__sim_hours_per_second=7200,
+    cfg = cfg_for(tmp_path, seasons=2, time__fast=False, time__sim_hours_per_second=7200,
                   time__wait_for_ai=False,                   # sans attendre les IA lentes : des fenêtres se ferment sur elles
                   population__custom=ROSTER,                 # des agents à règles (un sur deux) : eux jugent et votent sans IA
                   climate__enabled=True, climate__event_rate=1.0,                 # un événement du climat dès la 2e saison
@@ -76,7 +76,7 @@ def test_the_map_shows_every_lake_its_villages_and_one_boat_per_patrol(tmp_path)
 
     lakes = [{"name": "Vellmor", "capacity": 100, "stock_ratio": 0.8, "villages": ["Ostrel", "Bramois"]},
              {"name": "Orsane", "capacity": 40, "stock_ratio": 0.5, "growth_rate": 0.6, "villages": ["Tilque", "Hennad"]}]
-    cfg = cfg_for(tmp_path, seasons=3, time__mode="sync", population__custom=ROSTER, climate__enabled=True, lake__lakes=lakes,
+    cfg = cfg_for(tmp_path, seasons=3, population__custom=ROSTER, climate__enabled=True, lake__lakes=lakes,
                   scenario__patrol={"enabled": True, "count": 2, "from_season": 1, "cost": 15, "legs": 2, "days": 10})
     play(tmp_path, "gdlakes", cfg=cfg)
     events = tmp_path / "runs" / "gdlakes" / "events.jsonl"

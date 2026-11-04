@@ -6,21 +6,23 @@ Le temps simulé est exprimé en jours (float) depuis le début du run. Une sais
 * `sim_time`     : le moment simulé où l'événement se produit dans le monde ;
 * `processed_at` : le moment réel (horloge murale) où le système l'a traité, pauses déduites.
 
-En mode synchrone, l'horloge avance par pas imposés par l'orchestrateur, quelle que
-soit la latence des LLM. En mode asynchrone, elle avance avec le temps réel (cadence
-`sim_hours_per_second`), si bien qu'un agent qui réfléchit 20 s agit plus tard, dans le
-monde, qu'un agent qui réfléchit 1 s. Quand aucun agent ne réfléchit, elle peut
-accélérer (`idle_speedup`) : personne n'est alors désavantagé par sa lenteur.
+Réfléchir ne prend pas de temps simulé (voir `docs/temps.md`) : l'horloge ne passe jamais l'horizon d'une
+décision en cours, et la lenteur d'un LLM n'a aucun effet sur le monde. Entre deux échéances, elle avance au
+rythme d'affichage (cadence `sim_hours_per_second`, accélérée de `idle_speedup`). Pendant une décision, `now()`
+vaut son horizon (voir `local`) : ses événements portent le temps où elle s'est prise, pas celui de l'affichage.
 
 Le joueur peut mettre la partie en pause et changer la vitesse (`speed`, un facteur appliqué à
 `sim_hours_per_second`). En pause, ni le temps simulé ni `processed_at` n'avancent.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import math
 import time
 
 SPEED_MIN, SPEED_MAX = 0.05, 64.0
+_local: contextvars.ContextVar[float | None] = contextvars.ContextVar("sim_local_time", default=None)
 
 
 def fmt_sim(t: float, season_days: float) -> str:
@@ -91,7 +93,18 @@ class SimClock:
             self._paused_at = None
 
     def now(self) -> float:
-        return self._now
+        local = _local.get()
+        return self._now if local is None else local
+
+    @staticmethod
+    @contextlib.contextmanager
+    def local(t: float):
+        """Dans ce bloc (et cette tâche), le temps vu par le monde est `t` : l'horizon d'une décision, indépendant de l'affichage."""
+        token = _local.set(t)
+        try:
+            yield
+        finally:
+            _local.reset(token)
 
     def wall_elapsed(self) -> float:
         """Secondes réelles de jeu écoulées depuis le début du run, pauses exclues."""
@@ -101,10 +114,10 @@ class SimClock:
     def set(self, t: float) -> None:
         if t < self._now - 1e-9:
             raise RuntimeError(f"l'horloge simulée ne recule pas ({t} < {self._now})")
-        self._now = t
+        self._now = max(t, self._now)
 
     def advance_wall(self, dt_wall: float, next_due: float | None, busy: bool) -> None:
-        """Mode async : fait avancer le temps simulé d'après le temps réel écoulé."""
+        """Fait avancer l'affichage d'après le temps réel écoulé, sans passer `next_due` ; `busy` : le rythme normal, sans accélération."""
         if not busy and next_due is not None:
             if self.fast or math.isinf(self.idle_speedup):
                 self._now = max(self._now, next_due)
@@ -118,13 +131,13 @@ class SimClock:
         self._now += step
 
     def label(self, t: float | None = None) -> str:
-        return fmt_sim(self._now if t is None else t, self.season_days)
+        return fmt_sim(self.now() if t is None else t, self.season_days)
 
     def text(self, t: float | None = None, year: str | None = None) -> str:
-        return fmt_text(self._now if t is None else t, self.season_days, year)
+        return fmt_text(self.now() if t is None else t, self.season_days, year)
 
     def season_of(self, t: float | None = None) -> int:
-        return int((self._now if t is None else t) // self.season_days) + 1
+        return int((self.now() if t is None else t) // self.season_days) + 1
 
     def season_start(self, season: int) -> float:
         return (season - 1) * self.season_days

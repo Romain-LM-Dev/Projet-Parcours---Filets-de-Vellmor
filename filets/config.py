@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import copy
+import logging
 import math
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -101,8 +103,15 @@ def normalize(cfg: dict) -> dict:
     if isinstance(hold, bool) or not isinstance(hold, (int, float)) or not 0.05 <= hold <= 1.0:
         raise ValueError("economy.hold_fraction doit être un nombre entre 0,05 et 1")
     t = cfg["time"]
-    if t["mode"] not in ("sync", "async"):
-        raise ValueError("time.mode doit valoir sync ou async")
+    if "mode" in t:        # l'ancien choix synchrone / asynchrone : il n'y a plus qu'un mode de temps (docs/temps.md)
+        log.warning("time.mode (%s) est ignoré : il n'y a plus qu'un seul mode de temps", t.pop("mode"))
+    if "async_offset_days" in t:      # ancien nom de time.departure_spread_days
+        t["departure_spread_days"] = t.pop("async_offset_days")
+    for gone in ("wait_for_ai", "ballot_lead_days", "assembly_turn_gap_days"):
+        t.pop(gone, None)
+    lo, hi = t.get("departure_spread_days", [0.0, 4.0])
+    if not 0 <= lo <= hi:
+        raise ValueError("time.departure_spread_days doit être [min, max] avec 0 <= min <= max")
     sp = t.get("idle_speedup", 20)
     t["idle_speedup"] = math.inf if str(sp).lower() in ("inf", ".inf", "infinity") else float(sp)
     if cfg["scenario"]["communication"] not in ("valley", "hamlet", "none"):

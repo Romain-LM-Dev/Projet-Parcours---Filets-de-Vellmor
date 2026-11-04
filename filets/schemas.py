@@ -52,7 +52,7 @@ ENVELOPE = obj(
 
 PAYLOADS: dict[str, dict] = {
     "run_start": obj({
-        "mode": {"enum": ["sync", "async"]}, "seed": INT, "seasons": INT,
+        "mode": {"enum": ["unique", "sync", "async"]}, "seed": INT, "seasons": INT,
         "lake": obj({"capacity": NUM, "stock": NUM, "growth_rate": NUM, "collapse_ratio": NUM,
                      "sustainable_yield": NUM}),
         "agents": {"type": "array", "items": {"type": "object"}},
@@ -66,7 +66,7 @@ PAYLOADS: dict[str, dict] = {
     "lake_cells": obj({"lakes": {"type": "object"}}),
     "run_end": obj({"reason": STR, "seasons_completed": INT}),
     # `conditions` : la saison de l'année, ses facteurs (pêche, repeuplement) et les événements en cours (voir `climate.py`)
-    "season_start": obj({"stock": NUM}, {"mode": {"enum": ["sync", "async"]}, "conditions": {"type": "object"},
+    "season_start": obj({"stock": NUM}, {"mode": {"enum": ["unique", "sync", "async"]}, "conditions": {"type": "object"},
                                         "lakes": {"type": "object"}}),      # (plusieurs lacs) le stock de chacun
     "phase": obj({"name": {"enum": ["fishing", "assembly", "regrowth"]}, "state": {"enum": ["open", "close"]}}),
     "decision": obj(
@@ -148,7 +148,7 @@ PAYLOADS: dict[str, dict] = {
     # `delegates` : au conseil de la vallée, l'élu de chaque village ; `mode` : sync (on s'entend, à tour de rôle) ou async
     # (chacun s'exprime de son côté)
     "assembly_start": obj({"scope": STR, "participants": IDS},
-                          {"mode": {"enum": ["sync", "async"]}, "delegates": {"type": "object"}}),
+                          {"mode": {"enum": ["unique", "sync", "async"]}, "delegates": {"type": "object"}}),
     "assembly_end": obj({"scope": STR, "adopted_proposal": STR_OR_NULL, "utterances": INT}),
     "utterance": obj({"speaker": STR, "to": STR, "text": STR, "scope": STR, "round": INT,
                       "info_horizon": NUM, "heard": IDS, "decision_event_id": STR}),
@@ -212,7 +212,8 @@ COMMAND = obj({"type": {"enum": COMMAND_TYPES}},
 # affiche dans sa barre de pilotage, et ce qui lui dit si elle doit montrer le menu de démarrage.
 STATUS = obj(
     {"state": {"enum": ["idle", "starting", "running", "paused", "ended"]}, "engine_id": STR, "wall_clock": STR},
-    {"run_id": STR_OR_NULL, "mode": {"enum": ["sync", "async", None]}, "pending_mode": {"enum": ["sync", "async", None]},
+    {"run_id": STR_OR_NULL, "mode": {"enum": ["unique", "sync", "async", None]}, "pending_mode": {"enum": ["sync", "async", None]},
+     "thinking": IDS,       # les agents dont une décision est en cours (qui réfléchit en ce moment)
      "speed": NUM, "fast": BOOL, "paused": BOOL, "season": INT, "seasons": INT, "sim_label": STR,
      "end_reason": STR_OR_NULL, "error": STR_OR_NULL,
      "controls": BOOL,      # l'interface peut piloter la partie (faux en rejeu)

@@ -43,18 +43,17 @@ def strip(ev):
 
 
 def test_sync_is_deterministic(tmp_path):
-    a = asyncio.run(run_once(cfg_for(tmp_path, time__mode="sync"), quiet=True, run_id="a"))
-    b = asyncio.run(run_once(cfg_for(tmp_path, time__mode="sync"), quiet=True, run_id="b"))
+    a = asyncio.run(run_once(cfg_for(tmp_path), quiet=True, run_id="a"))
+    b = asyncio.run(run_once(cfg_for(tmp_path), quiet=True, run_id="b"))
     ea = [strip(e) for e in events(tmp_path, a) if e["type"] != "llm_call"]
     eb = [strip(e) for e in events(tmp_path, b) if e["type"] != "llm_call"]
     as_text = lambda evs: re.sub(r'\ba-', 'X-', json.dumps(evs))
     assert as_text(ea) == re.sub(r'\bb-', 'X-', as_text(eb))
 
 
-@pytest.mark.parametrize("mode", ["sync", "async"])
-def test_run_verify_replay(tmp_path, mode):
-    cfg = cfg_for(tmp_path, time__mode=mode)
-    rid = asyncio.run(run_once(cfg, quiet=True, run_id=f"r-{mode}"))
+def test_run_verify_replay(tmp_path):
+    cfg = cfg_for(tmp_path)
+    rid = asyncio.run(run_once(cfg, quiet=True, run_id="r-unique"))
     assert verify(rid, cfg)
     assert asyncio.run(replay(rid, cfg, speed=0, ws=False, ws_port=0, linger=False))
     evs = events(tmp_path, rid)
@@ -174,7 +173,7 @@ def test_openai_compatible_client_with_retry(tmp_path):
 
     srv = HTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    cfg = cfg_for(tmp_path, time__mode="sync", population__fishers=3)
+    cfg = cfg_for(tmp_path, population__fishers=3)
     cfg["run"]["seasons"] = 1
     cfg["llm"]["max_retries"] = 1
     cfg["llm"]["providers"]["fake"] = {"base_url": f"http://127.0.0.1:{srv.server_port}/v1", "api_key_env": None, "rpm": 0}

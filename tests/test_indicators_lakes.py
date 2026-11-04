@@ -18,7 +18,7 @@ def run_engine(events):
 
 
 def test_per_lake_detail_matches_the_raw_events(tmp_path):
-    ev = play(tmp_path, "il", seasons=3, population__fishers=8, lake__lakes=TWO_LAKES, time__mode="sync")
+    ev = play(tmp_path, "il", seasons=3, population__fishers=8, lake__lakes=TWO_LAKES)
     eng, out = run_engine(ev)
     caps = {lk["name"]: lk["capacity"] for lk in ev[0]["payload"]["lakes"]}
     ends = {e["season"]: e["payload"] for e in ev if e["type"] == "season_end"}
@@ -44,7 +44,7 @@ def test_per_lake_detail_matches_the_raw_events(tmp_path):
 
 
 def test_valley_collapses_only_when_every_lake_has(tmp_path):
-    ev = play(tmp_path, "ic", seasons=1, population__fishers=8, lake__lakes=TWO_LAKES, time__mode="sync")
+    ev = play(tmp_path, "ic", seasons=1, population__fishers=8, lake__lakes=TWO_LAKES)
     eng = IndicatorEngine(0.5)
     for e in ev[:1]:
         eng.ingest(e)
@@ -58,6 +58,6 @@ def test_valley_collapses_only_when_every_lake_has(tmp_path):
 
 
 def test_single_lake_has_no_lake_detail(tmp_path):
-    ev = play(tmp_path, "i1", seasons=1, population__fishers=8, time__mode="sync")
+    ev = play(tmp_path, "i1", seasons=1, population__fishers=8)
     _, out = run_engine(ev)
     assert all("lakes" not in o["values"] for o in out)

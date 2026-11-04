@@ -55,7 +55,7 @@ def test_custom_population_is_used_as_given(tmp_path):
              wealth=90, kind="llm", tier="grand"),
         spec(first_name="Inès", hamlet="Hennad", archetype="ancienne_famille", experience=10, kind="rule"),
     ]
-    events = play(tmp_path, seasons=1, time__mode="sync", population__custom=fishers, population__elder=False)
+    events = play(tmp_path, seasons=1, population__custom=fishers, population__elder=False)
     start = events[0]["payload"]
     agents = start["agents"]
     assert [a["id"] for a in agents] == ["F01", "F02", "F03"]            # pas d'ancien demandé
@@ -72,12 +72,12 @@ def test_custom_population_is_used_as_given(tmp_path):
 
 def test_elder_can_be_kept_and_made_a_rule_agent(tmp_path):
     fishers = [spec(), spec(first_name="Odile", hamlet="Tilque")]
-    events = play(tmp_path, seasons=1, time__mode="sync", population__custom=fishers, population__elder=True,
+    events = play(tmp_path, seasons=1, population__custom=fishers, population__elder=True,
                   population__elder_kind="rule")
     elder = [a for a in events[0]["payload"]["agents"] if a["role"] == "ancien"][0]
     assert elder["kind"] == "rule" and elder["tier"] is None
     # tous les pêcheurs à règles n'imposent plus un ancien à règles quand la liste est choisie à la main
-    events = play(tmp_path, run_id="t2", seasons=1, time__mode="sync", population__custom=[spec(kind="rule")],
+    events = play(tmp_path, run_id="t2", seasons=1, population__custom=[spec(kind="rule")],
                   population__elder=True, population__elder_kind="llm")
     elder = [a for a in events[0]["payload"]["agents"] if a["role"] == "ancien"][0]
     assert elder["kind"] == "llm" and elder["tier"] == "grand"
@@ -132,5 +132,5 @@ def test_normalize_derives_count_and_rule_fraction_from_the_list():
 def test_many_fishers_stay_playable(tmp_path):
     fishers = [spec(first_name=f"P{i}", hamlet=HAMLETS[i % 4], archetype=list(ARCHETYPES)[i % 4], kind="rule")
                for i in range(24)]
-    events = play(tmp_path, seasons=2, time__mode="async", population__custom=fishers, population__elder=False)
+    events = play(tmp_path, seasons=2, population__custom=fishers, population__elder=False)
     assert len([e for e in events if e["type"] == "catch"]) == 48

@@ -16,7 +16,7 @@ from test_voting import Said
 
 
 def room(tmp_path, run_id="rules", **over):
-    world, bus, _ = make_world(tmp_path, run_id, population__fishers=8, population__rule_fraction=0.0, time__mode="sync", **over)
+    world, bus, _ = make_world(tmp_path, run_id, population__fishers=8, population__rule_fraction=0.0, **over)
     return world, Assembly("valley", [a.id for a in world.agents.values()], 0, 29.0)      # saison 0 : la règle vaut dès la saison 1
 
 
@@ -255,7 +255,7 @@ def test_the_words_of_a_rule_follow_its_type(tmp_path):
 
 # ============================================================ une partie scriptée entière
 def test_a_scripted_game_of_six_seasons_adopts_at_least_two_different_types(tmp_path):
-    events = play(tmp_path, "six", seasons=6, population__fishers=8, population__rule_fraction=0.0, time__mode="sync",
+    events = play(tmp_path, "six", seasons=6, population__fishers=8, population__rule_fraction=0.0,
                   economy__luck=0.3)
     adopted = [e["payload"] for e in events if e["type"] == "norm_adopted"]
     assert len({p["kind"] for p in adopted}) >= 2, [p.get("text") for p in adopted]
@@ -347,7 +347,6 @@ def test_a_scripted_game_on_three_lakes_adopts_a_lake_rule(tmp_path):
     cfg = load_config("config/lakes.yaml")
     cfg["output"]["runs_dir"] = str(tmp_path / "runs")
     cfg["time"]["fast"] = True
-    cfg["time"]["mode"] = "sync"
     cfg["run"]["seasons"] = 8
     cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
     cfg["economy"]["luck"] = 0.0

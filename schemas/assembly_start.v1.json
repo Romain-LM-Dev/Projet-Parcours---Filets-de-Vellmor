@@ -12,6 +12,7 @@
     },
     "mode": {
       "enum": [
+        "unique",
         "sync",
         "async"
       ]

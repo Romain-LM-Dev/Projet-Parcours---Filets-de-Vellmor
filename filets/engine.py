@@ -159,7 +159,7 @@ def build_game_config(base_cfg: dict, req: dict) -> dict:
     llm = next(o for o in LLM_OPTIONS if o["id"] == req.get("llm", "scripted"))
     over: dict = {
         "run": {"seasons": req["seasons"], "seed": req["seed"], "label": f"menu-{llm['id']}"},
-        "time": {"mode": req["mode"]},
+        # (le choix synchrone / asynchrone du menu n'a plus d'effet : un seul mode de temps, docs/temps.md)
         "scenario": {"communication": req["communication"], "catches_visible": req["catches_visible"],
                      "council": req.get("council", base_cfg["scenario"].get("council", "delegates")),
                      "patrol": {"enabled": patrols > 0, "count": patrols},

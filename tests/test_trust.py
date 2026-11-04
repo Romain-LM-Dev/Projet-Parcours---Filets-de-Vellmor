@@ -36,7 +36,7 @@ def game(tmp_path, run_id, detection, seasons=3, patrol=None, confiance=None, sa
     over = {**EVERYONE, **over}
     if patrol:
         over["scenario__patrol"] = {"cost": 15, "from_season": 1, **patrol}
-    cfg = cfg_for(tmp_path, seasons=seasons, population__custom=VALLEY, population__elder=False, time__mode="sync",
+    cfg = cfg_for(tmp_path, seasons=seasons, population__custom=VALLEY, population__elder=False,
                   scenario__detection=detection, **over)
     cfg["llm"]["providers"]["fake"] = {"base_url": rec.url, "api_key_env": None, "rpm": 0}
     cfg["llm"]["tiers"] = {"grand": {"provider": "fake", "model": "m"}, "petit": {"provider": "fake", "model": "m"}}
@@ -414,6 +414,6 @@ def test_a_good_day_makes_no_lie_and_a_liar_hides_what_he_meant_to_hide(tmp_path
 
 def test_no_recorded_lie_is_below_the_measurement_threshold_over_six_seasons(tmp_path):
     from filets.world import MIN_LIE_T
-    world, bus, _ = make_world(tmp_path, "six-saisons", seasons=6, time__mode="sync", economy__luck=0.4, climate__enabled=True)
+    world, bus, _ = make_world(tmp_path, "six-saisons", seasons=6, economy__luck=0.4, climate__enabled=True)
     asyncio.run(world.run())
     assert all(x["landed"] - x["declared"] >= MIN_LIE_T for x in world.lies.values())

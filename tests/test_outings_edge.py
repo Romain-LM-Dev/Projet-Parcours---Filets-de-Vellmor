@@ -33,7 +33,7 @@ def set_outings(agent, season, yields, weather="ordinaire"):
 
 def played(tmp_path, run_id, seasons=2, **over):
     """Une partie synchrone sur un grand lac (personne n'est rationné), avec chance et temps : le monde et son journal."""
-    over = {"economy__luck": 0.4, "climate__enabled": True, "lake__capacity": 1000.0, "time__mode": "sync", **over}
+    over = {"economy__luck": 0.4, "climate__enabled": True, "lake__capacity": 1000.0, **over}
     world, bus, _ = make_world(tmp_path, run_id, seasons=seasons, **over)
     asyncio.run(world.run())
     return world, read_events(tmp_path, run_id)
@@ -260,26 +260,3 @@ def test_a_fisher_fishes_a_season_once_whatever_he_is_asked_again(tmp_path):
     assert second != first and a.form != form and set(a.outings) == {1, 2}
 
 
-def test_scripted_fishers_fish_the_same_in_sync_and_async(tmp_path):
-    """Sans IA, le mode ne change pas la pêche : mêmes sorties (jours, temps, chance, rendement) et, pour une même prise visée, la même
-    prise. (Sur un grand lac : un lac bas rend le poisson plus dur à prendre selon le stock du moment, qui dépend du mode.)"""
-    runs = {}
-    for mode in ("sync", "async"):
-        world, events = played(tmp_path, f"mode-{mode}", seasons=3, time__mode=mode)
-        runs[mode] = world, {(e["payload"]["agent"], e["season"]): e["payload"] for e in kinds(events, "catch")}
-    (sync, caught_sync), (asyn, caught_asyn) = runs["sync"], runs["async"]
-    assert sync.fishers and [a.outings for a in sync.fishers] == [a.outings for a in asyn.fishers]
-    assert len({o["weather"] for a in sync.fishers for outs in a.outings.values() for o in outs}) >= 3       # (sous un ciel qui change)
-    assert caught_sync.keys() == caught_asyn.keys() and len(caught_sync) == 3 * len(sync.fishers)
-    same_aim = [k for k in caught_sync if caught_sync[k]["requested"] == caught_asyn[k]["requested"]]
-    assert len(same_aim) >= len(sync.fishers)                                       # au moins la première saison, où personne n'a rien appris
-    def days(c):            # les sorties sans leurs tonnes : le jour, le temps, la chance, le rendement
-        return [{x: v for x, v in o.items() if x != "tonnes"} for o in c["outings"]]
-    # (une règle du conseil sur les sorties peut en retrancher, toujours les dernières : on compare le début de la liste)
-    assert all(days(caught_sync[k])[:min(len(caught_sync[k]["outings"]), len(caught_asyn[k]["outings"]))] ==
-               days(caught_asyn[k])[:min(len(caught_sync[k]["outings"]), len(caught_asyn[k]["outings"]))] for k in same_aim)
-    # la même prise : à la première saison, où les coins de pêche (les parcelles du lac) sont encore intacts ; ensuite, chaque coin
-    # garde la trace de ce que les autres y ont pris, et ils n'ont pas tous visé pareil dans les deux modes
-    first = [k for k in same_aim if k[1] == 1]
-    assert first and all(caught_sync[k]["landed"] == caught_asyn[k]["landed"]
-                                                and caught_sync[k]["outings"] == caught_asyn[k]["outings"] for k in first)

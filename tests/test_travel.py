@@ -112,7 +112,7 @@ def test_a_rule_fisher_stays_home_unless_another_lake_pays_clearly_more_after_th
 
 
 def test_rule_fishers_of_a_poor_lake_go_to_the_rich_one_and_the_rich_stay(tmp_path):
-    world, bus, _ = make_world(tmp_path, "migrent", seasons=2, time__mode="sync", **TWO_LAKES_RULES)
+    world, bus, _ = make_world(tmp_path, "migrent", seasons=2, **TWO_LAKES_RULES)
     asyncio.run(world.run())
     catches = kinds(read_events(tmp_path, "migrent"), "catch")
     first = [e["payload"] for e in catches if e["season"] == 1]
@@ -128,7 +128,7 @@ def test_rule_fishers_of_a_poor_lake_go_to_the_rich_one_and_the_rich_stay(tmp_pa
 
 
 def test_nobody_leaves_a_lake_when_there_is_only_one(tmp_path):
-    world, bus, _ = make_world(tmp_path, "un-lac", seasons=2, time__mode="sync", population__fishers=8, population__rule_fraction=1.0)
+    world, bus, _ = make_world(tmp_path, "un-lac", seasons=2, population__fishers=8, population__rule_fraction=1.0)
     asyncio.run(world.run())
     assert not any(e["payload"].get("away") or "lake" in e["payload"] for e in kinds(read_events(tmp_path, "un-lac"), "catch"))
     assert not any("lake_options" in str(e["payload"].get("observed", "")) for e in kinds(read_events(tmp_path, "un-lac"), "decision"))
@@ -178,7 +178,7 @@ def test_an_unknown_lake_in_the_answer_means_his_own(tmp_path):
 
 def test_a_sync_game_counts_the_ration_lake_by_lake_where_each_boat_fished(tmp_path):
     rec = Recorder(prise=7.0, lake="Lac d'Orsane")
-    world, events, _ = fake_game(tmp_path, "ia-ration", rec, population=POP, seasons=1, lake__lakes=LAKES, mode="sync")
+    world, events, _ = fake_game(tmp_path, "ia-ration", rec, population=POP, seasons=1, lake__lakes=LAKES)
     landed = sum(e["payload"]["landed"] for e in kinds(events, "catch"))
     assert landed <= 80.0 + 1e-6 and all(e["payload"]["lake"] == "Orsane" for e in kinds(events, "catch"))
     updates = [e["payload"]["lakes"] for e in kinds(events, "lake_update") if e["payload"]["cause"] == "catch"]
@@ -197,7 +197,7 @@ def test_another_better_stocked_lake_calls_for_a_real_thought_not_a_reflex():
 
 def test_the_fake_llm_chooses_its_lake_like_a_rule_fisher(tmp_path):
     """Sans IA (faux LLM), les pêcheurs du lac pauvre vont eux aussi pêcher dans le riche : de quoi essayer le jeu et le montrer."""
-    world, bus, _ = make_world(tmp_path, "faux-llm", seasons=1, time__mode="sync", population__fishers=8, population__rule_fraction=0.0,
+    world, bus, _ = make_world(tmp_path, "faux-llm", seasons=1, population__fishers=8, population__rule_fraction=0.0,
                                lake__lakes=BIG_AND_POOR, economy__luck=0.0)
     asyncio.run(world.run())
     catches = [e["payload"] for e in kinds(read_events(tmp_path, "faux-llm"), "catch")]

@@ -126,7 +126,7 @@ def test_reflection_and_rounds_are_applied_and_the_menu_choice_beats_the_preset(
 
 def play_with_capacity(tmp_path, run_id, capacity, seasons=3):
     cfg = build_game_config(cfg_for(tmp_path, seasons=seasons),
-                            request(seasons=seasons, speed="max", lake={"capacity": capacity}, mode="sync"))
+                            request(seasons=seasons, speed="max", lake={"capacity": capacity}))
     cfg["time"]["fast"] = True
     return cfg, play(tmp_path, run_id=run_id, cfg=cfg)
 

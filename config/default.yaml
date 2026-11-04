@@ -118,30 +118,21 @@ climate:
   disabled_events: []
 
 time:
-  # sync  : tous observent le même instant ; à la veillée, on parle à tour de rôle et chacun entend ceux qui ont parlé avant lui
-  #         (dialogues dépendants). La lenteur d'une IA n'a aucun effet sur le temps du monde.
-  # async : chacun va à son rythme, le temps du monde suit le temps réel ; à la veillée, chacun s'exprime de son côté sans
-  #         entendre les autres (dialogues indépendants), puis tous votent (C4).
-  mode: async
+  # Un seul mode de temps (docs/temps.md) : réfléchir ne prend pas de temps simulé, agir en prend. `time.mode` (sync / async),
+  # `wait_for_ai`, `ballot_lead_days` et `assembly_turn_gap_days` n'existent plus : acceptés, ignorés (avertissement au chargement).
   season_days: 30
   fishing_open_day: 0.25      # J0 06:00
-  fishing_close_day: 20.0     # au-delà, une sortie décidée trop tard est perdue
+  fishing_close_day: 20.0     # aucune sortie n'est planifiée au-delà (la route du retour comprise)
   assembly_day: 25.75         # J25 18:00, veillée chez l'ancien
   assembly_close_day: 29.0
   regrowth_day: 29.9
-  ballot_lead_days: 0.25        # en async : les bulletins de vote sont remplis 6 h avant la fin de la veillée (une IA trop lente perd sa voix)
-  assembly_turn_gap_days: 0.05  # en async : temps d'écoute (≈ 1 h 12) avant de reprendre la parole
-  # en async : une fenêtre (pêche, veillée) ne se ferme pas tant qu'une IA réfléchit encore ; le temps du monde est suspendu
-  # jusqu'à sa réponse. La partie ralentit avec une IA lente, mais aucune sortie ni réplique n'est perdue (false : elle rate son tour)
-  wait_for_ai: true
-  # rythme propre de chaque pêcheur en mode asynchrone : décalage (jours) avant sa première réflexion
-  async_offset_days: [0.0, 4.0]
-  # conversion temps réel → temps simulé : heures simulées par seconde réelle.
-  # En async, c'est elle qui transforme la latence d'un LLM en durée dans le monde
-  # (à 3 h/s, un modèle qui réfléchit 10 s agit 30 h plus tard). C'est un paramètre du
-  # modèle de temps : son effet sur le phénomène doit être mesuré (C5, O10).
+  # le jour de départ de chaque pêcheur est tiré de la graine dans cet intervalle (jours après l'ouverture) ; sa décision de prise a
+  # ce jour pour horizon (ancien nom : async_offset_days)
+  departure_spread_days: [0.0, 4.0]
+  # rythme d'affichage : heures simulées par seconde réelle (à ×1). Il ne règle que ce que montre l'interface : la latence d'un LLM
+  # n'a plus aucun effet sur le monde.
   sim_hours_per_second: 3
-  # en async, quand aucun agent ne réfléchit, l'horloge accélère de ce facteur (inf = saut direct)
+  # entre deux échéances, l'horloge d'affichage accélère de ce facteur (inf = saut direct)
   idle_speedup: 40
   fast: false                 # true = aucune attente d'affichage (runs répétés, tests)
 

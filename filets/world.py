@@ -31,14 +31,12 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import hashlib
-import heapq
 import itertools
 import json
 import logging
 import math
 import random
 import re
-import time
 import unicodedata
 import zlib
 from collections import Counter
@@ -46,12 +44,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import prompts, rules
-from .agents import (Agent, _ask_llm, ballot, ballot_election, debrief_villager, decide_catch, patrol_decision, reflex_usable, speak)
+from .agents import Agent, _ask_llm, ballot, ballot_election, debrief_villager, patrol_decision
 from .climate import CYCLE, EVENTS, Climate
 from .policies import patrol_vote, sanction_vote
 from .clock import SimClock, day_words
 from .config import ROOT, sustainable_yield
-from .control import MODES, GameControl, StopRun
+from .control import GameControl, StopRun
 from .events import EventFactory, Recorder
 from .lake import Lake
 from .lakes import grid_of, lake_distance, lake_parcels, resolve_lakes, village_positions, world_size
@@ -59,6 +57,7 @@ from .memory import MemoryBank, MemoryStore, VectorMemory
 from .objects import archive_run, make_objects
 from .profiles import Profile, build_population, villages_of
 from .rag import Retriever, VectorRetriever, lore_passage
+from .scheduler import SeasonScheduler
 from .schemas import validate_command
 from .llm import LLMRouter, extract_json, to_number
 from .vectors import PgVectorStore, make_embedder, postgres_dsn
@@ -150,8 +149,7 @@ class Assembly:
     stated: dict[str, tuple[str, str | None, float, str]] = field(default_factory=dict)     # agent -> (type, cible, valeur) qu'il a dit vouloir (proposé, ou promesse de quota)
     accused: list[tuple[float, str]] = field(default_factory=list)     # (instant, accusé) : qui a été mis en cause, et quand
     sanctions: dict[str, Sanction] = field(default_factory=dict)        # propositions soumises au vote (voir `Sanction`)
-    mode: str = "sync"               # sync : on s'entend, tour à tour ; async : chacun parle de son côté, sans entendre les autres
-    held: dict[str, tuple] = field(default_factory=dict)       # async : paroles prêtes (agent -> (réponse, instant)), déposées ensemble
+    mode: str = "unique"             # (l'ancien choix synchrone / asynchrone n'existe plus ; voir docs/temps.md)
     delegates: bool = False          # le conseil des élus (un par village), et non tous les pêcheurs
     closed: bool = False
 
@@ -161,10 +159,37 @@ class Assembly:
             return "conseil de la vallée" if self.delegates else "toute la vallée"
         return f"village de {self.scope.split(':', 1)[1]}"
 
-    @property
-    def independent(self) -> bool:
-        """Dialogues indépendants (asynchrone) : personne n'entend les paroles des autres avant de voter."""
-        return self.mode == "async"
+
+@dataclass
+class Trip:
+    """Une pêche de la saison, du départ au retour (voir `World.plan_trip`) : tout ce que sa décision et les règles fixent, et ce que
+    chaque sortie a rapporté (`got`, une par sortie faite)."""
+    agent: Agent
+    requested: float
+    decision: dict
+    horizon: float
+    declared: float | None
+    lake: Lake
+    home: Lake
+    days: float                      # jours de route entre son lac et celui où il pêche (0 chez lui)
+    zone: str
+    cell: int
+    spot: float
+    view: dict
+    pick: dict
+    place: str | None
+    secret: bool
+    stock_observed: float
+    obs: dict
+    outs: list[dict]
+    full: list[dict]
+    cap_out: int | None
+    wanted: list[float]              # ce que chaque sortie voudrait rapporter (cale et coin sur l'instantané d'ouverture)
+    ration: float
+    stock_at_action: float
+    got: list[float] = field(default_factory=list)
+    before: float | None = None      # le stock du lac juste avant sa première sortie
+    after: float | None = None       # … et juste après la dernière
 
 
 @dataclass
@@ -199,7 +224,7 @@ class World:
         t = cfg["time"]
         self.T = t
         self.clock = SimClock(t["season_days"], t["sim_hours_per_second"], t["idle_speedup"], t["fast"])
-        self.ctl = GameControl(self.clock, t["mode"])
+        self.ctl = GameControl(self.clock)
         self.ctl.on_change = self.publish_status
         self.run_dir = ROOT / cfg["output"]["runs_dir"] / run_id
         self.recorder = Recorder(self.run_dir) if record else None
@@ -229,7 +254,7 @@ class World:
             return MemoryStore(owner, mcfg["recency_decay_per_day"], mcfg["weights"])
 
         self.agents: dict[str, Agent] = {}
-        lo, hi = t["async_offset_days"]
+        lo, hi = t["departure_spread_days"]
         for i, p in enumerate(build_population(cfg)):
             arng = random.Random(seed * 1000 + i)
             self.agents[p.id] = Agent(p, memory_of(p.id), arng, p.wealth, offset_days=round(arng.uniform(lo, hi), 3),
@@ -353,7 +378,7 @@ class World:
         self.obs_rng = random.Random(seed + 99)
         self.assemblies: list[Assembly] = []
         self.rumors: list[dict] = []         # annonces diffusées par le joueur : {text, season, t, event_id}
-        self.waiting_note: str | None = None  # « le monde attend N IA » (asynchrone), repris dans l'état du moteur
+        self.thinking: list[str] = []          # les agents dont une décision est en cours (l'ordonnanceur la tient à jour), dans l'état du moteur
         # fournisseurs d'IA réellement utilisés par la partie (pour que l'interface adapte ses conseils)
         self.ai_providers = sorted({cfg["llm"]["tiers"][a.profile.tier]["provider"] for a in self.agents.values()
                                     if a.profile.kind == "llm" and a.profile.tier})
@@ -904,7 +929,7 @@ class World:
         """La part de ces jours (depuis le début de la saison) où une patrouille se trouvait dans cette zone, ou sur les talons de ce
         pêcheur (`aid`) : qu'elle suive une barque, elle la croise où qu'elle aille ; et la patrouille qui l'a le plus croisée."""
         legs = [leg for leg in self.patrol_legs.get(season, []) if leg["zone"] == zone or (aid and leg.get("follow") == aid)]
-        share = sum(any(leg["from_day"] <= d < leg["to_day"] for leg in legs) for d in days) / len(days)
+        share = sum(any(leg["from_day"] <= d < leg["to_day"] for leg in legs) for d in days) / max(1, len(days))
         by: dict[str, int] = {}
         for d in days:
             for leg in legs:
@@ -922,8 +947,10 @@ class World:
         return self.climate.calendar(season, int(self.T["fishing_close_day"]))
 
     def outings(self, agent: Agent, season: int, stock: float | None = None, lake: Lake | None = None) -> list[dict]:
-        """Les sorties de ce pêcheur cette saison, étalées sur la fenêtre de pêche (la première part un jour propre à chacun) : pour
-        chacune, le jour, le temps qu'il faisait (le même pour tout le lac, voir `weather`), la chance du pêcheur et ce que la
+        """Les sorties de ce pêcheur cette saison : d'un jour chacune, étalées de son départ (`offset_days`, tiré dans
+        `time.departure_spread_days`) à la fermeture de la pêche. Dans un autre lac, la route ajoute ses jours à l'aller et au retour :
+        la première sortie commence après l'aller, et la dernière finit assez tôt pour que le retour tienne avant la fermeture. Une
+        sortie qui ne tiendrait pas avant la fermeture n'est pas planifiée. Pour chacune, le jour, le temps qu'il faisait (le même pour tout le lac, voir `weather`), la chance du pêcheur et ce que la
         sortie rapporte par rapport à ce qu'il visait. Sa chance mêle sa forme de la saison (elle se prolonge d'une saison à l'autre,
         `economy.luck_streak`) et sa forme du jour (de sortie en sortie) ; s'y ajoutent la saison de l'année, les événements, la
         tenue de son bateau par gros temps, son expérience et le lac bas (le poisson est plus dur à prendre sous `LOW_LAKE`).
@@ -934,8 +961,10 @@ class World:
         seed, boat = self.cfg["run"]["seed"], agent.profile.boat
         amp, keep = float(self.econ.get("luck", 0.0)), float(self.econ.get("luck_streak", 0.5))
         n, (lo, hi) = max(1, int(self.econ.get("outings", 6))), (self.T["fishing_open_day"], self.T["fishing_close_day"])
-        first = (zlib.crc32(f"{seed}|day|{agent.id}|{season}".encode()) % 10000) / 10000
         lake = lake or self.lake_of(agent)           # le lac où il pêche (le sien, sauf s'il est allé ailleurs)
+        route = self.distance(self.lake_of(agent), lake)
+        first = lo + agent.offset_days + route                 # début de sa première sortie
+        step = max(0.0, hi - route - 1.0 - first) / max(1, n - 1)       # (une sortie dure un jour)
         base, weather = self.climate.yield_for(boat), self.weather(season)
         base *= self.travel_factor(self.distance(self.lake_of(agent), lake))      # la route prend du temps de pêche
         if amp > 0:
@@ -947,7 +976,9 @@ class World:
         mood = rng.gauss(0, 1)
         outs = []
         for k in range(n):
-            day = round(lo + (k + first) / n * (hi - lo - 0.01), 2)
+            day = round(first + k * step, 2)
+            if day + 1.0 > hi - route + 1e-9:
+                break                                  # elle finirait après la fermeture : pas planifiée
             label = weather[min(int(day), len(weather) - 1)]
             mood = max(-2.5, min(2.5, keep * mood + fresh * rng.gauss(0, 1)))
             luck = max(0.1, 1 + amp * (0.6 * agent.form + 0.8 * mood))
@@ -1362,9 +1393,8 @@ class World:
                 state["lake_estimates"] = {lake.name: est, **{o["name"]: o["est"] for o in options}}
                 state["lake_stocks"] = {name: round(lk.stock, 3) for name, lk in self.lakes.items()}
         if assembly:
-            # synchrone : on entend ceux qui ont parlé avant soi (dialogues dépendants) ; asynchrone : chacun s'exprime de son
-            # côté, sans rien entendre ni voir des propositions des autres avant le vote (dialogues indépendants)
-            visible_u = [] if assembly.independent else [u for u in assembly.utterances if u["sim_time"] <= horizon]
+            # on entend ceux qui ont parlé avant soi
+            visible_u = [u for u in assembly.utterances if u["sim_time"] <= horizon]
             row = self.trust[agent.id]
 
             def speaker(aid: str) -> str:      # chaque parole se pèse à la confiance qu'on fait à celui qui la dit
@@ -1380,7 +1410,7 @@ class World:
             used += [u["event_id"] for u in visible_u[-12:]]
             obs["addressed"] = [f"{self.name(u['payload']['speaker'])} : « {u['payload']['text']} »"
                                 for u in visible_u[-12:] if u["payload"]["to"] == agent.id and u["payload"]["speaker"] != agent.id]
-            props = [] if assembly.independent else [pr for pr in assembly.proposals.values() if pr.t <= horizon]
+            props = [pr for pr in assembly.proposals.values() if pr.t <= horizon]
             obs["proposals"] = []
             best = bestq = None
             for pr in props:
@@ -1399,11 +1429,10 @@ class World:
             state["leading_rule"] = (best[0], best[4], best[5], best[1]) if best else None
             state["leading_trust"] = row.get(bestq[3], 1.0) if bestq else 1.0
             state["leading_rule_trust"] = row.get(best[3], 1.0) if best else 1.0
-            obs["sanctions"] = [] if assembly.independent else [
+            obs["sanctions"] = [
                 f"{s.id} : {self.motion_text(s)}, proposé par {self.name(s.author)} ; pour : "
                 f"{', '.join(a for a, v in s.votes.items() if v) or 'personne'}"
                 for s in assembly.sanctions.values() if s.t <= horizon]
-            obs["independent"] = assembly.independent
             obs["delegate"] = self.delegate_line(agent) if assembly.delegates and agent.is_fisher else ""
             obs["patrol_line"] = self.patrol_line(season) if agent.is_fisher else ""
             obs["promises"] = self.promise_lines(agent, season, horizon)
@@ -1456,11 +1485,23 @@ class World:
     def apply_catch(self, agent: Agent, requested: float, decision: dict, horizon: float,
                     ration: float = 1.0, stock_at_action: float | None = None, declared: float | None = None,
                     lake_name: str | None = None) -> dict:
-        """Applique une prise, puis la déclaration du pêcheur à l'ancien. `stock_at_action` : stock au moment où l'action prend
-        effet (en synchrone, le même pour toutes les barques parties ensemble ; en asynchrone, le stock courant). `declared` :
-        ce qu'il comptait déclarer (None : la vérité). Un interdit de pêche reste à quai (0 t) ou sort en cachette : il ne
-        déclare rien, et va plutôt pêcher loin de sa rive. `lake_name` : le lac où il a choisi de pêcher (le sien à défaut) ; ailleurs,
-        la route lui prend du temps de pêche et lui coûte des écus. Renvoie l'événement `catch` (None : resté à quai)."""
+        """Toute la prise d'un coup : le départ, chaque sortie, puis le retour (voir `plan_trip`). L'ordonnanceur, lui, les sépare
+        dans le temps. Renvoie l'événement `catch` (None : resté à quai)."""
+        trip = self.plan_trip(agent, requested, decision, horizon, ration, stock_at_action, declared, lake_name)
+        if trip is None:
+            return None
+        for k in range(len(trip.outs)):
+            self.land_outing(trip, k)
+        return self.finish_trip(trip)
+
+    def plan_trip(self, agent: Agent, requested: float, decision: dict, horizon: float,
+                  ration: float = 1.0, stock_at_action: float | None = None, declared: float | None = None,
+                  lake_name: str | None = None) -> Trip | None:
+        """Le départ d'un pêcheur, une fois sa décision prise : le lac où il va, ses sorties, son coin, et la part de chacune. Rien
+        ne sort encore du lac. `stock_at_action` : le stock sur lequel se calcule la cale (à défaut, l'instantané d'ouverture de la
+        saison, le même pour tous). `declared` : ce qu'il comptait déclarer (None : la vérité). Un interdit de pêche reste à quai
+        (None) ou sort en cachette : il ne déclare rien, et va plutôt pêcher loin de sa rive. `lake_name` : le lac choisi (le sien à
+        défaut) ; ailleurs, la route lui prend des jours et lui coûte des écus. `ration` : 1 sauf dans les tests."""
         season = self.clock.season_of()
         secret = agent.id in self.banned
         if secret and requested <= 0:
@@ -1479,7 +1520,6 @@ class World:
         zone = self.secret_zone(agent) if secret else (
             self.large_zone(lake) if away or place == "large" else agent.profile.hamlet)
         agent.lake_choice[season] = lake.name
-        before = lake.stock
         obs = decision["payload"]["observed"]
         stock_observed = obs.get("lake_estimates", {}).get(lake.name, obs["stock_estimate"])
         # la pêche n'est pas toujours bonne : la prise visée est étalée sur les sorties, et chacune rapporte selon sa journée (le
@@ -1500,13 +1540,36 @@ class World:
         # soit l'ordre des retours ; ceux qui rentrent tard peuvent trouver le lac déjà vidé par les autres)
         hold = self.hold_of(agent, self.season_stock[lake.name] if stock_at_action is None else stock_at_action, lake)
         wanted = [min(requested * o["yield"] * spot, hold) / len(full) * ration for o in outs]     # (moins de sorties : moins de prise)
-        landed = round(lake.take(sum(wanted), cell), 3)
         if zone == agent.profile.hamlet:
             agent.spot, agent.spots[cell] = cell, spot
-        tonnes = [round(landed * w / sum(wanted), 3) if landed else 0.0 for w in wanted]
-        tonnes[-1] = round(landed - sum(tonnes[:-1]), 3)
-        factor, luck = sum(o["yield"] for o in outs) / len(full), sum(o["luck"] for o in outs) / len(outs)
-        factor *= spot
+        return Trip(agent, requested, decision, horizon, declared, lake, home, days, zone, cell, spot, view, pick, place, secret,
+                    stock_observed, obs, outs, full, cap_out, wanted, ration,
+                    self.season_stock[lake.name] if stock_at_action is None else stock_at_action)
+
+    def land_outing(self, trip: Trip, k: int) -> float:
+        """La fin de la sortie `k` : sa part de prise sort du lac, à cet instant (le poisson ne va pas forcément au premier arrivé)."""
+        lake = trip.lake
+        if trip.before is None:
+            trip.before = lake.stock
+        got = lake.take(trip.wanted[k], trip.cell)
+        trip.got.append(got)
+        trip.after = lake.stock
+        self.lake_update("catch", -got, lake)
+        return got
+
+    def finish_trip(self, trip: Trip) -> dict:
+        """Le retour : le bilan de la saison de pêche, la vente, la déclaration à l'ancien, les indices (patrouille, témoins)."""
+        agent, requested, decision, horizon, declared = trip.agent, trip.requested, trip.decision, trip.horizon, trip.declared
+        lake, home, days, zone, cell, spot, view, pick = trip.lake, trip.home, trip.days, trip.zone, trip.cell, trip.spot, trip.view, trip.pick
+        place, secret, stock_observed, obs, outs, full, cap_out = trip.place, trip.secret, trip.stock_observed, trip.obs, trip.outs,             trip.full, trip.cap_out
+        ration, stock_at_action, away, season = trip.ration, trip.stock_at_action, lake is not home, self.clock.season_of()
+        before = lake.stock if trip.before is None else trip.before
+        landed = round(sum(trip.got), 3)
+        tonnes = [round(g, 3) for g in trip.got]
+        if tonnes:
+            tonnes[-1] = round(landed - sum(tonnes[:-1]), 3)
+        factor = sum(o["yield"] for o in outs) / len(full) * spot if outs else 0.0
+        luck = sum(o["luck"] for o in outs) / len(outs) if outs else 1.0
         # ce qu'il a enfreint (la vérité, que les indices diront peut-être) : pêche dans un lac au repos ou une zone réservée, trop
         # de sorties, plus de prise que la cale permise
         breach = []
@@ -1521,11 +1584,11 @@ class World:
                 breach.append("bateau")
         ev = self.events.emit("catch", {
             "agent": agent.id, "hamlet": agent.profile.hamlet, "requested": requested, "landed": landed,
-            "stock_observed": stock_observed, "stock_before": round(before, 3), "stock_after": round(lake.stock, 3),
+            "stock_observed": stock_observed, "stock_before": round(before, 3), "stock_after": round(lake.stock if trip.after is None else trip.after, 3),
             **({"lake": lake.name} if self.multi else {}),
             "decision_event_id": decision["event_id"], "info_horizon": round(horizon, 6), "rationed": ration < 1.0,
             "stock_at_horizon": obs.get("lake_stocks", {}).get(lake.name, obs["stock_true"]),
-            "stock_at_action": round(before if stock_at_action is None else stock_at_action, 3),
+            "stock_at_action": round(stock_at_action, 3),
             "zone": zone, "secret": secret, "yield": round(factor, 3), "luck": round(luck, 3),
             "cell": [lake.parcels[cell]["i"], lake.parcels[cell]["j"]], "spot": spot,
             "outings": [{**o, "tonnes": t} for o, t in zip(outs, tonnes)],
@@ -1541,7 +1604,6 @@ class World:
                                                   "patrol": cover, "patrol_by": by, "event_id": ev["event_id"],
                                                   "breach": breach})
         agent.catches[season] = agent.catches.get(season, 0.0) + landed
-        self.lake_update("catch", -landed, lake)
         income = landed * self.econ["price_per_tonne"]
         agent.wealth += income
         self.events.emit("sale", {"agent": agent.id, "hamlet": agent.profile.hamlet, "tonnes": landed,
@@ -1564,7 +1626,7 @@ class World:
         if landed - said >= MIN_LIE_T:
             self.lies[rep["event_id"]] = {"agent": agent.id, "season": season, "declared": said, "landed": landed,
                                           "found_t": None, "report_event_id": rep["event_id"]}
-        note = f"J'ai pêché {landed:g} t cette saison ; le lac m'a semblé contenir environ {stock_observed:.0f} t. {outings_text(outs)}"
+        note = f"J'ai pêché {landed:g} t cette saison ; le lac m'a semblé contenir environ {stock_observed:.0f} t. {outings_text(outs) if outs else 'Aucune sortie ne tenait avant la fermeture.'}"
         if away:
             note = (f"Je suis allé pêcher dans {prompts.lake_ref(lake.label)}, à {days:.1f} jour de route de chez moi : la route m'a coûté "
                     f"{self.travel_cost(days):.0f} écus et du temps de pêche. ") + note
@@ -1635,9 +1697,9 @@ class World:
             changed = ctl.pause()
         elif ctype == "resume":
             changed = ctl.resume()
-        elif ctype == "set_mode":
-            value = cmd.get("value")
-            changed = value in MODES and value != (ctl.pending_mode or ctl.mode) and ctl.request_mode(value)
+        elif ctype == "set_mode":      # il n'y a plus qu'un mode de temps (docs/temps.md) : la commande est reçue, sans effet
+            log.warning("set_mode (%s) ignoré : il n'y a plus qu'un seul mode de temps", cmd.get("value"))
+            changed = False
         else:   # set_speed : un facteur (×0,25 à ×16…) ou "max" (aucune attente d'affichage)
             value = cmd.get("value")
             if value == "max":
@@ -1679,11 +1741,11 @@ class World:
         return {
             "state": state or ("paused" if ctl.paused else "running"),
             "engine_id": self.engine_id, "wall_clock": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
-            "run_id": self.run_id, "mode": ctl.mode, "pending_mode": ctl.pending_mode, "speed": self.clock.speed,
+            "run_id": self.run_id, "mode": "unique", "pending_mode": None, "speed": self.clock.speed,
             "fast": self.clock.fast, "paused": ctl.paused, "season": self.season, "seasons": int(self.cfg["run"]["seasons"]),
             "sim_label": self.clock.label(), "end_reason": None, "error": None, "controls": True, "lobby": self.lobby,
             "ai": self.ai_providers, "advised_speed": self.advised_speed,
-            **({"detail": self.waiting_note} if self.waiting_note else {}),
+            "thinking": sorted(self.thinking),
             **extra,
         }
 
@@ -1964,7 +2026,7 @@ class World:
         k = season % len(reps) if reps else 0
         return elder + reps[k:] + reps[:k]
 
-    def open_assemblies(self, season: int, close_t: float, mode: str = "sync") -> list[Assembly]:
+    def open_assemblies(self, season: int, close_t: float, mode: str = "unique") -> list[Assembly]:
         # le soir de la veillée (qu'elle se tienne ou non) : les indices de la saison réunis, et ce qu'ils établissent, relaté
         # par l'ancien ; ce que chacun en pense, et ce que la vallée en décide, se dira à la veillée
         self.investigate(season)
@@ -1997,7 +2059,7 @@ class World:
         to = str(d.get("destinataire") or "tous").strip()
         if to not in asm.participants:
             to = "tous"
-        heard = [] if asm.independent else [u["event_id"] for u in asm.utterances if u["sim_time"] <= horizon]
+        heard = [u["event_id"] for u in asm.utterances if u["sim_time"] <= horizon]
         u = self.events.emit("utterance", {"speaker": agent.id, "to": to, "text": text, "scope": asm.scope,
                                            "round": rnd, "info_horizon": round(horizon, 6), "heard": heard[-12:],
                                            "decision_event_id": outcome.decision["event_id"]}, actor=agent.id)
@@ -2801,7 +2863,7 @@ class World:
     def start(self):
         cfg_hash = hashlib.sha1(json.dumps(self.cfg, sort_keys=True, default=str).encode()).hexdigest()[:12]
         self.events.emit("run_start", {
-            "mode": self.T["mode"], "seed": int(self.cfg["run"]["seed"]), "seasons": int(self.cfg["run"]["seasons"]),
+            "mode": "unique", "seed": int(self.cfg["run"]["seed"]), "seasons": int(self.cfg["run"]["seasons"]),
             "lake": {"capacity": self.capacity, "stock": round(self.lake_stock(), 3), "growth_rate": self.lake.r,
                      "collapse_ratio": self.lake.collapse_ratio,
                      "sustainable_yield": round(sum(lk.r * lk.capacity / 4.0 for lk in self.lakes.values()), 3)},
@@ -2872,12 +2934,12 @@ class World:
                 except Exception as exc:
                     log.warning("fermeture du stockage : %s", exc)
 
-    def begin_season(self, season: int, mode: str):
-        """Début de saison, commun aux deux orchestrations."""
+    def begin_season(self, season: int):
+        """Début de saison : climat, événements, instantané d'ouverture de chaque lac."""
         self.season = season
         self.conditions = cond = self.climate.begin(season)
         cond["days"] = self.weather(season)                    # le temps de chaque jour de pêche, connu de l'interface
-        self.events.emit("season_start", {"stock": round(self.lake_stock(), 3), "mode": mode, "conditions": cond,
+        self.events.emit("season_start", {"stock": round(self.lake_stock(), 3), "mode": "unique", "conditions": cond,
                                           **({"lakes": self.stocks()} if self.multi else {})})
         if self.climate.new:
             ev = self.climate.new
@@ -2894,15 +2956,15 @@ class World:
         self.scheduled_injections(season)
 
     async def prepare_season(self, season: int):
-        """Entre deux saisons, avant que la suivante ne s'ouvre (le même pas pour les deux orchestrations) : les villageois qui
-        n'étaient pas au conseil en jugent ce que l'ancien leur en a rapporté, puis chaque village choisit son élu, et l'ancien
-        envoie la patrouille du lac (si le conseil en a voté une). Chacun y réfléchit selon son caractère et ce qu'il sait."""
+        """Entre deux saisons, avant que la suivante ne s'ouvre : les villageois qui n'étaient pas au conseil en jugent ce que l'ancien
+        leur en a rapporté, puis chaque village choisit son élu, et l'ancien envoie la patrouille du lac (si le conseil en a voté une).
+        Chacun y réfléchit selon son caractère et ce qu'il sait."""
         self.clock.set(max(self.clock.now(), self.clock.season_start(season)))
         await self.debrief(season - 1)
         await asyncio.gather(self.elect(season), self.plan_patrol(season))
 
     async def run(self):
-        """Joue les saisons l'une après l'autre ; le mode (synchrone / asynchrone) est relu à chaque saison."""
+        """Joue les saisons l'une après l'autre, chacune par l'ordonnanceur (`scheduler.py`)."""
         try:
             await self.open_storage()
         except BaseException:
@@ -2913,14 +2975,15 @@ class World:
             raise
         self.start()
         pump = asyncio.create_task(self._command_pump())
+        recits: list[asyncio.Task] = []         # le récit d'une saison se rédige pendant la préparation de la suivante
         try:
             for season in range(1, int(self.cfg["run"]["seasons"]) + 1):
                 if self.stop_requested:
                     break
                 await self.ctl.checkpoint()
                 await self.ctl.guard(self.prepare_season(season))
-                runner = SyncRunner(self) if self.ctl.take_mode() == "sync" else AsyncRunner(self)
-                await runner.season(season)
+                recits.append(await SeasonScheduler(self, season).play())
+            await self.ctl.guard(asyncio.gather(*recits))
         except StopRun:
             self.stop_requested = True
             if self.stopped_reason == "completed":       # un arrêt déjà motivé (extinction du lac…) garde sa raison
@@ -2929,297 +2992,9 @@ class World:
             self.stopped_reason = f"erreur : {exc}"[:200]      # la partie est tracée comme interrompue, pas « terminée »
             raise
         finally:
+            for r in recits:
+                r.cancel()
+            await asyncio.gather(*recits, return_exceptions=True)
             pump.cancel()
             await asyncio.gather(pump, return_exceptions=True)
             await self.finish()
-
-
-# ======================================================================== mode synchrone
-class SyncRunner:
-    ROUND_STEP = 0.05   # ≈ 1 h 12 simulées entre deux tours de parole
-
-    def __init__(self, w: World):
-        self.w = w
-        self.c = w.clock
-
-    async def goto(self, t: float):
-        """Avance l'horloge jusqu'à `t` : attente d'affichage (vitesse et pause comprises), puis saut."""
-        ctl = self.w.ctl
-        await ctl.checkpoint()
-        dt = t - self.c.now()
-        if dt > 0 and not self.c.fast:
-            await ctl.sleep(min(4.0, dt / self.c.base_rate))
-        await ctl.checkpoint()          # une pause demandée pendant l'attente fige le monde avant le saut
-        self.c.set(max(t, self.c.now()))
-
-    async def season(self, season: int):
-        w, T = self.w, self.w.T
-        w.season = season
-        t0 = self.c.season_start(season)
-        await self.goto(t0)
-        w.begin_season(season, "sync")
-        # --- pêche : même instantané pour tous
-        h = t0 + T["fishing_open_day"]
-        await self.goto(h)
-        w.events.emit("phase", {"name": "fishing", "state": "open"})
-        outs = await w.ctl.guard(asyncio.gather(*(decide_catch(w, a, h) for a in w.fishers)))
-        await self.goto(h + 1.0)        # départ en mer : toutes les barques au même instant
-        s0 = {name: lake.stock for name, lake in w.lakes.items()}               # le même instantané pour toutes les barques d'un lac
-        # le lac où chacun pêche : le sien, ou celui qu'il a choisi (les interdits de pêche restent chez eux)
-        where = {a.id: (w.lakes[o.data["lake"]] if o.data.get("lake") in w.lakes and a.id not in w.banned else w.lake_of(a))
-                 for a, o in zip(w.fishers, outs)}
-        # ce que la flotte d'un lac demande vraiment : chacun dans la limite de sa part (une prise visée au-delà n'est pas rapportée)
-        asked = {name: sum(min(o.value, w.hold_of(a, s0[name], lake)) for a, o in zip(w.fishers, outs) if where[a.id] is lake)
-                 for name, lake in w.lakes.items()}
-        for a, o in zip(w.fishers, outs):
-            lake = where[a.id]
-            ration = min(1.0, s0[lake.name] / asked[lake.name]) if asked[lake.name] > 0 else 1.0
-            w.apply_catch(a, o.value, o.decision, h, ration, stock_at_action=s0[lake.name], declared=o.data.get("declaration"),
-                          lake_name=lake.name)
-        await self.goto(t0 + T["fishing_close_day"])
-        w.events.emit("phase", {"name": "fishing", "state": "close"})
-        # --- veillée : on parle à tour de rôle, chacun entend ceux qui ont parlé avant lui (dialogues dépendants)
-        ta = t0 + T["assembly_day"]
-        await self.goto(ta)
-        asms = w.open_assemblies(season, t0 + T["assembly_close_day"], "sync")
-        if asms:
-            w.events.emit("phase", {"name": "assembly", "state": "open"})
-            for rnd in range(1, int(w.scn["assembly_rounds"]) + 1):
-                hr = ta + (rnd - 1) * self.ROUND_STEP
-                turns = [(asm, w.agents[aid]) for asm in asms for aid in asm.participants]
-                step = self.ROUND_STEP / (len(turns) + 1)
-                for k, (asm, a) in enumerate(turns):
-                    h = hr + k * step                          # l'horloge avance d'un tour à l'autre : la parole précédente est entendue
-                    await self.goto(h)
-                    if w.has_reason_to_speak(a, asm, rnd):
-                        w.post_utterance(a, asm, await w.ctl.guard(speak(w, a, asm, rnd, h)), rnd, h)
-            await w.ctl.guard(w.ballots(asms))               # le bulletin de ceux qui n'ont rien soutenu
-            await self.goto(t0 + T["assembly_close_day"])
-            for asm in asms:
-                w.close_assembly(asm)
-            w.events.emit("phase", {"name": "assembly", "state": "close"})
-        # --- repeuplement et bilan
-        await self.goto(t0 + T["regrowth_day"])
-        w.events.emit("phase", {"name": "regrowth", "state": "open"})
-        w.end_season(season)
-        await w.ctl.guard(w.narrate(season))
-
-
-# ======================================================================== mode asynchrone
-class AsyncRunner:
-    TICK = 0.02
-
-    def __init__(self, w: World):
-        self.w = w
-        self.c = w.clock
-        self.heap: list = []
-        self.seq = itertools.count()
-        self.tasks: set[asyncio.Task] = set()
-        self.by_kind: dict[str, dict[str, asyncio.Task]] = {"fish": {}, "talk": {}, "vote": {}}     # tâches par agent, pour les annuler
-        self.thinking: dict[tuple[str, str], int] = {}     # (nature, agent) → tour de parole : qui réfléchit en ce moment
-        self.done = False
-
-    def at(self, t: float, fn, *args):
-        heapq.heappush(self.heap, (t, next(self.seq), fn, args))
-
-    def sleep_until(self, t: float) -> asyncio.Future:
-        """Attente en temps simulé (et non réel) : la tâche reprend quand l'horloge atteint `t`."""
-        fut = asyncio.get_running_loop().create_future()
-        self.at(t, lambda: fut.done() or fut.set_result(None))
-        return fut
-
-    def spawn(self, coro, kind: str | None = None, agent: str | None = None):
-        task = asyncio.create_task(self._quiet(coro))
-        self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
-        if kind:
-            self.by_kind[kind][agent] = task
-            task.add_done_callback(lambda t, k=kind, a=agent: self.by_kind[k].pop(a, None)
-                                   if self.by_kind[k].get(a) is t else None)
-
-    def expire(self, kind: str, handled_by: str, what: str):
-        """Une fenêtre se ferme (pêche, veillée) : ceux qui réfléchissent encore ont raté leur tour. On le constate à cet
-        instant précis, et on abandonne leur appel : leur réponse arriverait trop tard pour servir, et l'attendre ferait
-        durer la saison des minutes de plus (c'était cette « queue » qui rendait le jeu asynchrone si lent)."""
-        for (k, aid), rnd in list(self.thinking.items()):
-            if k == kind:
-                self.w.incident(aid, "missed_window", what.format(rnd=rnd), handled_by)
-        for task in list(self.by_kind[kind].values()):
-            if not task.done():
-                task.cancel()
-
-    @staticmethod
-    async def _quiet(coro):
-        try:
-            await coro
-        except StopRun:       # arrêt demandé pendant que cet agent réfléchissait : fin normale
-            pass
-
-    async def season(self, season: int):
-        """Joue une saison : le monde avance avec le temps réel, chaque agent à son rythme."""
-        w = self.w
-        self.at(self.c.season_start(season), self.season_start, season)
-        last = time.monotonic()
-        try:
-            while True:
-                if await w.ctl.checkpoint():   # reprise après une pause : on ne rattrape pas le temps de la pause
-                    last = time.monotonic()
-                waiting = 0
-                while self.heap and self.heap[0][0] <= self.c.now() + 1e-9:
-                    waiting = self.waiting_for(self.heap[0][2])
-                    if waiting:                    # une fenêtre se ferme : on attend ceux qui réfléchissent encore
-                        break
-                    _, _, fn, args = heapq.heappop(self.heap)
-                    fn(*args)
-                self.show_waiting(waiting)
-                for _ in range(3):                # laisse les tâches réveillées avancer jusqu'à leur appel LLM
-                    await asyncio.sleep(0)
-                if self.done and not self.tasks:
-                    break
-                if not self.heap and not self.tasks:
-                    break
-                now_wall = time.monotonic()
-                dt, last = now_wall - last, now_wall
-                if self.done or waiting:           # calendrier terminé, ou fenêtre retenue : le monde n'avance pas
-                    await asyncio.sleep(self.TICK)
-                    continue
-                # tant qu'un agent réfléchit (recherche dans sa mémoire comprise, avant même son appel LLM), le temps simulé
-                # suit le temps réel ; sinon personne n'est désavantagé et il peut accélérer jusqu'à la prochaine échéance
-                busy = self.c.in_flight > 0 or bool(self.thinking)
-                self.c.advance_wall(dt, self.heap[0][0] if self.heap else None, busy=busy)
-                await asyncio.sleep(self.TICK)
-        finally:
-            for t in list(self.tasks):
-                t.cancel()
-            if self.tasks:
-                await asyncio.gather(*self.tasks, return_exceptions=True)
-
-    def waiting_for(self, fn) -> int:
-        """Combien d'IA réfléchissent encore à la fermeture que `fn` déclencherait (0 : rien à attendre). Avec
-        `time.wait_for_ai`, le monde les attend, temps suspendu, plutôt que de leur faire rater leur tour : la partie
-        ralentit avec une IA lente, mais aucune sortie, réplique ni bulletin n'est perdu."""
-        if not self.w.T.get("wait_for_ai", True):
-            return 0
-        if fn == self.fishing_close:
-            return sum(1 for kind, _ in self.thinking if kind == "fish")
-        if fn == self.assembly_close:
-            return sum(1 for kind, _ in self.thinking if kind == "talk") + \
-                sum(1 for t in self.by_kind["vote"].values() if not t.done())
-        return 0
-
-    def show_waiting(self, n: int):
-        """Dit au joueur (état du moteur) que le monde attend des IA, et combien ; à chaque changement seulement."""
-        note = f"le monde attend {n} IA qui réfléchi{'ssent' if n > 1 else 't'} encore" if n else None
-        if note != self.w.waiting_note:
-            self.w.waiting_note = note
-            self.w.publish_status()
-
-    # --- calendrier
-    def season_start(self, season: int):
-        w, T = self.w, self.w.T
-        w.begin_season(season, "async")
-        t0 = self.c.season_start(season)
-        self.at(t0 + T["fishing_open_day"], lambda: w.events.emit("phase", {"name": "fishing", "state": "open"}))
-        for a in w.fishers:
-            self.at(t0 + T["fishing_open_day"] + a.offset_days, self.spawn_fish, a, t0 + T["fishing_close_day"])
-        self.at(t0 + T["fishing_close_day"], self.fishing_close)
-        self.at(t0 + T["assembly_day"], self.assembly_open, season, t0 + T["assembly_close_day"])
-        self.at(t0 + T["assembly_close_day"] - float(T.get("ballot_lead_days", 0.25)), self.assembly_vote)
-        self.at(t0 + T["assembly_close_day"], self.assembly_close)
-        self.at(t0 + T["regrowth_day"], self.regrowth, season)
-
-    def spawn_fish(self, a: Agent, close_t: float):
-        self.spawn(self.fish(a, close_t), "fish", a.id)
-
-    def fishing_close(self):
-        self.w.events.emit("phase", {"name": "fishing", "state": "close"})
-        rescue = reflex_usable(self.w)             # avec un modèle de décision, la sortie n'est pas perdue : il la décide
-        self.rescued = {aid for kind, aid in self.thinking if kind == "fish"} if rescue else set()
-        self.expire("fish", "reprise par le réflexe" if rescue else "sortie perdue",
-                    "décision encore en cours à la fermeture de la pêche : l'IA réfléchissait encore")
-
-    async def fish(self, a: Agent, close_t: float):
-        w = self.w
-        h = self.c.now()
-        self.thinking[("fish", a.id)] = 0
-        try:
-            try:
-                o = await decide_catch(w, a, h)
-            except asyncio.CancelledError:
-                if a.id not in getattr(self, "rescued", ()):
-                    raise
-                o = await decide_catch(w, a, h, rescue=True)         # annulé par la fermeture : le réflexe décide à sa place
-                w.apply_catch(a, o.value, o.decision, h, declared=o.data.get("declaration"), lake_name=o.data.get("lake"))
-                return
-        finally:
-            self.thinking.pop(("fish", a.id), None)
-        if self.c.now() > close_t:
-            w.incident(a.id, "missed_window", f"décision prise en {w.when()}, après la fermeture de la pêche",
-                       "sortie perdue")
-            return
-        w.apply_catch(a, o.value, o.decision, h, declared=o.data.get("declaration"), lake_name=o.data.get("lake"))
-
-    def assembly_open(self, season: int, close_t: float):
-        asms = self.w.open_assemblies(season, close_t, "async")
-        if not asms:
-            return
-        self.w.events.emit("phase", {"name": "assembly", "state": "open"})
-        for asm in asms:
-            for aid in asm.participants:
-                self.thinking[("talk", aid)] = 1
-                self.spawn(self.talk(self.w.agents[aid], asm), "talk", aid)
-
-    async def talk(self, a: Agent, asm: Assembly):
-        """Asynchrone : chacun s'exprime une fois, à son rythme, sans entendre les autres (dialogues indépendants) ; tous votent
-        ensuite sur ce qui a été déposé (voir `assembly_vote`)."""
-        w = self.w
-        h = self.c.now()
-        self.thinking[("talk", a.id)] = 1
-        try:
-            if asm.closed:
-                return
-            o = await speak(w, a, asm, 1, h)
-        finally:
-            self.thinking.pop(("talk", a.id), None)
-        if asm.closed or self.c.now() > asm.close_t:
-            w.incident(a.id, "missed_window", "parole prête après la fin de la veillée", "réplique perdue")
-            return
-        asm.held[a.id] = (o, h)
-        self.release(asm)
-
-    def release(self, asm: Assembly, force: bool = False):
-        """Les paroles étant indépendantes, personne n'a entendu personne : on les dépose toutes ensemble, quand la dernière est prête
-        (ou à la clôture), dans l'ordre du conseil, et non l'une après l'autre au gré de la vitesse de chaque IA."""
-        if not force and any(k == "talk" and aid in asm.participants for k, aid in self.thinking):
-            return
-        for aid in [x for x in asm.participants if x in asm.held]:
-            o, h = asm.held.pop(aid)
-            self.w.post_utterance(self.w.agents[aid], asm, o, 1, h)
-
-    def assembly_vote(self):
-        """Quelques heures avant la fin de la veillée, chaque pêcheur qui n'a rien soutenu remplit son bulletin. Une IA trop lente
-        perd sa voix, comme elle perd sa réplique : à la clôture, on compte alors ce qu'elle avait dit."""
-        for asm in self.w.assemblies:
-            for a in self.w.ballot_candidates(asm):
-                self.spawn(ballot(self.w, a, asm), "vote", a.id)
-
-    def assembly_close(self):
-        if not self.w.assemblies:
-            return
-        for task in list(self.by_kind["vote"].values()):
-            if not task.done():
-                task.cancel()                            # un bulletin pas rempli à temps est abandonné, sans incident
-        self.expire("talk", "réplique perdue",
-                    "parole du tour {rnd} pas prête à la fin de la veillée : l'IA réfléchissait encore")
-        for asm in self.w.assemblies:
-            self.release(asm, force=True)
-            self.w.close_assembly(asm)
-        self.w.events.emit("phase", {"name": "assembly", "state": "close"})
-        self.w.assemblies = []
-
-    def regrowth(self, season: int):
-        w = self.w
-        w.events.emit("phase", {"name": "regrowth", "state": "open"})
-        w.end_season(season)
-        self.spawn(w.narrate(season))      # la saison attend le récit avant de finir (voir `season`)
-        self.done = True        # la saison est jouée ; `World.run` choisit l'orchestration de la suivante
