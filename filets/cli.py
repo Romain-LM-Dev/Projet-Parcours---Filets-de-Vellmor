@@ -439,8 +439,18 @@ def main(argv=None):
     rv.add_argument("run_id")
     rv.add_argument("--sample", type=int, default=20)
 
+    bn = sub.add_parser("bench-reflexe", help="comparer tev1 et le grand modèle sur les invites d'une partie passée (modèles réels)")
+    common(bn)
+    bn.set_defaults(config="config/ollama_open.yaml")
+    bn.add_argument("run_id")
+    bn.add_argument("--limit", type=int, default=0, help="nombre d'appels rejoués (0 : tous)")
+    bn.add_argument("--port", type=int, default=8765, help="port du salon : le banc refuse de tourner s'il répond")
+
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if args.cmd == "bench-reflexe":
+        from . import bench
+        sys.exit(bench.run(args.run_id, build_cfg(args), ROOT / "runs", args.limit, args.port))
     if args.cmd == "serve":
         cfg = build_cfg(args)
         ws = not args.no_ws and cfg["bus"]["kind"] == "local"      # avec Kafka, le pont est le service `bridge`

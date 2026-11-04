@@ -790,6 +790,18 @@ def debrief_messages(p, lines: list[str], trust: str, situation: str) -> list[di
     return [{"role": "system", "content": who}, {"role": "user", "content": body}]
 
 
+def debrief_system_one(p, lines: list[str], trust: str, situation: str, ids: list[str]) -> dict:
+    """Le même jugement en questions typées : une échelle de −3 à +3 par pêcheur (limitée à 26 questions)."""
+    steps = [-3, -2, -1, 0, 1, 2, 3]
+    state = (f"{p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits}\nL'ancien lui rapporte le conseil auquel il "
+             f"n'était pas :\n{_bullets(lines, 'rien de particulier')}\n{trust}\n{situation}")
+    crit = [f"{s:+d}" + (" : il ne le croit plus du tout" if s == -3 else " : il a gagné sa confiance" if s == 3
+                         else " : rien ne change" if s == 0 else "") for s in steps]
+    return {"state": state, "values": {i: steps for i in ids[:26]},
+            "questions": {i: {"type": "score", "criteria": crit, "instructions": f"Sa confiance envers {i} change de combien ?"}
+                          for i in ids[:26]}}
+
+
 # La route de la patrouille du lac, décidée par son capitaine au début de la saison.
 PATROL_MAX_TOKENS = 170
 

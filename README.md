@@ -225,6 +225,11 @@ Réglages du serveur Ollama (variables d'environnement, non appliquées par le j
 réponse. Qwen garde la réflexion et les paroles. Il demande **Ollama 0.40.4 ou plus** (`winget upgrade Ollama.Ollama`, Ollama
 fermé) puis `ollama pull tev1:0.8b` ; sans lui, la partie se lance quand même et ces décisions passent par Qwen 1,5B. Détails :
 [docs/architecture.md § 4](docs/architecture.md#4-économie-de-tokens--système-1-et-système-2).
+tev1 rattrape aussi une sortie dont le grand modèle n'a pas répondu à temps (ou de façon illisible) et juge la confiance au débrief
+d'un absent ; il n'écrit jamais (paroles, prise hors routine, narration restent à Qwen 3B).
+*Banc de comparaison* (à lancer partie finie, il refuse si le port 8765 répond) : `python -m filets bench-reflexe <run_id> [--limit N]`
+rejoue les invites enregistrées dans `runs/<id>/s1_calls.jsonl` (parties lancées avec `ollama_open`) sur tev1 et sur le 3B, et
+affiche l'accord des décisions (même vote, même choix, prise à ±0,5 t), les réponses illisibles et le temps de chacun.
 
 Pour une API (Groq, OpenRouter `:free`, Gemini, Mistral, GitHub Models) : copiez `.env.example` en
 `.env`, exportez la clé, et adaptez `config/groq.yaml`. Toutes ces offres parlent le format OpenAI ;

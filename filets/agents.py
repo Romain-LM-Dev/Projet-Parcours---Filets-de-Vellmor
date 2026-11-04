@@ -78,8 +78,9 @@ def _seed(world, agent: Agent, purpose: str, state: dict) -> int:
 
 async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], state: dict, system: str = "S2",
                    schema: dict | None = None, max_tokens: int | None = None, system_one: dict | None = None,
-                   temperature: float | None = None):
-    """Appelle le LLM et classe les dérives. Renvoie (données JSON ou None, llm_result, flags).
+                   temperature: float | None = None, handled: str = "règle de repli"):
+    """Appelle le LLM et classe les dérives. Renvoie (données JSON ou None, llm_result, flags). `handled` : ce que devient
+    l'action si la réponse manque (texte de l'incident ; l'appelant qui a un rattrapage le dit ici).
     `system` : « S1 » (réflexe : un nombre, le petit modèle) ou « S2 » (réflexion : le modèle de l'agent), voir `routing.py`."""
     brief = prompts.is_brief(world.cfg["llm"])
     reflex = system == "S1"
@@ -118,11 +119,11 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
         res = await world.router.complete(agent.id, "petit", purpose, messages, hint)
     if res.status != "ok":
         itype = "quota" if res.status == "quota" else "no_response"
-        world.incident(agent.id, itype, res.detail or res.status, "règle de repli", res.call_id)
+        world.incident(agent.id, itype, res.detail or res.status, handled, res.call_id)
         return None, res, {}
     data = extract_json(res.text)
     if data is None:
-        world.incident(agent.id, "unparseable", (res.text or "")[:200], "règle de repli", res.call_id)
+        world.incident(agent.id, "unparseable", (res.text or "")[:200], handled, res.call_id)
         return None, res, {}
     texts = [str(data.get(k, "")) for k in ("justification", "message")]
     oor, posture = detect_drift(*texts)
@@ -135,7 +136,13 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
     return data, res, {"out_of_role": oor}
 
 
-async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
+def reflex_usable(world) -> bool:
+    """Le modèle de décision (palier `reflexe`, ex. tev1) est-il là et encore en état de répondre ?"""
+    return "reflexe" in world.router.tiers and not getattr(world, "_reflex_down", False)
+
+
+async def decide_catch(world, agent: Agent, horizon: float, rescue: bool = False) -> Outcome:
+    """`rescue` : le grand modèle n'a pas répondu à temps (fenêtre ratée) : la prise est décidée par le modèle de décision."""
     obs, state, retrieved, used = await world.observe(agent, horizon, "catch")
     p = agent.profile
     common = {"agent": agent.id, "agent_kind": p.kind, "decision_type": "catch", "info_horizon": round(horizon, 6),
@@ -161,11 +168,20 @@ async def decide_catch(world, agent: Agent, horizon: float) -> Outcome:
 
     brief = prompts.is_brief(world.cfg["llm"])
     system, why = routing.choose_system(obs, "catch") if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
+    def ask_reflex():
+        return _ask_llm(world, agent, "catch", prompts.reflex_messages(p, obs), state, "S1",
+                        system_one=prompts.reflex_system_one(p, obs))
+    if rescue:
+        system, why = "S1", "reprise : le grand modèle n'a pas répondu à temps"
     if system == "S1":
-        data, res, flags = await _ask_llm(world, agent, "catch", prompts.reflex_messages(p, obs), state, "S1",
-                                          system_one=prompts.reflex_system_one(p, obs))
+        data, res, flags = await ask_reflex()
     else:
-        data, res, flags = await _ask_llm(world, agent, "catch", prompts.catch_messages(p, obs, world.capacity, brief), state)
+        # pas de réponse lisible du grand modèle : le modèle de décision tranche (mieux que la règle de repli)
+        data, res, flags = await _ask_llm(world, agent, "catch", prompts.catch_messages(p, obs, world.capacity, brief), state,
+                                          handled="repris par le réflexe" if reflex_usable(world) else "règle de repli")
+        if (data is None or to_number(data.get("prise")) is None) and reflex_usable(world):
+            data, res, flags = await ask_reflex()
+            system, why = "S1", "reprise : la réponse du grand modèle manquait ou était illisible"
     fallback, rule = False, None
     v = to_number(data.get("prise")) if data else None
     just = str(data.get("justification", "")).strip() if data else ""
@@ -341,9 +357,18 @@ async def debrief_villager(world, agent: Agent, asm) -> None:
     lines = world.debrief_lines(agent, asm, facts)
     names = [world.first_name(a.id) for a in world.fishers if a.id != agent.id]
     trust = prompts.trust_line(world.trust_obs(agent))
-    data, _, _ = await _ask_llm(world, agent, "debrief", prompts.debrief_messages(
-        agent.profile, lines, trust, f"Tes finances : {agent.wealth:.0f} écus."), {"round": 96}, "S2",
-        schema=prompts.debrief_schema(names), max_tokens=max(prompts.DEBRIEF_MAX_TOKENS, 12 + 9 * len(names)))
+    situation = f"Tes finances : {agent.wealth:.0f} écus."
+    messages = prompts.debrief_messages(agent.profile, lines, trust, situation)
+    kw = dict(schema=prompts.debrief_schema(names), max_tokens=max(prompts.DEBRIEF_MAX_TOKENS, 12 + 9 * len(names)))
+    data = None
+    if reflex_usable(world):
+        # un jugement de confiance est une décision structurée courte : le modèle de décision y répond (une échelle par pêcheur)
+        data, res, _ = await _ask_llm(world, agent, "debrief", messages, {"round": 96}, "S1", **kw,
+                                      system_one=prompts.debrief_system_one(agent.profile, lines, trust, situation, names))
+        if data is not None and res.tier == "reflexe":
+            data = {"confiance": {k: v for k, v in data.items() if not k.startswith("_")}}
+    if data is None:                                   # pas de modèle de décision, ou rien de lisible : le grand modèle
+        data, _, _ = await _ask_llm(world, agent, "debrief", messages, {"round": 96}, "S2", **kw)
     if data is not None:
         world.judge(agent, data.get("confiance"))
 

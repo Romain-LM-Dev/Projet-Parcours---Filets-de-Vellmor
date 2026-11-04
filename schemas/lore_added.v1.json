@@ -1,9 +1,6 @@
 {
   "type": "object",
   "properties": {
-    "run_id": {
-      "type": "string"
-    },
     "agent": {
       "type": "string"
     },
@@ -18,10 +15,12 @@
     },
     "importance": {
       "type": "number"
+    },
+    "run_id": {
+      "type": "string"
     }
   },
   "required": [
-    "run_id",
     "agent",
     "text",
     "source_event_id",

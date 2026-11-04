@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import prompts, rules
-from .agents import (Agent, _ask_llm, ballot, ballot_election, debrief_villager, decide_catch, patrol_decision, speak)
+from .agents import (Agent, _ask_llm, ballot, ballot_election, debrief_villager, decide_catch, patrol_decision, reflex_usable, speak)
 from .climate import CYCLE, EVENTS, Climate
 from .policies import patrol_vote, sanction_vote
 from .clock import SimClock, day_words
@@ -380,7 +380,7 @@ class World:
         t = self.clock.now()
         p = lore_passage(source_event_id, agent, text, [scope], t, importance)
         self.retriever.add_lore(p, int(self.cfg["rag"].get("lore_per_agent", 4)))
-        self.events.emit("lore_added", {"run_id": self.run_id, "agent": agent, "text": text,
+        self.events.emit("lore_added", {"agent": agent, "text": text,
                                         "source_event_id": source_event_id, "scope": scope, "importance": importance},
                          actor=agent, sim_time=t)
 
@@ -3133,7 +3133,9 @@ class AsyncRunner:
 
     def fishing_close(self):
         self.w.events.emit("phase", {"name": "fishing", "state": "close"})
-        self.expire("fish", "sortie perdue",
+        rescue = reflex_usable(self.w)             # avec un modèle de décision, la sortie n'est pas perdue : il la décide
+        self.rescued = {aid for kind, aid in self.thinking if kind == "fish"} if rescue else set()
+        self.expire("fish", "reprise par le réflexe" if rescue else "sortie perdue",
                     "décision encore en cours à la fermeture de la pêche : l'IA réfléchissait encore")
 
     async def fish(self, a: Agent, close_t: float):
@@ -3141,7 +3143,14 @@ class AsyncRunner:
         h = self.c.now()
         self.thinking[("fish", a.id)] = 0
         try:
-            o = await decide_catch(w, a, h)
+            try:
+                o = await decide_catch(w, a, h)
+            except asyncio.CancelledError:
+                if a.id not in getattr(self, "rescued", ()):
+                    raise
+                o = await decide_catch(w, a, h, rescue=True)         # annulé par la fermeture : le réflexe décide à sa place
+                w.apply_catch(a, o.value, o.decision, h, declared=o.data.get("declaration"), lake_name=o.data.get("lake"))
+                return
         finally:
             self.thinking.pop(("fish", a.id), None)
         if self.c.now() > close_t:

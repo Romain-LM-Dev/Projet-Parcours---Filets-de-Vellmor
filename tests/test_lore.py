@@ -118,3 +118,16 @@ def test_pgvector_lore_is_per_run_and_deleted_at_the_end(pg_dsn, tmp_path):
             await conn.close()
 
     asyncio.run(main())
+
+
+def test_two_scripted_games_with_lore_give_the_same_journal_quickly(tmp_path):
+    import json, re, time
+    t0 = time.perf_counter()
+    runs = [play(tmp_path, run_id=rid, seasons=3) for rid in ("a", "b")]
+    assert time.perf_counter() - t0 < 60                       # une régression d'index du lore se verrait ici
+    txt = [json.dumps([{k: v for k, v in e.items() if k not in ("processed_at", "wall_clock", "run_id", "event_id")}
+                       for e in evs if e["type"] != "llm_call"])
+           for rid, evs in zip("ab", runs)]
+    txt = [re.sub(rf'\b{rid}-', 'X-', t) for rid, t in zip("ab", txt)]
+    assert any(e["type"] == "lore_added" for e in runs[0])
+    assert txt[0] == txt[1]

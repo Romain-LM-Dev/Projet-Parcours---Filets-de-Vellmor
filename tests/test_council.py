@@ -31,13 +31,16 @@ def kinds(events, kind):
     return [e for e in events if e["type"] == kind]
 
 
-def fake_game(tmp_path, run_id, rec, population=TWO_VILLAGES, seasons=2, mode="sync", elder=False, schema=False, **over):
+def fake_game(tmp_path, run_id, rec, population=TWO_VILLAGES, seasons=2, mode="sync", elder=False, schema=False, s1=None, **over):
     """Une partie dont toutes les IA (grand et petit modèle) sont `rec`, un faux fournisseur qui enregistre ce qu'on lui demande
     (`schema` : il sait recevoir le schéma de la réponse, que `rec` enregistre alors)."""
     cfg = cfg_for(tmp_path, seasons=seasons, population__custom=population, population__elder=elder,
                   population__elder_kind="llm", time__mode=mode, **over)
     cfg["llm"]["providers"]["fake"] = {"base_url": rec.url, "api_key_env": None, "rpm": 0, "json_schema": schema}
     cfg["llm"]["tiers"] = {"grand": {"provider": "fake", "model": "m"}, "petit": {"provider": "fake", "model": "m"}}
+    if s1 is not None:                                   # `s1` : un faux modèle de décision (palier `reflexe`)
+        cfg["llm"]["providers"]["s1"] = {"base_url": s1.url, "kind": "systemone", "local": True, "timeout_s": 5}
+        cfg["llm"]["tiers"]["reflexe"] = {"provider": "s1", "model": "tev1:0.8b"}
     bus = LocalBus()
     dead = []
     bus.subscribe("deadletter", dead.append)

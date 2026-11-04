@@ -409,6 +409,14 @@ class LLMRouter:
             "latency_s": round(res.latency_s, 3), "status": res.status, "retries": res.retries,
             **({"system": system} if system else {}),
         }, actor=agent)
+        rec = self.events.recorder
+        if hint.get("system_one") and rec is not None and res.status == "ok":
+            # l'invite réelle du modèle de décision, gardée pour le banc `bench-reflexe` (`events.jsonl` n'a que les comptes)
+            with open(rec.run_dir / "s1_calls.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"call_id": call_id, "agent": agent, "purpose": purpose, "messages": messages,
+                                    "schema": hint.get("schema"), "max_tokens": hint.get("max_tokens"),
+                                    "system_one": hint["system_one"], "answer": res.text,
+                                    "latency_s": round(res.latency_s, 3)}, ensure_ascii=False) + "\n")
         return res
 
     async def aclose(self):

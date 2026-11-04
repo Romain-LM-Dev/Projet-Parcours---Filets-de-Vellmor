@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 import pytest
 
@@ -46,8 +47,8 @@ def test_sync_is_deterministic(tmp_path):
     b = asyncio.run(run_once(cfg_for(tmp_path, time__mode="sync"), quiet=True, run_id="b"))
     ea = [strip(e) for e in events(tmp_path, a) if e["type"] != "llm_call"]
     eb = [strip(e) for e in events(tmp_path, b) if e["type"] != "llm_call"]
-    as_text = lambda evs: json.dumps(evs).replace('"a-', '"X-')
-    assert as_text(ea) == as_text(eb).replace('"b-', '"X-')
+    as_text = lambda evs: re.sub(r'\ba-', 'X-', json.dumps(evs))
+    assert as_text(ea) == re.sub(r'\bb-', 'X-', as_text(eb))
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])

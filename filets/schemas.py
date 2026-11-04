@@ -173,7 +173,8 @@ PAYLOADS: dict[str, dict] = {
                          "assembly_scope": STR,   # la veillée où elle a été votée (`scope` : à qui elle vaut, éventuellement "lake:<lac>")
                          "duration": INT, "until_season": INT}),      # reserve, repos : durée, et dernière saison d'effet
     # un moment marquant entre dans le RAG de la partie (temporaire) ; `scope` : « all » ou un hameau
-    "lore_added": obj({"run_id": STR, "agent": STR, "text": STR, "source_event_id": STR, "scope": STR, "importance": NUM}),
+    "lore_added": obj({"agent": STR, "text": STR, "source_event_id": STR, "scope": STR, "importance": NUM},
+                      {"run_id": STR}),        # (journaux du 4 novembre 2026 : le run_id était aussi dans le payload)
     "memory_write": obj({"agent": STR, "memory_id": STR, "text": STR, "kind": STR, "importance": NUM,
                          "pinned": BOOL}, {"source_event_id": STR_OR_NULL}),
     "season_end": obj({"stock": NUM, "catches": {"type": "object"}, "wealth": {"type": "object"},
