@@ -178,10 +178,23 @@ def test_a_random_valley_depends_on_the_seed_alone_and_stays_within_limits():
     shapes = [random_valley(s) for s in range(60)]
     assert len({(v["villages"], v["fishers"], len(v["lakes"]), v["patrols"]) for v in shapes}) > 15            # elles diffèrent
     for v in shapes:
-        assert 3 <= v["villages"] <= 6 and 2 * v["villages"] <= v["fishers"] <= min(24, 5 * v["villages"])
-        assert 1 <= len(v["lakes"]) <= min(3, v["villages"]) and 0 <= v["patrols"] <= 2
-        assert all(0.6 <= k["richness"] <= 1.4 and 0.6 <= k["stock_ratio"] <= 1.0 and 0.6 <= k["growth_rate"] <= 1.4 for k in v["lakes"])
-    assert {v["fleet"] for v in shapes} == {"petits", "mixte", "gros"} and {v["patrols"] for v in shapes} == {0, 1, 2}
+        assert 2 <= v["villages"] <= 8 and 2 * v["villages"] <= v["fishers"] <= min(24, 5 * v["villages"])
+        assert 1 <= len(v["lakes"]) <= min(4, v["villages"]) and 0 <= v["patrols"] <= min(3, len(v["lakes"]) + 1)
+        assert all(0.5 <= k["richness"] <= 1.6 and 0.4 <= k["stock_ratio"] <= 1.0 and 0.3 <= k["growth_rate"] <= 1.6 for k in v["lakes"])
+    assert {v["fleet"] for v in shapes} == {"petits", "mixte", "gros"} and {v["patrols"] for v in shapes} == {0, 1, 2, 3}
+
+
+def test_thirty_random_valleys_differ_and_each_resolves_with_a_coherent_capacity():
+    from filets.catalog import generate_world
+    base, seen = load_config(None), set()
+    for seed in range(30):
+        w = generate_world(base, 0, 0, seed, mode="random")
+        seen.add((w["villages"], w["fishers"], tuple((k["capacity"], k["growth_rate"]) for k in w["lakes"])))
+        counts = collections.Counter(s["hamlet"] for s in w["base_population"])
+        for k in w["lakes"]:
+            assert k["villages"] and 10 <= k["capacity"] <= 1000
+            assert k["capacity"] == pytest.approx(12.5 * sum(counts[h] for h in k["villages"]) * random_valley(seed)["lakes"][w["lakes"].index(k)]["richness"], abs=0.01)
+    assert len(seen) == 30
 
 
 def test_the_random_setting_draws_the_whole_valley_and_the_manual_one_does_not():

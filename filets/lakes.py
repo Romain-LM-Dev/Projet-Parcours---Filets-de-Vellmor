@@ -254,16 +254,19 @@ def resolve_lakes(L: dict, hamlets: list[str], fishers: dict[str, int]) -> list[
 def random_valley(seed: int) -> dict:
     """Une vallée tirée de la graine seule : le nombre de villages, de pêcheurs, de lacs et leur richesse en poisson (par pêcheur,
     et part pleine au départ), leur repeuplement, la flotte (la taille des bateaux se tire ensuite pêcheur par pêcheur) et le
-    nombre de patrouilles. La même graine donne toujours la même vallée."""
+    nombre de patrouilles, plus la fréquence des événements du climat. La même graine donne toujours la même vallée.
+    Cohérence : 2 à 8 villages, 2 à 5 pêcheurs par village (24 au plus), au plus un lac par village (donc chacun a des villages) ;
+    la capacité d'un lac suit ses pêcheurs (`resolve_lakes`, 12,5 t × richesse × pêcheurs) et la richesse reste >= 0,5 ; pas plus
+    de patrouilles que de lacs + 1."""
     from .catalog import FLEETS
 
     r = random.Random(f"{seed}|valley")
-    villages = r.randint(3, 6)
-    lakes = r.randint(1, min(3, villages))
+    villages = r.randint(2, 8)
+    lakes = r.randint(1, min(4, villages, MAX_LAKES))
     fishers = r.randint(2 * villages, min(24, 5 * villages))
     return {
         "villages": villages, "fishers": fishers, "fleet": r.choice([f["id"] for f in FLEETS]),
-        "lakes": [{"name": LAKE_NAMES[i], "richness": round(r.uniform(0.6, 1.4), 2), "stock_ratio": round(r.uniform(0.6, 1.0), 2),
-                   "growth_rate": round(r.uniform(0.6, 1.4), 2)} for i in range(lakes)],
-        "patrols": r.choice([0, 1, 1, 2]),
+        "lakes": [{"name": LAKE_NAMES[i], "richness": round(r.uniform(0.5, 1.6), 2), "stock_ratio": round(r.uniform(0.4, 1.0), 2),
+                   "growth_rate": round(r.uniform(0.3, 1.6), 2)} for i in range(lakes)],
+        "patrols": r.randint(0, min(3, lakes + 1)), "event_rate": round(r.uniform(0.1, 0.5), 2),
     }

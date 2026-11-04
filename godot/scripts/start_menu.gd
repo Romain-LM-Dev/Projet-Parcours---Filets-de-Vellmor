@@ -73,7 +73,8 @@ var spin_luck: SpinBox
 var spin_villages: SpinBox
 var spin_fishers: SpinBox
 var opt_fleet: OptionButton
-var opt_genmode: OptionButton          # vallée paramétrée (nombres choisis) ou aléatoire (tout tiré de la graine)
+var btn_other: Button                  # « Autre vallée » : nouvelle graine, visible en mode aléatoire
+var opt_genmode: OptionButton         # vallée paramétrée (nombres choisis) ou aléatoire (tout tiré de la graine)
 var spin_lakes: SpinBox
 var spin_patrols: SpinBox
 var spin_hold: SpinBox                 # part du poisson d'un lac qu'un bateau peut prendre en une saison
@@ -564,7 +565,7 @@ func _build_center(body: Control) -> void:
 	opt_genmode = _option(["Paramétrée", "Aléatoire"], 128)
 	opt_genmode.set_item_metadata(0, "params")
 	opt_genmode.set_item_metadata(1, "random")
-	opt_genmode.tooltip_text = "Paramétrée : vous choisissez le nombre de villages, de pêcheurs, de lacs et la flotte. Aléatoire : tout est tiré de la graine (villages, pêcheurs, flotte, lacs et leur poisson, patrouilles) ; le dé change de graine, donc de vallée. Vous pouvez ensuite retoucher chaque pêcheur et chaque lac."
+	opt_genmode.tooltip_text = "Paramétrée : vous choisissez le nombre de villages, de pêcheurs, de lacs et la flotte. Aléatoire : tout est tiré de la graine (villages, pêcheurs, flotte, lacs et leur poisson, patrouilles) ; chaque passage en aléatoire et le bouton « Autre vallée » changent de graine, donc de vallée (la graine reste réutilisable). Vous pouvez ensuite retoucher chaque pêcheur et chaque lac."
 	gen0.add_child(opt_genmode)
 	gen0.add_child(_lbl("Lacs", 12, "ui", Art.MUTED))
 	spin_lakes = _spin(1, 4, 1, 1, 56)
@@ -603,7 +604,16 @@ func _build_center(body: Control) -> void:
 	spin_lakes.value_changed.connect(_on_gen_spin.bind(false))
 	opt_genmode.item_selected.connect(func(_i: int) -> void:
 		_set_gen_enabled()
+		if _is_random():
+			spin_seed.set_value_no_signal(randi() % 1000000)       # chaque passage en aléatoire tire une nouvelle vallée
 		_on_gen_spin(0.0, false))
+	btn_other = Button.new()
+	btn_other.text = "Autre vallée"
+	btn_other.focus_mode = Control.FOCUS_NONE
+	btn_other.tooltip_text = "Tire une nouvelle graine, donc une autre vallée aléatoire. La graine reste affichée : la noter permet de retrouver cette vallée."
+	btn_other.pressed.connect(func() -> void: spin_seed.value = randi() % 1000000)
+	gen0.add_child(btn_other)
+	btn_other.visible = _is_random()
 	opt_fleet.item_selected.connect(func(_i: int) -> void: _on_gen_spin(0.0, false))
 	# titres de colonnes, alignés sur les lignes
 	var titles := HBoxContainer.new()
@@ -1208,6 +1218,8 @@ func _apply_generation() -> void:
 ## En aléatoire, les nombres de la vallée sont ceux qu'a tirés la graine : on ne les règle pas.
 func _set_gen_enabled() -> void:
 	var manual := not _is_random()
+	if btn_other != null:
+		btn_other.visible = not manual
 	spin_villages.editable = manual
 	spin_fishers.editable = manual
 	spin_lakes.editable = manual

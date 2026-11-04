@@ -56,6 +56,7 @@ def apply_random_valley(cfg: dict) -> None:
     lake["lakes"] = v["lakes"]
     patrol = cfg["scenario"].setdefault("patrol", {})
     patrol["count"], patrol["enabled"] = v["patrols"], v["patrols"] > 0
+    cfg.setdefault("climate", {})["event_rate"] = v["event_rate"]
 
 
 def normalize(cfg: dict) -> dict:
