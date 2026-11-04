@@ -153,7 +153,8 @@ memory:
 rag:
   corpus_dir: corpus
   top_k: 3
-  # bm25     : corpus et souvenirs cherchés en mémoire, par mots (par défaut : aucun service, aucun calcul de vecteur).
+  lore_per_agent: 4                    # moments marquants de la partie gardés par agent (le moins important part d'abord)
+  # bm25    : corpus et souvenirs cherchés en mémoire, par mots (par défaut : aucun service, aucun calcul de vecteur).
   # pgvector : corpus et souvenirs rangés dans PostgreSQL + pgvector avec leur vecteur, cherchés par le sens
   #            (voir config/data.yaml et `vectors.py`). Si la base tombe en cours de partie, BM25 prend le relais.
   backend: bm25

@@ -138,6 +138,7 @@ class PgVectorStore:
         self.dsn, self.embedder = dsn, embedder
         self.dim, self.model = embedder.dim, embedder.name
         self.chunks, self.memories = f"rag_chunks_{self.dim}", f"rag_memories_{self.dim}"
+        self.lore = f"rag_lore_{self.dim}"
         self.pool = None
 
     async def open(self) -> None:
@@ -146,6 +147,11 @@ class PgVectorStore:
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute("SELECT pg_advisory_xact_lock(7311)")      # deux processus qui démarrent ensemble
+                await conn.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self.lore} (
+                      run_id text NOT NULL, id text NOT NULL, agent text NOT NULL, body text NOT NULL,
+                      visible_to text[] NOT NULL, sim_time double precision NOT NULL, importance double precision,
+                      embedder text NOT NULL, embedding vector({d}) NOT NULL, PRIMARY KEY (run_id, id));""")
                 await conn.execute(f"""
                     CREATE TABLE IF NOT EXISTS {c} (
                       embedder text NOT NULL, corpus text NOT NULL, id text NOT NULL, title text, body text NOT NULL,
@@ -185,6 +191,27 @@ class PgVectorStore:
             f"WHERE embedder = $1 AND corpus = $2 AND sim_time <= $4 AND ('all' = ANY(visible_to) OR $5 = ANY(visible_to)) "
             f"AND 1 - (embedding <=> $3) > $6 ORDER BY embedding <=> $3, id LIMIT $7",
             self.model, corpus, qvec, horizon, hamlet, min_score, k)
+
+    # ------------------------------------------------------------ lore de partie (temporaire, propre à un run_id)
+    async def put_lore(self, run_id: str, rows: list[tuple]) -> None:
+        """`rows` : (id, agent, texte, visible_to, sim_time, importance, vecteur)."""
+        await self.pool.executemany(
+            f"INSERT INTO {self.lore} (run_id, id, agent, body, visible_to, sim_time, importance, embedder, embedding) "
+            f"VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (run_id, id) DO NOTHING",
+            [(run_id, *r[:6], self.model, r[6]) for r in rows])
+
+    async def delete_lore(self, run_id: str, ids: list[str]) -> None:
+        await self.pool.execute(f"DELETE FROM {self.lore} WHERE run_id = $1 AND id = ANY($2::text[])", run_id, ids)
+
+    async def drop_lore(self, run_id: str) -> None:
+        await self.pool.execute(f"DELETE FROM {self.lore} WHERE run_id = $1", run_id)
+
+    async def search_lore(self, run_id: str, qvec, hamlet: str, horizon: float, k: int, min_score: float = 0.0):
+        return await self.pool.fetch(
+            f"SELECT id, 1 - (embedding <=> $3) AS score FROM {self.lore} "
+            f"WHERE run_id = $1 AND embedder = $2 AND sim_time <= $4 AND ('all' = ANY(visible_to) OR $5 = ANY(visible_to)) "
+            f"AND 1 - (embedding <=> $3) > $6 ORDER BY embedding <=> $3, id LIMIT $7",
+            run_id, self.model, qvec, horizon, hamlet, min_score, k)
 
     # ------------------------------------------------------------ souvenirs
     async def put_memories(self, run_id: str, rows: list[tuple]) -> None:

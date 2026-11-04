@@ -28,7 +28,7 @@ def obj(required: dict, optional: dict | None = None, extra: bool = False) -> di
 
 RETRIEVED = {
     "type": "array",
-    "items": obj({"id": STR, "source": {"enum": ["corpus", "memory", "pinned", "rumor"]}, "score": NUM, "sim_time": NUM},
+    "items": obj({"id": STR, "source": {"enum": ["corpus", "memory", "pinned", "rumor", "lore"]}, "score": NUM, "sim_time": NUM},
                  {"text": STR}),
 }
 
@@ -172,6 +172,8 @@ PAYLOADS: dict[str, dict] = {
                          "text": STR,           # la règle en mots
                          "assembly_scope": STR,   # la veillée où elle a été votée (`scope` : à qui elle vaut, éventuellement "lake:<lac>")
                          "duration": INT, "until_season": INT}),      # reserve, repos : durée, et dernière saison d'effet
+    # un moment marquant entre dans le RAG de la partie (temporaire) ; `scope` : « all » ou un hameau
+    "lore_added": obj({"run_id": STR, "agent": STR, "text": STR, "source_event_id": STR, "scope": STR, "importance": NUM}),
     "memory_write": obj({"agent": STR, "memory_id": STR, "text": STR, "kind": STR, "importance": NUM,
                          "pinned": BOOL}, {"source_event_id": STR_OR_NULL}),
     "season_end": obj({"stock": NUM, "catches": {"type": "object"}, "wealth": {"type": "object"},

@@ -58,7 +58,7 @@ from .lakes import grid_of, lake_distance, lake_parcels, resolve_lakes, village_
 from .memory import MemoryBank, MemoryStore, VectorMemory
 from .objects import archive_run, make_objects
 from .profiles import Profile, build_population, villages_of
-from .rag import Retriever, VectorRetriever
+from .rag import Retriever, VectorRetriever, lore_passage
 from .schemas import validate_command
 from .llm import LLMRouter, extract_json, to_number
 from .vectors import PgVectorStore, make_embedder, postgres_dsn
@@ -294,6 +294,7 @@ class World:
         if self.vectors is not None:
             self.retriever = VectorRetriever(ROOT / cfg["rag"]["corpus_dir"], values, self.vectors, self.vectors.embedder,
                                              self.objects, float(cfg["rag"].get("min_score", 0.0)), *places)
+            self.retriever.run_id = self.run_id
         else:
             self.retriever = Retriever(ROOT / cfg["rag"]["corpus_dir"], values, *places)
         self.router = LLMRouter(cfg, self.clock, self.events, seed, self.ctl)
@@ -371,6 +372,17 @@ class World:
                                                "source_event_id": source_event_id}, actor=agent.id, sim_time=t)
         m.event_id = ev["event_id"]
         return m
+
+    def add_lore(self, agent: str, text: str, source_event_id: str, scope: str, importance: float):
+        """Un moment marquant qui caractérise `agent` entre dans le RAG de CETTE partie (ce que « la vallée sait » de lui) :
+        `scope` = « all » (la vallée entière) ou un hameau. Rien d'écrit sur le disque, rien pour une autre partie."""
+        assert scope == "all" or scope in self.hamlets, f"portée de lore inconnue : {scope!r} (un nom de hameau, sans « hamlet: »)"
+        t = self.clock.now()
+        p = lore_passage(source_event_id, agent, text, [scope], t, importance)
+        self.retriever.add_lore(p, int(self.cfg["rag"].get("lore_per_agent", 4)))
+        self.events.emit("lore_added", {"run_id": self.run_id, "agent": agent, "text": text,
+                                        "source_event_id": source_event_id, "scope": scope, "importance": importance},
+                         actor=agent, sim_time=t)
 
     def name(self, aid: str) -> str:
         a = self.agents.get(aid)
@@ -838,6 +850,10 @@ class World:
             **({"breach": breach} if breach else {})}, actor=a.id)
         about = f"environ {value:g} t" if value is not None else "une quantité inconnue"
         broke = " et ".join(BREACH_WORD[k] for k in breach)
+        deed = ("est sorti pêcher en cachette alors qu'il était interdit de pêche" if trip["secret"] else
+                (f"a enfreint la règle ({broke})" if breach else f"a menti à l'ancien en déclarant {said:g} t"))
+        self.add_lore(a.id, f"La vallée a établi que {a.profile.name} {deed} à la saison {season} ({HOW[how]}) : {about}.",
+                      ev["event_id"], "all", 0.9)
         for o in self.agents.values():
             if o.id == a.id:
                 fault = "suis sorti pêcher en cachette" if trip["secret"] else \
@@ -1267,12 +1283,12 @@ class World:
             retrieved.append({"id": m.event_id or m.id, "source": "memory", "score": s, "sim_time": m.t,
                               "text": m.text[:160]})
         for d, s in docs:
-            retrieved.append({"id": f"corpus:{d.id}", "source": "corpus", "score": round(s, 3), "sim_time": d.sim_time,
-                              "text": d.text[:160]})
+            retrieved.append({"id": d.id if d.source == "lore" else f"corpus:{d.id}", "source": d.source,
+                              "score": round(s, 3), "sim_time": d.sim_time, "text": d.text[:160]})
         for r in rumors:
             retrieved.insert(0, {"id": r["event_id"], "source": "rumor", "score": 1.0, "sim_time": r["t"],
                                  "text": r["text"][:160]})
-        used += [r["id"] for r in retrieved if r["source"] != "corpus"]
+        used += [r["id"] for r in retrieved if r["source"] not in ("corpus", "lore")]
         obs = {
             "label": self.when(horizon), "phase": self.phase_text(horizon), "calendar": self.calendar_text(),
             "season": season, "stock_estimate": est, "role": p.role,
@@ -2031,6 +2047,8 @@ class World:
                 pe = self.events.emit("promise", {"agent": agent.id, "amount": round(pv, 2), "for_season": season + 1,
                                                   "utterance_id": u["event_id"]}, actor=agent.id)
                 self.promises[(agent.id, season + 1)] = (round(pv, 2), pe["event_id"])
+                self.add_lore(agent.id, f"{agent.profile.name} a promis à la veillée de ne pas pêcher plus de {pv:g} t à la "
+                                        f"saison {season + 1}.", pe["event_id"], "all" if asm.scope == "valley" else asm.scope.removeprefix("hamlet:"), 0.6)
                 old = self.promise_memories.get((agent.id, season + 1))
                 if old is not None:
                     old.pinned = False      # la nouvelle promesse remplace l'ancienne pour la même saison
@@ -2044,6 +2062,8 @@ class World:
             ae = self.events.emit("accusation", {"accuser": agent.id, "accused": accused.id,
                                                  "utterance_id": u["event_id"]}, actor=agent.id)
             asm.accused.append((now, accused.id))
+            self.add_lore(accused.id, f"{agent.profile.name} a accusé {accused.profile.name} devant tous d'avoir trop pêché.",
+                          ae["event_id"], "all" if asm.scope == "valley" else asm.scope.removeprefix("hamlet:"), 0.5)
             self.accusations.setdefault(season, []).append((now, accused.id, agent.id))
             if accused.id in asm.participants:
                 self.remember(accused, f"{agent.profile.name} m'a accusé devant tous d'avoir trop pêché.",
@@ -2183,6 +2203,9 @@ class World:
             self.events.emit("ban", {"agent": s.target, "banned": s.action == "exclure",
                                      "reputation": self.reputation(s.target), "proposal_id": s.id, "for": yes,
                                      "voters": len(voters)}, actor=s.target)
+            self.add_lore(s.target, f"La vallée a interdit de pêche à {target.profile.name}." if s.action == "exclure" else
+                          f"La vallée a rendu à {target.profile.name} le droit de pêcher.", res["event_id"], "all",
+                          0.8 if s.action == "exclure" else 0.5)
             self.remember(target, "La vallée m'a interdit de pêche : tant qu'elle ne me fera pas de nouveau confiance, je ne "
                                   "pourrai pêcher qu'en cachette." if s.action == "exclure" else
                           "La vallée m'a rendu le droit de pêcher.", "interdiction", 1.0, source_event_id=res["event_id"])
@@ -2485,10 +2508,13 @@ class World:
                 # qu'elle éclate
                 known = self.known_catch(a.id, season, now)
                 known_kept = (landed if known is None else known) <= promised + tol
-                self.events.emit("promise_outcome", {
+                po = self.events.emit("promise_outcome", {
                     "agent": a.id, "promise_event_id": pe_id, "promised": promised, "landed": round(landed, 3),
                     "kept": kept, "season": season, "declared": round(a.declared.get(season, landed), 3),
                     "known_kept": known_kept}, actor=a.id)
+                if not known_kept:      # trahison connue de la vallée ; une trahison cachée n'entre pas dans le RAG commun
+                    self.add_lore(a.id, f"{a.profile.name} avait promis de ne pas pêcher plus de {promised:g} t à la saison "
+                                        f"{season} et n'a pas tenu parole.", po["event_id"], "all", 0.9)
                 if not kept:
                     self.remember(a, f"J'avais promis {promised:g} t pour la saison {season} et j'en ai pris "
                                      f"{landed:g}. " + ("Personne ne le sait." if known_kept else "Tout le monde le sait."),
@@ -2839,7 +2865,7 @@ class World:
                 await self.memory_bank.flush()
             except Exception as exc:
                 log.warning("derniers souvenirs non écrits dans la base : %s", exc)
-        for closing in (self.vectors, self.objects, getattr(self.vectors, "embedder", None)):
+        for closing in (self.retriever, self.vectors, self.objects, getattr(self.vectors, "embedder", None)):
             if closing is not None:
                 try:
                     await closing.aclose()

@@ -85,6 +85,15 @@ class Passage:
     visible_to: list[str]
     sim_time: float
     tokens: list[str] = field(default_factory=list)
+    # passage de partie (« lore ») : l'agent qu'il caractérise et son poids ; vide pour le corpus fixe
+    agent: str = ""
+    importance: float = 0.0
+    source: str = "corpus"
+
+
+def lore_passage(event_id: str, agent: str, text: str, visible_to: list[str], t: float, importance: float) -> Passage:
+    return Passage(f"lore:{event_id}", "Ce que la vallée sait", text, visible_to, t, tokenize("Ce que la vallée sait " + text),
+                   agent, importance, "lore")
 
 
 def _front_matter(raw: str) -> tuple[dict, str]:
@@ -148,14 +157,31 @@ class Retriever:
                 if p.startswith("#"):
                     continue
                 self.passages.append(Passage(f"{doc_id}#{i}", title, p, vis, t, tokenize(title + " " + p)))
-        self.bm25 = BM25([p.tokens for p in self.passages]) if self.passages else None
+        self.lore: list[Passage] = []              # passages de la partie en cours : en mémoire seulement, jamais écrits sur disque
+        self._index()
+
+    def _index(self) -> None:
+        self._all = self.passages + self.lore      # un seul index : corpus fixe et lore concourent sur le même score BM25
+        self.bm25 = BM25([p.tokens for p in self._all]) if self._all else None
+
+    def add_lore(self, p: Passage, cap: int) -> list[Passage]:
+        """Ajoute un passage de partie ; au-delà de `cap` par agent, le moins important (puis le plus ancien) est retiré.
+        Rend les passages retirés (éventuellement `p` lui-même)."""
+        if any(x.id == p.id for x in self.lore):
+            return []
+        self.lore.append(p)
+        mine = [x for x in self.lore if x.agent == p.agent]
+        gone = sorted(mine, key=lambda x: (x.importance, x.sim_time))[:max(0, len(mine) - cap)]
+        self.lore = [x for x in self.lore if x not in gone]
+        self._index()                              # shortcut: réindexation complète, le lore reste de quelques dizaines de passages
+        return gone
 
     def search(self, query: str, hamlet: str, horizon: float, k: int) -> list[tuple[Passage, float]]:
         if not self.bm25:
             return []
         scores = self.bm25.scores(tokenize(query))
         cands = [
-            (p, s) for p, s in zip(self.passages, scores)
+            (p, s) for p, s in zip(self._all, scores)
             if s > 0 and p.sim_time <= horizon and ("all" in p.visible_to or hamlet in p.visible_to)
         ]
         cands.sort(key=lambda x: -x[1])
@@ -192,6 +218,29 @@ class VectorRetriever:
             digest.update("\x1f".join([p.id, p.title, p.text, ",".join(p.visible_to), repr(p.sim_time)]).encode() + b"\x1e")
         self.corpus = digest.hexdigest()[:16]     # empreinte du corpus rendu : capacité, prix… sont dans le texte
         self.degraded = False
+        self.run_id = ""                          # la partie dont le lore est rangé dans la base (posé par `World`)
+        self._new: list[Passage] = []             # lore pas encore vectorisé ni écrit (l'ajout est synchrone, l'écriture non)
+        self._gone: set[str] = set()              # lore retiré (plafond) à effacer de la base
+
+    def add_lore(self, p: Passage, cap: int) -> list[Passage]:
+        gone = self.local.add_lore(p, cap)
+        self._new.append(p)
+        self._gone.update(g.id for g in gone)
+        return gone
+
+    async def _flush_lore(self) -> None:
+        new, gone = [p for p in self._new if p.id not in self._gone], list(self._gone)
+        self._new, self._gone = [], set()
+        try:
+            if gone:
+                await self.store.delete_lore(self.run_id, gone)
+            if new:
+                vecs = await self.embedder.embed([f"{p.title} {p.text}" for p in new])
+                await self.store.put_lore(self.run_id, [(p.id, p.agent, p.text, p.visible_to, p.sim_time, p.importance, v)
+                                                        for p, v in zip(new, vecs)])
+        except Exception:
+            self._new, self._gone = new + self._new, set(gone) | self._gone     # à reprendre à la prochaine recherche
+            raise
 
     async def open(self) -> None:
         if await self.store.count_chunks(self.corpus) >= len(self.passages):
@@ -208,9 +257,15 @@ class VectorRetriever:
     async def asearch(self, query: str, hamlet: str, horizon: float, k: int) -> list[tuple[Passage, float]]:
         if not self.degraded:
             try:
+                await self._flush_lore()
                 [q] = await self.embedder.embed([query])
                 rows = await self.store.search_chunks(self.corpus, q, hamlet, horizon, k, self.min_score)
-                return [(self.by_id[r["id"]], float(r["score"])) for r in rows if r["id"] in self.by_id]
+                out = [(self.by_id[r["id"]], float(r["score"])) for r in rows if r["id"] in self.by_id]
+                if self.local.lore:               # le lore de CETTE partie concourt sur le même score cosinus
+                    lore = {p.id: p for p in self.local.lore}
+                    rows = await self.store.search_lore(self.run_id, q, hamlet, horizon, k, self.min_score)
+                    out += [(lore[r["id"]], float(r["score"])) for r in rows if r["id"] in lore]
+                return sorted(out, key=lambda x: -x[1])[:k]
             except Exception as exc:              # base ou modèle de plongement perdus : BM25 prend le relais
                 self.degraded = True
                 log.warning("recherche vectorielle indisponible (%s) : BM25 en mémoire prend le relais", exc)
@@ -220,4 +275,9 @@ class VectorRetriever:
         return self.local.search(query, hamlet, horizon, k)
 
     async def aclose(self) -> None:
-        pass
+        """Fin de partie : le lore de ce run_id est effacé de la base (le corpus fixe n'est pas touché)."""
+        if self.run_id and self.store.pool is not None:
+            try:
+                await self.store.drop_lore(self.run_id)
+            except Exception as exc:
+                log.warning("lore de la partie non effacé (jamais relu par une autre partie) : %s", exc)
