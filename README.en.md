@@ -819,3 +819,7 @@ tests/             consistency tests
 * The experimental protocol: hypotheses, at least 5 runs × 2 configurations, baseline (E1, E2).
 * Exploit the measurements already instrumented for excellence: event → indicator lag under
   load (C7) and comparison of two population sizes (`--agents`, C8).
+
+## License
+
+Non-commercial source-available license: see [LICENSE.md](LICENSE.md). Commercial use requires written permission from the rights holder.

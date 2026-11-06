@@ -819,3 +819,7 @@ tests/             tests de cohérence
 * Le protocole expérimental : hypothèses, 5 runs × 2 configurations au moins, baseline (E1, E2).
 * Exploiter les mesures déjà instrumentées pour l'excellence : décalage événement → indicateur sous
   charge (C7) et comparaison de deux tailles de population (`--agents`, C8).
+
+## Licence
+
+Licence source-available non commerciale : voir [LICENSE.md](LICENSE.md). Usage commercial sur autorisation écrite du titulaire.
