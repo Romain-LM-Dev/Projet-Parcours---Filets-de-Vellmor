@@ -1,3 +1,9 @@
+<div align="center">
+
+🇫🇷 Français | 🇬🇧 [English](README.en.md)
+
+</div>
+
 # FILETS — la tragédie des communs autour du lac de Vellmor
 
 Projet *Mondes Vivants* (5A IABD, EIGSI Casablanca). Des pêcheurs incarnés par des LLM gratuits
