@@ -4,6 +4,7 @@ parallèle ; une décision voit tout ce qui s'est passé avant son horizon ; rie
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -69,19 +70,19 @@ def test_a_slow_ai_loses_no_outing_and_does_not_change_the_world(tmp_path, monke
 def test_decisions_with_no_event_between_them_are_asked_in_parallel(tmp_path, monkeypatch):
     log: list = []
     slow_provider(monkeypatch, 0.15, log)
-    world, events = play(tmp_path, "para", seasons=1, time__departure_spread_days=[0.0, 0.2])
-    catches = sorted((s, e) for p, s, e in log if p == "catch")
-    assert len(catches) == len(world.fishers)
-    # les huit départs tiennent dans une même journée (une sortie dure un jour) : tous les appels se chevauchent
-    assert catches[-1][0] < min(e for _, e in catches), "les décisions ont été demandées l'une après l'autre"
+    world, events = play(tmp_path, "para", seasons=1, time__departure_spread_days=[0.0, 0.1])
+    plans = sorted((s, e) for p, s, e in log if p == "plan")
+    assert len(plans) == len(world.fishers)
+    # les huit départs tiennent avant la fin de la plus courte sortie (3 heures) : tous les appels se chevauchent
+    assert plans[-1][0] < min(e for _, e in plans), "les décisions ont été demandées l'une après l'autre"
 
 
 def test_a_decision_after_an_outing_sees_its_catch(tmp_path):
     world, events = play(tmp_path, "voit", seasons=1, time__departure_spread_days=[0.0, 4.0])
     stocks = [(e["sim_time"], e["payload"]["stock"]) for e in kinds(events, "lake_update")]
     seen = [(d["payload"]["info_horizon"], d["payload"]["observed"]["stock_true"]) for d in kinds(events, "decision")
-            if d["payload"]["decision_type"] == "catch"]
-    assert len(seen) == len(world.fishers)
+            if d["payload"]["decision_type"] in ("plan", "catch")]
+    assert len(seen) > 3 * len(world.fishers)          # un plan, puis une décision à chaque retour
     for h, stock_true in seen:
         before = [s for t, s in stocks if t <= h + 1e-9]
         assert stock_true == pytest.approx(before[-1], abs=0.01), f"à J{h:.2f}, la décision ne voit pas l'état du lac"
@@ -96,22 +97,23 @@ def test_each_outing_is_an_event_on_its_own_day_before_the_catch_balance(tmp_pat
         mine = [e for e in kinds(events, "outing") if e["payload"]["agent"] == a]
         assert [o["payload"]["day"] for o in mine] == [o["day"] for o in c["payload"]["outings"]]
         assert [o["payload"]["tonnes"] for o in mine] == pytest.approx([o["tonnes"] for o in c["payload"]["outings"]], abs=0.01)
-        for o in mine:
-            assert o["sim_time"] == pytest.approx(o["payload"]["day"] + 1.0) and o["sim_time"] <= c["sim_time"]
+        for o in mine:           # la sortie est émise à son retour : début de la pêche + ses heures (chez soi, pas de route)
+            assert o["sim_time"] == pytest.approx(o["payload"]["day"] + o["payload"]["hours"] / 24.0, abs=1e-3)
+            assert o["sim_time"] <= c["sim_time"] + 1e-9
     assert len({o["sim_time"] for o in kinds(events, "outing")}) > 1
 
 
 def test_nothing_sails_after_the_fishing_close(tmp_path):
     world, events = play(tmp_path, "ferme", seasons=2, time__departure_spread_days=[3.0, 4.0], time__fishing_close_day=12.0)
     for season in (1, 2):
-        close = (season - 1) * world.T["season_days"] + world.T["fishing_close_day"]
-        for e in events:
-            if e["season"] == season and e["type"] in ("catch", "report", "sale") or (
-                    e["season"] == season and e["type"] == "lake_update" and e["payload"]["cause"] == "catch"):
-                assert e["sim_time"] <= close + 1e-6, (e["type"], e["sim_time"], close)
-    for c in kinds(events, "catch"):
-        assert c["payload"]["outings"]
-        assert max(o["day"] for o in c["payload"]["outings"]) + 1.0 <= world.T["fishing_close_day"] + 1e-6
+        start = (season - 1) * world.T["season_days"]
+        close = start + world.T["fishing_close_day"]
+        for e in events:       # une sortie commencée avant la fermeture rentre normalement (au plus 7 h plus tard)
+            if e["season"] == season and e["type"] in ("catch", "report", "sale", "outing"):
+                assert e["sim_time"] <= close + 0.3 + 1e-6, (e["type"], e["sim_time"], close)
+        for e in kinds(events, "outing"):
+            if e["season"] == season:
+                assert e["payload"]["day"] <= world.T["fishing_close_day"] + 1e-6
 
 
 def test_the_road_to_another_lake_adds_its_days_to_both_ends(tmp_path):
@@ -144,7 +146,7 @@ def test_events_of_parallel_decisions_come_out_in_queue_order_not_in_answer_orde
     _, events = play(tmp_path, "inegal", seasons=1, time__departure_spread_days=[0.0, 0.2])
     seq = [e["seq"] for e in events]
     assert seq == sorted(seq) and len(set(seq)) == len(seq)
-    first = [e for e in events if e["type"] == "decision" and e["payload"]["decision_type"] == "catch"]
+    first = [e for e in events if e["type"] == "decision" and e["payload"]["decision_type"] == "plan"]
     assert [e["actor"] for e in first] == sorted((e["actor"] for e in first), key=lambda a: [x["actor"] for x in first].index(a))
     _, even = play(tmp_path, "egal", seasons=1, time__departure_spread_days=[0.0, 0.2])
     order = lambda evs: [(e["type"], e["actor"]) for e in evs if e["type"] in ("decision", "llm_call")]
@@ -157,3 +159,123 @@ def test_the_evening_has_the_same_journal_in_two_games(tmp_path):
         _, events = play(tmp_path, run_id, seasons=2)
         return [(e["type"], e["sim_time"], e["actor"]) for e in events if e["type"] in ("utterance", "proposal", "support", "decision")]
     assert journal("v1") == journal("v2")
+
+
+# ============================================================ la pêche décidée par le pêcheur (docs/peche.md)
+def force(monkeypatch, purpose: str, **fields):
+    """Le faux LLM répond en plus ce qu'on lui impose pour cette nature de décision (`plan`, `catch`) : le pêcheur « choisit » ainsi."""
+    orig = ScriptedClient.complete
+
+    async def complete(self, model, messages, hint, tier):
+        res = await orig(self, model, messages, hint, tier)
+        if hint.get("purpose") == purpose and res.status == "ok":
+            try:
+                res.text = json.dumps({**json.loads(res.text), **fields}, ensure_ascii=False)
+            except ValueError:
+                pass
+        return res
+    monkeypatch.setattr(ScriptedClient, "complete", complete)
+
+
+def fishing_hours(o):
+    """(heure du début, heure de la fin) de la pêche d'une sortie, dans sa journée."""
+    h = (o["payload"]["day"] % 1.0) * 24.0
+    return h, h + o["payload"]["hours"]
+
+
+def test_the_fisher_chooses_his_own_days(tmp_path):
+    _, events = play(tmp_path, "jours", seasons=1)
+    days = {}
+    for o in kinds(events, "outing"):
+        days.setdefault(o["payload"]["agent"], []).append(o["payload"]["day"])
+    assert len(days) >= 6 and len({tuple(d) for d in days.values()}) > 3          # chacun ses jours, ce n'est plus une grille commune
+    gaps = [{round(b - a, 1) for a, b in zip(d, d[1:])} for d in days.values() if len(d) > 2]
+    assert any(len(g) > 1 for g in gaps)                                         # et des écarts inégaux d'une sortie à l'autre
+    assert {o["payload"]["hours"] for o in kinds(events, "outing")} == {3.0, 7.0}      # courtes et longues
+    decisions = [d["payload"] for d in kinds(events, "decision") if d["payload"]["decision_type"] == "catch"]
+    assert decisions and all("delay_h" in d for d in decisions)
+
+
+def test_a_fisher_may_not_go_out_at_all(tmp_path, monkeypatch):
+    force(monkeypatch, "plan", premiere_sortie="plus cette saison")
+    world, events = play(tmp_path, "quai", seasons=1)
+    assert not kinds(events, "outing")
+    catches = kinds(events, "catch")
+    assert len(catches) == len(world.fishers) and all(c["payload"]["landed"] == 0 and c["payload"]["outings"] == [] for c in catches)
+    assert all(r["payload"]["declared"] == 0 for r in kinds(events, "report"))
+
+
+def test_two_outings_the_same_day_are_possible(tmp_path, monkeypatch):
+    force(monkeypatch, "plan", premiere_sortie="tout de suite")
+    force(monkeypatch, "catch", quand="tout de suite", duree="courte")
+    _, events = play(tmp_path, "deux", seasons=1)
+    per_day = {}
+    for o in kinds(events, "outing"):
+        per_day.setdefault((o["payload"]["agent"], int(o["payload"]["day"])), []).append(o)
+    assert max(len(v) for v in per_day.values()) >= 2
+    for v in per_day.values():            # l'une après l'autre : la barque ne fait pas deux sorties à la fois
+        ends = sorted(o["sim_time"] for o in v)
+        starts = sorted(o["payload"]["day"] for o in v)
+        assert all(s >= e - 1e-3 for s, e in zip(starts[1:], ends))
+
+
+def test_nobody_fishes_at_night(tmp_path, monkeypatch):
+    force(monkeypatch, "catch", quand="tout de suite", duree="longue")           # il ressort sans attendre, même le soir
+    _, events = play(tmp_path, "nuit", seasons=2)
+    outs = kinds(events, "outing")
+    assert len(outs) > 10
+    for o in outs:
+        start, end = fishing_hours(o)
+        assert start >= 5.0 - 1e-2 and end <= 21.0 + 1e-2, (start, end)
+    assert any(abs(fishing_hours(o)[0] - 5.0) < 1e-2 for o in outs)              # une sortie reportée à l'aube
+
+
+def test_no_outing_starts_after_the_close_even_if_the_fisher_wants_to(tmp_path, monkeypatch):
+    force(monkeypatch, "catch", quand="tout de suite", duree="courte")
+    world, events = play(tmp_path, "tard", seasons=1, time__fishing_close_day=6.0, time__departure_spread_days=[0.0, 1.0])
+    outs = kinds(events, "outing")
+    assert outs and max(o["payload"]["day"] for o in outs) <= 6.0 + 1e-6
+    assert len(kinds(events, "catch")) == len(world.fishers)                     # et chacun a quand même rendu son bilan
+
+
+def test_the_catch_of_an_outing_is_limited_by_the_hold_and_the_season_ceiling(tmp_path, monkeypatch):
+    force(monkeypatch, "plan", prise_saison=50.0)
+    force(monkeypatch, "catch", quand="tout de suite", duree="longue", prise=50.0)       # il demande tout, tout de suite
+    world, events = play(tmp_path, "cale", seasons=1)
+    for o in kinds(events, "outing"):
+        a = world.agents[o["payload"]["agent"]]
+        assert o["payload"]["tonnes"] <= world.cale_of(a, 7.0) + 1e-6
+    for c in kinds(events, "catch"):
+        a = world.agents[c["payload"]["agent"]]
+        assert c["payload"]["landed"] <= world.hold_of(a, world.season_stock[world.lake_of(a).name]) + 1e-6
+
+
+def test_the_routine_outing_goes_to_the_decision_model_and_a_rumor_wakes_the_big_model(tmp_path):
+    from test_rumors import Recorder, play_with_announcement
+    from test_system12 import GRANDS
+    from test_system_one import FakeSystemOne
+    s1, rec = FakeSystemOne(level=3), Recorder(prise=3.0)
+    prov = {"fake": {"base_url": rec.url, "api_key_env": None, "rpm": 0, "json_schema": True, "seed": True},
+            "scripted": {"latency_scale": 0.0}, "s1": {"base_url": s1.url, "kind": "systemone", "local": True, "timeout_s": 5}}
+    tiers = {"grand": {"provider": "fake", "model": "m"}, "petit": {"provider": "fake", "model": "m"},
+             "reflexe": {"provider": "s1", "model": "tev1:0.8b"}}
+    world, events = play_with_announcement(tmp_path, "rumeur", "Le lac se vide à Ostrel", provider=rec, seasons=1, population=GRANDS,
+                                           lake__capacity=400.0,
+                                           announce_on=lambda ev: ev["type"] == "outing" and ev["sim_time"] > 8.0,
+                                           llm_overrides={"reflection": "adaptive", "providers": prov, "tiers": tiers})
+    rec.close()
+    s1.close()
+    t_said = next(e["sim_time"] for e in events if e["type"] == "injection")
+    decs = [e for e in events if e["type"] == "decision" and e["payload"]["decision_type"] == "catch"]
+    plans = [e["payload"] for e in events if e["type"] == "decision" and e["payload"]["decision_type"] == "plan"]
+    assert plans and all(p["system"] == "S2" and p["tier"] == "grand" for p in plans)        # le plan est toujours une réflexion
+    before = [e["payload"] for e in decs if e["sim_time"] < t_said]
+    routine = [d for d in before if d["system"] == "S1"]
+    assert routine and all(d["tier"] == "reflexe" and not d["fallback"] for d in routine)       # la routine : tev1
+    assert all("rumeur" not in d["routing"] for d in before)           # (les autres : le lac a baissé, un plan rempli… pas de rumeur)
+    later = [e["payload"] for e in decs if e["sim_time"] >= t_said]
+    woken = [d for d in later if "rumeur" in d["routing"]]
+    assert woken and all(d["system"] == "S2" and d["tier"] == "grand" for d in woken)       # la rumeur réveille le grand modèle
+    assert {d["agent"] for d in woken} == {d["agent"] for d in later}                       # chacun y a pensé, une fois la rumeur connue
+    rumor_free = [d for d in later if "rumeur" not in d["routing"]]
+    assert all(d["info_horizon"] > min(w["info_horizon"] for w in woken if w["agent"] == d["agent"]) for d in rumor_free)

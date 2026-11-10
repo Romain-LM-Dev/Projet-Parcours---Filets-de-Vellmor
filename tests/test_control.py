@@ -200,7 +200,7 @@ async def started(seen):
 
 def test_speed_changes_how_long_a_season_takes(tmp_path):
     def run(speed):
-        world, bus, _ = make_world(tmp_path, f"v{speed}", seasons=1, **SLOW)
+        world, bus, _ = make_world(tmp_path, f"v{speed}", seasons=1, **{**SLOW, "time__sim_hours_per_second": 240})   # (les décisions prennent du temps de calcul)
         seen = collect(bus)
 
         async def script(w):
@@ -380,7 +380,7 @@ async def until_true(cond, timeout=10.0):
 
 def test_an_error_inside_the_game_is_recorded_as_such(tmp_path):
     world, bus, _ = make_world(tmp_path, "boom", seasons=2)
-    world.plan_trip = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("panne simulée"))
+    world.open_trip = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("panne simulée"))
     with pytest.raises(RuntimeError, match="panne"):
         asyncio.run(drive(world, lambda w: asyncio.sleep(0)))
     events = read_events(tmp_path, "boom")

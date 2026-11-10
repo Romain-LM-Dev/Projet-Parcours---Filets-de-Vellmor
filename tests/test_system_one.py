@@ -200,11 +200,13 @@ def test_routine_catches_go_to_the_decision_model_and_reflection_stays_with_qwen
     assert reflex and all(c["system"] == "S1" and c["model"] == "tev1:0.8b" and c["status"] == "ok" for c in reflex)
     assert all(c["tier"] != "reflexe" for c in calls if c.get("system") == "S2")
     decisions = [e["payload"] for e in events if e["type"] == "decision" and e["payload"].get("system") == "S1"]
-    level3 = prompts.catch_levels(7.0, lo=1.0)[3]                   # la cale d'une chaloupe (7 t), de la prise minimale (1 t) : 3 t
-    assert decisions and all(d["tier"] == "reflexe" and not d["fallback"] and d["value"] == level3 == 3.0 for d in decisions)
+    # le niveau 3 sur 10 de ce que la sortie peut porter (la cale d'une sortie d'une chaloupe : 7 × 1,5 / 6 = 1,75 t, ou ce que la saison laisse)
+    assert decisions and all(d["tier"] == "reflexe" and not d["fallback"] and 0 <= d["value"] <= 1.75 / 3 + 0.05 for d in decisions)
+    asked = [r["questions"] for r in s1.asked() if "prise" in r["questions"]]
+    assert asked and all(list(q) == ["quand", "duree", "prise"] and q["quand"]["type"] == "choice" for q in asked)
     assert all(d["justification"].startswith("Réflexe (système 1, tev1:0.8b)") and "Confiance 0.80" in d["justification"]
                for d in decisions)
-    assert not [r for r in chat if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["prise"]]
+    assert not [r for r in chat if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["quand", "duree", "prise"]]
 
 
 def test_ballots_are_choices_put_to_the_decision_model(tmp_path):
@@ -241,7 +243,7 @@ def test_without_the_decision_model_qwen_answers_and_no_decision_is_lost(tmp_pat
     assert max(e["sim_time"] for e in failed) - min(e["sim_time"] for e in failed) < 1.0 and len(s1.asked()) == len(failed)
     decisions = [e["payload"] for e in events if e["type"] == "decision" and e["payload"].get("system") == "S1"]
     assert len(decisions) > len(failed) and all(d["tier"] == "petit" and not d["fallback"] for d in decisions)
-    assert [r for r in chat if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["prise"]]
+    assert [r for r in chat if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["quand", "duree", "prise"]]
 
 
 # ---------------------------------------------------------------- préparation de la partie

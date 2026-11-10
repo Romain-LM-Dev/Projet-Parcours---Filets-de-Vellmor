@@ -13,6 +13,7 @@
     "decision_type": {
       "enum": [
         "catch",
+        "plan",
         "speak"
       ]
     },
@@ -124,11 +125,24 @@
     "place": {
       "enum": [
         "rive",
-        "large"
+        "large",
+        "voisine"
       ]
     },
     "outings": {
       "type": "integer"
+    },
+    "delay_h": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "hours": {
+      "type": "number"
+    },
+    "routing": {
+      "type": "string"
     }
   },
   "required": [

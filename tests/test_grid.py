@@ -90,11 +90,12 @@ def test_each_fisher_fishes_a_corner_of_his_own_shore_and_leaves_a_bad_one(tmp_p
             assert k in world.sectors[lake.name][p["zone"]]
         a = world.agents[p["agent"]]
         prev = [e["payload"] for e in kinds(events, "catch") if e["payload"]["agent"] == a.id and e["season"] == c["season"] - 1]
-        if prev and prev[0]["zone"] == p["zone"] == a.profile.hamlet:
+        first = next((e["payload"] for e in kinds(events, "outing") if e["payload"]["agent"] == a.id and e["season"] == c["season"]), None)
+        if prev and first and prev[0]["zone"] == first["zone"] == a.profile.hamlet:        # (sa dernière sortie, puis sa première)
             if prev[0]["spot"] >= 0.95:
-                assert p["cell"] == prev[0]["cell"]                # un bon coin, il y revient
+                assert first["cell"] == prev[0]["cell"]                # un bon coin, il y revient
             else:
-                moved += p["cell"] != prev[0]["cell"]                # un mauvais, il en change
+                moved += first["cell"] != prev[0]["cell"]                # un mauvais, il en change
     assert moved >= 1
     assert any("Mon coin de pêche" in m.text for f in world.fishers for m in f.memory.items)
     # le coin de chaque rive : plus près de son village que des autres

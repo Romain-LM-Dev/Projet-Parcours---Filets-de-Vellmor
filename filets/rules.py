@@ -46,3 +46,24 @@ def words(kind: str, value: float, place: str | None = None, boat: str | None = 
         return (f"bateaux limités à la taille « {boat} » : les plus gros ne ramènent pas plus de {cap:g} t par saison"
                 if boat else "taille de bateau limitée")
     return f"pas plus de {value:g} t par pêcheur et par saison"
+
+
+# ------------------------------------------------------------------ le temps d'une sortie (docs/peche.md)
+SHORT_H, LONG_H = 3.0, 7.0               # heures de pêche d'une sortie courte, d'une sortie longue (la route s'y ajoute)
+DAWN_H, DUSK_H = 5.0, 21.0               # on ne pêche pas de 21 h à 5 h
+DUREES = {"courte": SHORT_H, "longue": LONG_H}
+# « quand » : le délai d'une prochaine sortie, tel que le dit le pêcheur ; None : plus cette saison ; « aube » : demain à 5 h
+QUAND = {"tout de suite": 0.0, "dans 3 heures": 3.0, "dans 6 heures": 6.0, "demain à l'aube": "aube", "dans 2 jours": 48.0,
+         "dans 4 jours": 96.0, "dans 8 jours": 192.0, "plus cette saison": None}
+
+
+def quand_hours(label, now: float) -> float | None:
+    """Le délai en heures d'un « quand » dit en mots, à partir de l'instant `now` (en jours) ; None : plus cette saison (ou mot inconnu :
+    il sort tout de suite)."""
+    word = str(label or "").strip().lower()
+    if word not in QUAND:
+        return 0.0
+    d = QUAND[word]
+    if d == "aube":
+        return ((int(now + 1e-9) + 1 + DAWN_H / 24.0) - now) * 24.0
+    return d

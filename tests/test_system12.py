@@ -90,10 +90,10 @@ def test_routine_catches_become_reflexes_and_the_rest_stays_reflection(tmp_path)
     s1 = [c for c in calls if c.get("system") == "S1"]
     s2 = [c for c in calls if c.get("system") == "S2"]
     assert s1 and s2 and len(s1) + len(s2) == len(calls)                        # tout appel porte son système
-    assert all(c["purpose"] == "catch" and c["tier"] == "petit" for c in s1)     # un réflexe : une prise, par le petit modèle
-    assert all(c["tier"] == "grand" for c in s2 if c["purpose"] == "catch")      # la réflexion : le modèle de l'agent
-    first_season = [e for e in events if e["type"] == "decision" and e["season"] == 1 and e["payload"]["decision_type"] == "catch"]
-    assert all(e["payload"]["system"] == "S2" for e in first_season)             # première saison : jamais de réflexe
+    assert all(c["purpose"] == "catch" and c["tier"] == "petit" for c in s1)     # un réflexe : une sortie, par le petit modèle
+    assert all(c["tier"] == "grand" for c in s2 if c["purpose"] in ("catch", "plan"))      # la réflexion : le modèle de l'agent
+    plans = [e for e in events if e["type"] == "decision" and e["payload"]["decision_type"] == "plan"]
+    assert plans and all(e["payload"]["system"] == "S2" for e in plans)          # le plan de la saison : jamais de réflexe
     decisions = [e["payload"] for e in events if e["type"] == "decision" and e["payload"]["agent_kind"] == "llm"]
     assert all(d["system"] in ("S1", "S2") for d in decisions) and not any(d["fallback"] for d in decisions)
     reflex = [d for d in decisions if d["system"] == "S1"]
@@ -103,7 +103,7 @@ def test_routine_catches_become_reflexes_and_the_rest_stays_reflection(tmp_path)
 
 def test_a_reflex_costs_a_fraction_of_a_reflection(tmp_path):
     world, events, requests = adaptive_game(tmp_path, "s12b")
-    reflex = [r for r in requests if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["prise"]]
+    reflex = [r for r in requests if list(r["response_format"]["json_schema"]["schema"]["properties"]) == ["quand", "duree", "prise"]]
     thought = [r for r in requests if '"prise"' in r["user"] and r not in reflex]
     assert reflex and thought
     size = lambda rs: sum(len(r["system"]) + len(r["user"]) for r in rs) / len(rs)
@@ -130,7 +130,7 @@ def test_without_the_adaptive_profile_everything_is_reflection(tmp_path):
     tagged = [e["payload"]["system"] for e in events if e["type"] in ("llm_call", "decision") and "system" in e["payload"]]
     assert tagged and set(tagged) == {"S2"}
     assert set(world.router.usage.by_system) == {"S2"}
-    assert all(list(r["response_format"]["json_schema"]["schema"]["properties"]) != ["prise"] for r in requests)
+    assert all(list(r["response_format"]["json_schema"]["schema"]["properties"]) != ["quand", "duree", "prise"] for r in requests)
 
 
 # ---------------------------------------------------------------- données fiables : la graine

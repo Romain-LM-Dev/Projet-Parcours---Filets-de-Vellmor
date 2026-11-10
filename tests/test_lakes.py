@@ -52,11 +52,11 @@ def test_the_range_a_fisher_reads_shrinks_with_the_lake(tmp_path):
     rec = Recorder(prise=10.0)
     fake_game(tmp_path, "plage", rec, population=[fisher("Mathis", "Ostrel", "ancienne_famille"), fisher("Inès", "Tilque", "taiseux")],
               seasons=1, lake__initial_ratio=1.0)
-    full = [r["user"] for r in rec.requests if '"prise"' in r["user"]][0]
+    full = [r["user"] for r in rec.requests if '"prise_saison"' in r["user"]][0]
     rec2 = Recorder(prise=10.0)
     fake_game(tmp_path, "plage2", rec2, population=[fisher("Mathis", "Ostrel", "ancienne_famille"),
                                                     fisher("Inès", "Tilque", "taiseux")], seasons=1, lake__initial_ratio=0.3)
-    low = [r["user"] for r in rec2.requests if '"prise"' in r["user"]][0]
+    low = [r["user"] for r in rec2.requests if '"prise_saison"' in r["user"]][0]
 
     def top(text):
         import re

@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 
 from .lake import EXTINCT_BELOW
+from .rules import DUREES, QUAND
 
 WORLD = (
     "La vallée de Vellmor est fermée. Son lac est la seule réserve de poisson. {villages} se le partagent. "
@@ -31,7 +32,7 @@ STYLE = (
 BRIEF_STYLE = " Sois très bref : une seule phrase courte (20 mots au plus) pour chaque champ de texte."
 
 # longueur de réponse permise (tokens) : assez pour un JSON complet, pas pour un discours
-BRIEF_MAX_TOKENS = {"catch": 125, "speak": 200}
+BRIEF_MAX_TOKENS = {"catch": 125, "plan": 150, "speak": 200}
 
 
 def is_brief(cfg_llm: dict) -> bool:
@@ -49,6 +50,11 @@ def is_adaptive(cfg_llm: dict) -> bool:
 REFLEX_MAX_TOKENS = 16
 REFLEX_SCHEMA = {"type": "object", "properties": {"prise": {"type": "number"}}, "required": ["prise"],
                  "additionalProperties": False}
+# … et celui d'une sortie de routine : quand, courte ou longue, combien (le lieu reste celui de son plan)
+REFLEX_OUTING_SCHEMA = {"type": "object", "properties": {"quand": {"enum": list(QUAND)}, "duree": {"enum": list(DUREES)},
+                                                         "prise": {"type": "number"}},
+                        "required": ["quand", "duree", "prise"], "additionalProperties": False}
+LIEUX = ["rive", "large", "rive voisine"]         # où il pêche : sa rive, le large, la rive d'un autre village (en cachette)
 
 
 def cap_text(x: float, digits: int = 2) -> str:
@@ -74,6 +80,10 @@ def day_line(obs: dict) -> str:
 
 def boat_line(obs: dict) -> str:
     lo, hi = obs.get("min_catch", 0.0), float(cap_text(obs["boat_capacity"]))
+    if obs.get("boat") and obs.get("outing"):
+        return (f"Ton bateau est une {obs['boat']} : une sortie longue ne porte pas plus de {hi:g} t (une courte, moins) ; ce que tu "
+                "prends vraiment dépend du temps de la journée (les petits bateaux souffrent le plus par gros temps), de ta chance du "
+                "moment, de la saison de l'année et des événements.")
     if obs.get("boat"):
         # la prise visée n'est pas la prise réelle : le temps de chaque sortie, la chance, la saison de l'année et les événements la font varier
         aim = f"de {lo:g} à {hi:g} t" if lo else f"jusqu'à {hi:g} t"
@@ -103,7 +113,12 @@ def reflex_messages(p, obs: dict) -> list[dict]:
     if obs.get("norms"):
         lines.append("Règles en vigueur : " + " ".join(obs["norms"]))
     lines.append(f"Tes finances : {obs['wealth']:.0f} écus ; dépenses de la saison : {obs['upkeep'] + obs['debt_payment']:.0f} écus.")
-    lines.append(f"Combien de tonnes pêches-tu ? Réponds en JSON : {{\"prise\": <tonnes, {catch_range(obs)}>}}")
+    if obs.get("outing"):
+        lines.append(season_block(obs))
+        lines.append("Quand ressors-tu, pour combien de temps, et combien de tonnes cette fois ? Réponds en JSON : {\"quand\": "
+                     f"<{' | '.join(QUAND)}>, \"duree\": <courte | longue>, \"prise\": <tonnes, {catch_range(obs)}>}}")
+    else:
+        lines.append(f"Combien de tonnes pêches-tu ? Réponds en JSON : {{\"prise\": <tonnes, {catch_range(obs)}>}}")
     who = f"Tu es {p.name}, {p.archetype_label}, du village de {p.hamlet}. {p.traits} Réponds uniquement par un objet JSON."
     return [{"role": "system", "content": who}, {"role": "user", "content": "\n".join(lines)}]
 
@@ -393,15 +408,19 @@ def answer_schema(purpose: str, brief: bool = False, fisher: bool = True, ids: l
     le nombre, qui s'écrit donc à la suite de ce raisonnement et non avant lui. Les textes sont bornés."""
     text = {"type": "string", "maxLength": 160 if brief else 400}
     ident = {"type": "string", "maxLength": 8}
-    if purpose == "catch":
+    if purpose in ("catch", "plan"):
+        # « plan » : le plan de la saison (combien en tout, ce qu'il déclarera, sa première sortie) ; « catch » : une sortie (quand,
+        # courte ou longue, combien). Court, pour qu'un petit modèle le remplisse : des mots à choisir, deux nombres.
         props = {"justification": text}
         if lakes:                         # plusieurs lacs à portée : il dit lequel (le sien, ou un autre), avant le nombre
             props["lac"] = {"enum": list(lakes)}
-        if extras and "lieu" in extras:       # sa rive est réservée : il dit où il pêche
-            props["lieu"] = {"enum": ["rive", "large"]}
-        if extras and "sorties" in extras:    # le nombre de sorties est limité : il dit combien il en fait
-            props["sorties"] = {"type": "integer", "minimum": 1, "maximum": 12}
-        props.update({"prise": {"type": "number"}, "declaration": {"type": "number"}})
+        props["lieu"] = {"enum": LIEUX}
+        if purpose == "plan":
+            if extras and "sorties" in extras:    # le nombre de sorties est limité : il dit combien il en fait
+                props["sorties"] = {"type": "integer", "minimum": 1, "maximum": 12}
+            props.update({"prise_saison": {"type": "number"}, "declaration": {"type": "number"}, "premiere_sortie": {"enum": list(QUAND)}})
+        else:
+            props.update({"quand": {"enum": list(QUAND)}, "duree": {"enum": list(DUREES)}, "prise": {"type": "number"}})
     else:
         # une règle proposée = un type, une valeur, une cible (court, pour un petit modèle) ; null : rien proposé
         props = {"message": text, "destinataire": ident, "proposition_type": {"enum": RULE_KINDS + [None]},
@@ -428,6 +447,8 @@ def time_lines(obs: dict) -> list[str]:
 
 def context_block(obs: dict, brief: bool = False) -> str:
     parts = time_lines(obs)
+    if obs.get("outing"):
+        parts.append(season_block(obs))
     parts.append(lake_block(obs))
     if day_line(obs):
         parts.append(day_line(obs))
@@ -491,7 +512,29 @@ def hide_stakes(obs: dict) -> str:
             + ". On ne ment pas pour une poignée de kilos : si tu caches, que cela en vaille le risque ; sinon déclare ta prise.\n")
 
 
-def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[dict]:
+def season_block(obs: dict) -> str:
+    """Où il en est de sa saison de pêche, au moment de décider une sortie : le temps du jour, son plan, ce qu'il a pris et fait."""
+    plan, parts = obs.get("plan"), []
+    parts.append(f"Aujourd'hui, il fait un temps {obs['today']}." if obs.get("today") else "")
+    parts.append(f"La pêche ferme dans {obs['days_left']:g} jour{'s' if obs['days_left'] >= 2 else ''}." if obs.get("days_left") is not None else "")
+    if plan:
+        parts.append(f"Ton plan de saison : prendre {plan['total']:g} t en tout" + (f", en {plan['outings']} sorties" if plan.get("outings") else "") + ".")
+    n = obs.get("done", 0)
+    parts.append(f"Depuis l'ouverture : {n} sortie{'s' if n > 1 else ''}, {obs.get('taken', 0.0):g} t pêchées"
+                 + (f" ; il te reste {max(0.0, plan['total'] - obs.get('taken', 0.0)):g} t à prendre pour tenir ton plan" if plan else "") + ".")
+    if obs.get("quota_left") is not None:
+        parts.append(f"Ton quota de saison : il te reste {obs['quota_left']:g} t" if obs["quota_left"] > 0
+                     else "Ton quota de saison est atteint" + (f" (dépassé de {-obs['quota_left']:g} t)" if obs["quota_left"] < 0 else "") + ".")
+    return " ".join(x for x in parts if x)
+
+
+WHEN_HELP = ("Une sortie courte dure 3 heures de pêche, une longue 7 (plus la route, si tu vas dans un autre lac) ; la nuit, de 21 h à 5 h, "
+             "on ne pêche pas, et rien ne t'empêche de ressortir le jour même. \"quand\" : " + ", ".join(f"« {k} »" for k in QUAND)
+             + ".")
+
+
+def catch_messages(p, obs: dict, capacity: float, brief: bool = False, plan: bool = False) -> list[dict]:
+    """La question du grand modèle. `plan` : le plan de la saison, à l'ouverture de la pêche ; sinon, la prochaine sortie."""
     if obs.get("banned"):
         seen = "ce que tu constates du lac, ce que tu fais de ton interdiction"
     else:
@@ -503,40 +546,47 @@ def catch_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         f"<1 à 3 phrases, à la première personne : {seen}, et ce que tu en conclus>"
     rumor = ("Une rumeur qui te concerne, ou qui parle du lac, peut peser sur ta décision : tiens-en compte comme le "
              "ferait ton personnage.\n" if obs.get("rumors") else "")
+    place = "\"lieu\": \"<rive | large | rive voisine>\", "
+    lake = f"\"lac\": \"<le lac où tu pêches : {' ou '.join(obs['lake_labels'])}>\", " if obs.get("lake_labels") else ""
+    tonnes = (f"tonnes dans le lac que tu choisis : {catch_range(obs)} chez toi"
+              + "".join(f" ; jusqu'à {cap_text(o['hold'])} t dans {lake_ref(o['label'])}" for o in obs["lake_options"])
+              if obs.get("lake_options") else f"tonnes, {catch_range(obs)}")
+    if plan:
+        key = "prise_saison"
+        what = "C'est l'ouverture de la pêche. Fais le plan de ta saison : combien tu comptes prendre en tout, où, ce que tu déclareras, et quand tu sors la première fois.\n"
+        fields = (lake + place + (f"\"sorties\": <nombre de sorties, de 1 à {obs['outings_n']}>, "
+                                   if "sorties" in (obs.get("catch_extras") or ()) else "")
+                  + f"\"prise_saison\": <{tonnes}, pour toute la saison>, "
+                  + "\"declaration\": <tonnes que tu déclareras à l'ancien pour la saison : exactement ta prise, ou moins seulement si tu choisis "
+                    "de la cacher>, \"premiere_sortie\": \"<quand>\"}")
+        declare = ("À chaque retour, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ces chiffres. Tu la déclares telle "
+                   "quelle, sauf si tu choisis de cacher une part (par intérêt ou par peur) : tu peux mentir, mais "
+                   "les voisins qui pêchent du même côté voient les barques rentrer"
+                   + (" et la patrouille du lac mesure celles qu'elle croise (on ne sait pas où elle passera)" if obs.get("patrol") else "")
+                   + " : un dépassement avoué se pardonne plus facilement qu'un mensonge découvert.\n" + hide_stakes(obs))
+    else:
+        what = ("C'est le moment de décider ta prochaine sortie : tu peux ressortir plus tard, le jour même, ou ne plus sortir de la saison.\n"
+                + season_block(obs) + "\n")
+        fields = lake + place + "\"quand\": \"<quand>\", \"duree\": \"<courte | longue>\", " + f"\"prise\": <{tonnes}, pour cette sortie>}}"
+        declare = ""
     if obs.get("banned"):
         ask = (
-            "C'est le moment de décider. La vallée a voté ton exclusion : tant qu'elle ne vote pas de te laisser pêcher à "
-            "nouveau, tu n'as pas le droit de sortir. Tu peux rester à quai (0 t), ou pêcher en cachette, loin de ta rive ; mais "
+            ("C'est l'ouverture de la pêche. " if plan else "C'est le moment de décider ta prochaine sortie. ")
+            + "La vallée a voté ton exclusion : tant qu'elle ne vote pas de te laisser pêcher à nouveau, tu n'as pas le droit de sortir. "
+            "Tu peux rester à quai (0 t, « plus cette saison »), ou pêcher en cachette, loin de ta rive ; mais "
             "un voisin peut voir ta barque partir" + (", et la patrouille du lac peut te croiser (on ne sait pas où elle passera)"
                                                       if obs.get("patrol") else "") + ". "
             "Pris, tu perdrais encore la confiance des autres ; à quai, tu peux espérer la regagner.\n"
             + lake_reminder(obs) + rumor
             + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
-              f"\"prise\": <0 si tu restes à quai, sinon les tonnes pêchées en cachette, jusqu'à {cap_text(obs['boat_capacity'])}>, "
-              "\"declaration\": 0}"
+            + (f"\"prise_saison\": <0 si tu restes à quai, sinon les tonnes pêchées en cachette, jusqu'à {cap_text(obs['boat_capacity'])}>, "
+               "\"declaration\": 0, \"premiere_sortie\": \"<quand>\"}" if plan else
+               f"\"quand\": \"<quand>\", \"duree\": \"<courte | longue>\", \"prise\": <0 si tu restes à quai, sinon les tonnes pêchées en cachette, "
+               f"jusqu'à {cap_text(obs['boat_capacity'])}>}}")
         )
     else:
-        ask = (
-            "C'est le moment de décider combien tu vas pêcher cette saison.\n"
-            + lake_reminder(obs)
-            + lake_options_block(obs)
-            + rule_reminder(obs)
-            + rumor
-            + "En rentrant, tu déclareras ta prise à l'ancien : les autres ne connaîtront que ce chiffre. Tu la déclares telle "
-              "quelle, sauf si tu choisis de cacher une part (par intérêt ou par peur) : tu peux mentir, mais "
-              "les voisins qui pêchent du même côté voient les barques rentrer"
-            + (" et la patrouille du lac mesure celles qu'elle croise (on ne sait pas où elle passera)" if obs.get("patrol") else "")
-            + " : un dépassement avoué se pardonne plus facilement qu'un mensonge découvert.\n"
-            + hide_stakes(obs)
-            + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", "
-              + (f"\"lac\": \"<le lac où tu pêches : {' ou '.join(obs['lake_labels'])}>\", " if obs.get("lake_labels") else "")
-              + ("\"lieu\": \"<rive ou large>\", " if "lieu" in (obs.get("catch_extras") or ()) else "")
-              + (f"\"sorties\": <nombre de sorties, de 1 à {obs['outings_n']}>, " if "sorties" in (obs.get("catch_extras") or ()) else "")
-              + (f"\"prise\": <tonnes dans le lac que tu choisis : {catch_range(obs)} chez toi"
-                 + "".join(f" ; jusqu'à {cap_text(o['hold'])} t dans {lake_ref(o['label'])}" for o in obs["lake_options"]) + ">, "
-                 if obs.get("lake_options") else f"\"prise\": <tonnes, {catch_range(obs)}>, ")
-              + "\"declaration\": <tonnes que tu déclares à l'ancien : exactement ta prise, ou moins seulement si tu choisis de la cacher>}"
-        )
+        ask = (what + lake_reminder(obs) + lake_options_block(obs) + rule_reminder(obs) + rumor + WHEN_HELP + "\n" + declare
+               + f"Réponds en JSON, dans cet ordre : {{\"justification\": \"{just}\", " + fields)
     return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()), obs.get("world"))},
             {"role": "user", "content": context_block(obs, brief) + "\n\n" + ask}]
 
@@ -695,6 +745,16 @@ def reflex_system_one(p, obs: dict) -> dict:
         msgs[1]["content"].rsplit("\n", 1)[0]
     levels = catch_levels(obs["boat_capacity"], lo=obs.get("min_catch", 0.0))
     criteria = [f"{t:g} t" + (" : il reste à quai" if t == 0 else "") for t in levels]
+    if obs.get("outing"):          # une sortie : quand il ressort, pour combien de temps, combien (le lieu reste celui de son plan)
+        return {"state": state, "values": {"prise": levels},
+                "questions": {"quand": {"type": "choice", "criteria": {k: k for k in QUAND},
+                                        "instructions": "Quand ce pêcheur ressort-il en mer (ou plus de la saison) ?"},
+                              "duree": {"type": "choice", "criteria": {"courte": "sortie courte, 3 heures de pêche",
+                                                                        "longue": "sortie longue, 7 heures de pêche"},
+                                        "instructions": "Cette sortie est-elle courte ou longue ?"},
+                              "prise": {"type": "score", "criteria": criteria,
+                                        "instructions": "Combien de tonnes ce pêcheur vise-t-il pour cette sortie, vu l'état du lac, "
+                                                        "son plan et les règles ?"}}}
     return {"state": state, "values": {"prise": levels},
             "questions": {"prise": {"type": "score", "criteria": criteria,
                                     "instructions": "Combien de tonnes ce pêcheur pêche-t-il cette saison, vu l'état du lac, "

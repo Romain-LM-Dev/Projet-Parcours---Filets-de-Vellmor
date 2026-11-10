@@ -70,7 +70,7 @@ PAYLOADS: dict[str, dict] = {
                                         "lakes": {"type": "object"}}),      # (plusieurs lacs) le stock de chacun
     "phase": obj({"name": {"enum": ["fishing", "assembly", "regrowth"]}, "state": {"enum": ["open", "close"]}}),
     "decision": obj(
-        {"agent": STR, "agent_kind": {"enum": ["llm", "rule"]}, "decision_type": {"enum": ["catch", "speak"]},
+        {"agent": STR, "agent_kind": {"enum": ["llm", "rule"]}, "decision_type": {"enum": ["catch", "plan", "speak"]},
          "info_horizon": NUM, "justification": STR, "retrieved": RETRIEVED, "used_event_ids": IDS,
          "fallback": BOOL},
         {"model": STR_OR_NULL, "tier": STR_OR_NULL, "rule": STR_OR_NULL, "llm_call_id": STR_OR_NULL,
@@ -78,12 +78,15 @@ PAYLOADS: dict[str, dict] = {
          "system": {"enum": ["S1", "S2"]},
          "declared": NUM_OR_NULL,       # prise : ce que le pêcheur compte déclarer à l'ancien
          "lake": STR_OR_NULL,           # prise, plusieurs lacs : le lac où il a choisi de pêcher, s'il n'est pas le sien
-         "place": {"enum": ["rive", "large"]},      # prise, sa rive réservée : où il pêche (sa rive, ou le large de son lac)
-         "outings": INT},               # prise, sorties limitées par une règle : le nombre de sorties qu'il fait
+         "place": {"enum": ["rive", "large", "voisine"]},      # où il pêche (sa rive, le large de son lac, la rive d'un autre village)
+         "outings": INT,                # plan, sorties limitées par une règle : le nombre de sorties qu'il fait
+         # une sortie (decision_type « catch ») ou le plan (« plan ») : dans combien d'heures il part (None : plus cette saison), pour
+         # combien d'heures de pêche (3 courte, 7 longue), et pourquoi le réflexe ou le grand modèle l'a décidée (`system`)
+         "delay_h": NUM_OR_NULL, "hours": NUM, "routing": STR},
     ),
     "outing": obj({"agent": STR, "hamlet": STR, "zone": STR, "cell": {"type": "array", "items": INT}, "day": NUM, "weather": STR,
                    "tonnes": NUM, "secret": BOOL},
-                  {"lake": STR, "away": BOOL}),    # une sortie, émise à sa fin ; (plusieurs lacs) le lac ; hors du lac du village
+                  {"lake": STR, "away": BOOL, "hours": NUM}),    # une sortie, émise à son retour (`day` : début de la pêche) ; ses heures de pêche ; (plusieurs lacs) le lac ; hors du lac du village
     "catch": obj({"agent": STR, "hamlet": STR, "requested": NUM, "landed": NUM, "stock_observed": NUM,
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
                   "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM},

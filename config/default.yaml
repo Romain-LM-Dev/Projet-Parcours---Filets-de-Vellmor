@@ -53,11 +53,13 @@ economy:
   # entre les bateaux du lac en proportion de leur cale (voir `World.hold_of`). Un lac qui se vide laisse donc de moins en moins prendre.
   hold_fraction: 0.5
   # Pêcher dans un autre lac que celui de son village (voir `World.lake_options`) : `travel_days` jours de route pour traverser toute
-  # la carte, à l'aller ; chaque sortie dure alors 1 + 2 × route jours au lieu d'un (la prise s'en ressent : 1 / (1 + 2 × route)) ;
+  # la carte, à l'aller ; chaque sortie dure alors sa pêche + 2 × route jours (le temps passé en mer se paie en sorties en moins) ;
   # et la route coûte `travel_cost` écus par jour de mer, à chaque sortie
   travel_days: 1.5
   travel_cost: 10
-  # La pêche n'est pas toujours bonne : la prise visée est étalée sur `outings` sorties, et chacune rapporte selon le temps du jour
+  # Le pêcheur décide lui-même ses sorties (docs/peche.md) ; `outings` n'est que le nombre qu'un agent à règles prévoit par défaut, et
+  # sert à la cale d'une sortie (une cale de saison en `outings` sorties longues, plus une marge de moitié : `World.cale_of`).
+  # La pêche n'est pas toujours bonne : chaque sortie rapporte selon le temps du jour
   # (le même pour tout le lac, plus rude pour les petits bateaux), la saison de l'année et les événements (voir `climate`),
   # l'expérience du pêcheur (plus dure quand le lac est bas) et sa chance. La chance varie de ±`luck` (écart-type) autour de 1 :
   # moitié forme de la saison, qui se prolonge d'une saison à l'autre, moitié forme du jour (`luck_streak` : un bon jour en
@@ -122,7 +124,7 @@ time:
   # `wait_for_ai`, `ballot_lead_days` et `assembly_turn_gap_days` n'existent plus : acceptés, ignorés (avertissement au chargement).
   season_days: 30
   fishing_open_day: 0.25      # J0 06:00
-  fishing_close_day: 20.0     # aucune sortie n'est planifiée au-delà (la route du retour comprise)
+  fishing_close_day: 20.0     # aucune sortie ne commence au-delà (celle qui a commencé rentre normalement)
   assembly_day: 25.75         # J25 18:00, veillée chez l'ancien
   assembly_close_day: 29.0
   regrowth_day: 29.9

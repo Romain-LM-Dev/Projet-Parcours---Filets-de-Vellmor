@@ -15,7 +15,8 @@ import random
 import re
 
 from .llm import LLMResult
-from .policies import at_lake, catch_rule, declare_rule, lake_choice_rule, obeys, rule_choices, speak_rule
+from .policies import at_lake, catch_rule, declare_rule, lake_choice_rule, obeys, outing_rule, rule_choices, speak_rule
+from .rules import QUAND
 
 JUSTIF = {
     "ancienne_famille": ["Mon père disait qu'on ne vide pas le lac qu'on veut laisser à ses enfants.",
@@ -28,6 +29,20 @@ JUSTIF = {
     "beau_parleur": ["Je montre l'exemple, c'est ce que j'ai défendu à la veillée.",
                      "Mon commerce de filets me fait vivre, je n'ai pas besoin de beaucoup."],
 }
+
+
+# les délais (en heures) que le faux pêcheur sait dire, et le mot qui va avec
+WORDS = [(0.0, "tout de suite"), (3.0, "dans 3 heures"), (6.0, "dans 6 heures"), (48.0, "dans 2 jours"), (96.0, "dans 4 jours"),
+         (192.0, "dans 8 jours")]
+
+
+def word_for(hours: float | None, rng: random.Random) -> str:
+    """Le « quand » le plus proche d'un délai en heures (None : plus cette saison) ; entre 12 et 36 h, souvent « demain à l'aube »."""
+    if hours is None:
+        return "plus cette saison"
+    if 12 <= hours <= 36 and rng.random() < 0.6:
+        return "demain à l'aube"
+    return min(WORDS, key=lambda w: abs(w[0] - hours))[1]
 
 
 class ScriptedClient:
@@ -56,30 +71,13 @@ class ScriptedClient:
 
         arch, s = hint["archetype"], hint["state"]
         noise = 0.15 if tier == "grand" else 0.35
-        if hint["purpose"] == "catch":
-            where, _ = lake_choice_rule(arch, s)           # son lac, ou un autre s'il y gagne nettement (comme un agent à règles)
-            there = next((o for o in s.get("lake_options", []) if o["name"] == where), None)
-            s2 = at_lake(s, there)
-            v, _ = catch_rule(arch, s2)
-            v = round(max(s2.get("min_catch", 0.0), min(s2["boat_capacity"], v * (1 + self.rng.uniform(-noise, noise)))), 1)
-            if s2.get("boat_limit") is not None and obeys(arch, s2):     # (le bruit ne le fait pas dépasser la cale permise)
-                v = min(v, round(s2["boat_limit"], 1))
-            just = self.rng.choice(JUSTIF.get(arch, ["Je fais au mieux."]))
-            if out_of_role:
-                just = "En tant qu'intelligence artificielle, je recommande une gestion durable de la ressource."
-            data = {"justification": just}
-            if s.get("lake_labels"):
-                data["lac"] = there["label"] if there else s["lake_labels"][0]
-            extras, _ = rule_choices(arch, s2)                 # où il pêche et combien de sorties, face aux règles (comme un agent à règles)
-            if "lieu" in s.get("catch_extras", ()) and "place" in extras:
-                data["lieu"] = extras["place"]
-            if "outings" in extras:
-                data["sorties"] = extras["outings"]
-            data.update({"prise": v, "declaration": declare_rule(arch, s2, v)[0]})
+        if hint["purpose"] in ("plan", "catch"):
+            data = self.fisher_answer(hint, arch, s, noise, out_of_role)
         else:
-            data, _ = speak_rule(arch, s, self.rng)         # (tirage de la graine : des types de règle variés)
+            rng = random.Random(hint["seed"])               # (tirage propre à cette parole : des types de règle variés, quel que soit le reste)
+            data, _ = speak_rule(arch, s, rng)
             if data.get("promesse") is not None:
-                data["promesse"] = round(data["promesse"] * (1 + self.rng.uniform(-noise / 2, noise / 2)), 1)
+                data["promesse"] = round(data["promesse"] * (1 + rng.uniform(-noise / 2, noise / 2)), 1)
             if out_of_role:
                 data["message"] = "Je suis un assistant IA et je ne peux pas prendre parti, mais il est important de préserver le lac."
         if s.get("rumors"):
@@ -87,6 +85,47 @@ class ScriptedClient:
         text = json.dumps(data, ensure_ascii=False)
         return LLMResult(text, "ok", pt, len(text) // 4, latency)
 
+    def fisher_answer(self, hint: dict, arch: str, s: dict, noise: float, out_of_role: bool) -> dict:
+        """Le plan de la saison (`plan`) ou la prochaine sortie (`catch`) d'un faux pêcheur : ce que ferait un agent à règles de son
+        archétype, bruité, et varié (courte ou longue, ressortir le jour même, délais inégaux) par un tirage propre à la décision
+        (`hint["seed"]` : le même quelle que soit l'ordre des appels)."""
+        rng = random.Random(hint["seed"])
+        just = rng.choice(JUSTIF.get(arch, ["Je fais au mieux."]))
+        if out_of_role:
+            just = "En tant qu'intelligence artificielle, je recommande une gestion durable de la ressource."
+        data = {"justification": just}
+        plan = s.get("plan") or {}
+        if hint["purpose"] == "plan":
+            where, _ = lake_choice_rule(arch, s)           # son lac, ou un autre s'il y gagne nettement (comme un agent à règles)
+        else:
+            where = plan.get("lake")                       # il suit son plan
+        there = next((o for o in s.get("lake_options", []) if o["name"] == where), None)
+        s2 = at_lake(s, there)
+        extras, _ = rule_choices(arch, s2)                 # où il pêche et combien de sorties, face aux règles
+        if s.get("lake_labels"):
+            data["lac"] = there["label"] if there else s["lake_labels"][0]
+        data["lieu"] = {"large": "large"}.get(extras.get("place", plan.get("place")), "rive")
+        if hint["purpose"] == "plan":
+            v, _ = catch_rule(arch, s2)
+            v = round(max(s2.get("min_catch", 0.0), min(s2["boat_capacity"], v * (1 + rng.uniform(-noise, noise)))), 1)
+            if s2.get("boat_limit") is not None and obeys(arch, s2):     # (le bruit ne le fait pas dépasser la cale permise)
+                v = min(v, round(s2["boat_limit"], 1))
+            if "outings" in extras and s.get("outings_cap"):
+                data["sorties"] = extras["outings"]
+            first = rng.choices(["tout de suite", "dans 3 heures", "demain à l'aube", "dans 2 jours"], [4, 2, 2, 2])[0]
+            data.update({"prise_saison": v, "declaration": declare_rule(arch, s2, v)[0], "premiere_sortie": first})
+            return data
+        nxt, _ = outing_rule(arch, s2)
+        if nxt["delay_h"] is None:
+            data.update({"quand": "plus cette saison", "duree": "longue", "prise": 0.0})
+            return data
+        hours, target, delay = 7.0, nxt["target"] * (1 + rng.uniform(-noise, noise)), nxt["delay_h"] * (1 + rng.uniform(-0.4, 0.4))
+        if rng.random() < 0.3:                             # une sortie courte, et souvent il ressort le jour même
+            hours, target = 3.0, target * 3.0 / 7.0
+            delay = 0.0 if rng.random() < 0.35 else delay
+        data.update({"quand": word_for(delay, rng), "duree": "courte" if hours < 5 else "longue",
+                     "prise": round(max(0.0, min(s2["boat_capacity"], s2["cale"], target)), 2)})
+        return data
 
 # ---------------------------------------------------------------- réaction aux rumeurs (faux LLM seulement)
 # Un faux LLM ignore ce qu'on lui écrit : sans cela, une annonce du joueur n'aurait AUCUN effet en mode test. Cette réaction
@@ -121,8 +160,9 @@ def react_to_rumor(purpose: str, arch: str, s: dict, data: dict) -> None:
         data["message"] = f"{lead} {data.get('message', '')}".strip()
     else:
         factor = 0.85 if SCARCITY.search(rumor) else 1.0
+        key = "prise_saison" if "prise_saison" in data else "prise"
         if me in targets and accusatory:             # on me soupçonne de trop pêcher : je me montre sobre
             factor = min(factor, 0.8)
         if factor < 1.0:
-            data["prise"] = round(data["prise"] * factor, 1)
+            data[key] = round(data[key] * factor, 2)
             data["justification"] = "Les rumeurs m'incitent à la prudence. " + data["justification"]

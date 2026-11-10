@@ -18,7 +18,7 @@ from test_system_one import FakeSystemOne
 
 
 def catches(events):
-    return [e["payload"] for e in kinds(events, "decision") if e["payload"]["decision_type"] == "catch"]
+    return [e["payload"] for e in kinds(events, "decision") if e["payload"]["decision_type"] == "plan"]      # (le plan : la prise de la saison)
 
 
 def test_an_unreadable_answer_is_decided_by_the_decision_model_not_by_the_fallback_rule(tmp_path):
@@ -26,8 +26,8 @@ def test_an_unreadable_answer_is_decided_by_the_decision_model_not_by_the_fallba
     world, events, _ = fake_game(tmp_path, "illisible", Recorder(prise="abc"), seasons=1, s1=s1)
     s1.close()
     decs = catches(events)
-    assert decs and all(d["tier"] == "reflexe" and d["system"] == "S1" and not d["fallback"] and d["value"] == 2.8
-                        for d in decs)
+    # (le niveau 3 de sa cale : le lac a baissé pour ceux qui font leur plan plus tard)
+    assert decs and all(d["tier"] == "reflexe" and d["system"] == "S1" and not d["fallback"] and 2.5 <= d["value"] <= 2.8 for d in decs)
     assert all("reprise" in d["justification"] for d in decs)
 
 

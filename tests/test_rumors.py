@@ -74,9 +74,13 @@ class Recorder:
                     self.end_headers()
                     self.wfile.write(err)
                     return
-                if '"prise"' in user:
-                    content = json.dumps({"justification": "Je reste raisonnable.",
-                                          **({"lac": outer.lake} if outer.lake else {}), "prise": prise})
+                if '"prise_saison"' in user:                            # le plan de la saison
+                    content = json.dumps({"justification": "Je reste raisonnable.", **({"lac": outer.lake} if outer.lake else {}),
+                                          "lieu": "rive", "prise_saison": prise, "declaration": prise, "premiere_sortie": "tout de suite"})
+                elif '"prise"' in user:                                 # une sortie : le sixième de la saison, dans deux jours
+                    content = json.dumps({"justification": "Je reste raisonnable.", **({"lac": outer.lake} if outer.lake else {}),
+                                          "lieu": "rive", "quand": "dans 2 jours", "duree": "longue",
+                                          "prise": round(prise / 6, 2) if isinstance(prise, (int, float)) else prise})
                 elif "Pour qui votes-tu" in user:                       # élection de l'élu du village
                     voter = re.match(r"Tu es (\S+)", body["messages"][0]["content"]).group(1)
                     cands = re.findall(r"^- (F\d+) : (.*)$", user, re.M)
@@ -126,8 +130,9 @@ class Recorder:
 
 
 def play_with_announcement(tmp_path, run_id, text, seasons=3, population=FOUR, elder=False, provider=None, announce_at=1,
-                           llm_overrides=None, **over):
-    """Joue une partie ; `text` est annoncé au début de la saison `announce_at` (None : aucune annonce)."""
+                           llm_overrides=None, announce_on="season_start", **over):
+    """Joue une partie ; `text` est annoncé au début de la saison `announce_at` (None : aucune annonce), ou à la première occurrence
+    de l'événement `announce_on` de cette saison (ou du premier pour lequel cette fonction renvoie vrai)."""
     cfg = cfg_for(tmp_path, seasons=seasons, population__custom=population, population__elder=elder,
                   population__elder_kind="rule", **over)
     cfg["llm"]["providers"]["scripted"]["latency_scale"] = 0.0
@@ -143,7 +148,9 @@ def play_with_announcement(tmp_path, run_id, text, seasons=3, population=FOUR, e
     box = {}
 
     def on_event(ev):
-        if text and ev["type"] == "season_start" and ev["season"] == announce_at:
+        hit = announce_on(ev) if callable(announce_on) else ev["type"] == announce_on
+        if text and hit and ev["season"] == announce_at and not box.get("said"):
+            box["said"] = True
             box["loop"].call_soon(world.handle_command, {"type": "announcement", "text": text})   # comme en jeu, par la boucle
 
     bus.subscribe("events", on_event)

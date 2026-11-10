@@ -92,6 +92,25 @@ def _catch_base(archetype: str, s: dict) -> tuple[float, str]:
     return clamp(share, cap, lo), "part durable"
 
 
+def outing_rule(archetype: str, s: dict, first: bool = False) -> tuple[dict, str]:
+    """La prochaine sortie d'un agent à règles : il suit son plan de saison (`s["plan"]["total"]`). Ce qui lui reste à prendre se partage
+    entre les sorties qu'il a prévues (`economy.outings`, ou ce que permet la règle des sorties qu'il respecte) ; il ressort quand
+    il faut pour les placer avant la fermeture (tout de suite pour la première), toujours pour une sortie longue. Plus rien à
+    prendre, ou plus de sortie prévue : « plus cette saison » (`delay_h` None). Renvoie `{delay_h, hours, target, place?}` et pourquoi."""
+    plan = s.get("plan") or {}
+    left = float(plan.get("total", 0.0)) - float(s.get("taken", 0.0))
+    extras, _ = rule_choices(archetype, s)
+    n_left = int(extras.get("outings") or s.get("outings_n") or 6) - int(s.get("done", 0))
+    out = {"delay_h": None, "hours": 7.0, "target": 0.0, **({"place": extras["place"]} if "place" in extras else {})}
+    if left < 0.05 or n_left <= 0:
+        return out, "plan rempli" if left < 0.05 else "toutes ses sorties prévues sont faites"
+    target = round(min(left / n_left, float(s["boat_capacity"]), float(s["cale"])), 2)
+    if target < 0.05:
+        return out, "la saison ne lui laisse plus rien à prendre"
+    gap = 0.0 if first else max(0.0, (float(s.get("days_left", 0.0)) - 0.5) / n_left - 0.3) * 24.0
+    return {**out, "delay_h": float(round(gap)), "target": target}, f"{n_left} sortie{'s' if n_left > 1 else ''} à faire, {left:.1f} t à prendre"
+
+
 # Ce que chaque caractère retient de ce qu'il apprend d'un pêcheur, en dixièmes de confiance (de −3 à +3, comme une IA) : sa
 # morale et ses intérêts. La famille ancienne tient à la règle ; le nouveau venu, endetté, pardonne à qui pêche pour vivre mais
 # pas à qui l'accuse ; le taiseux ne juge guère les autres, mais en veut à qui dénonce ; le beau parleur tient à la parole donnée.

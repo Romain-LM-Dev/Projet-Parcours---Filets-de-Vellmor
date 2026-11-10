@@ -26,12 +26,15 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from .agents import ballot, decide_catch, speak
+from .agents import ballot, decide_catch, decide_plan, speak
 from .clock import SimClock
 from .events import EventFactory
+from . import rules
 
 # l'ordre des acteurs à instant égal
-MONDE, LACS, PECHEURS, PATROUILLE, CONSEIL, FERMETURE = range(6)
+MONDE, LACS, PECHEURS, PATROUILLE, CONSEIL, FERMETURE, DECISION = range(7)
+# le plus court délai avant qu'une décision de sortie change le monde : la plus courte sortie dure 3 heures de pêche
+OUTING_LAG = rules.SHORT_H / 24.0
 
 
 @dataclass
@@ -63,7 +66,8 @@ class SeasonScheduler:
 
     def at(self, t: float, cls: int, ident: str, item) -> None:
         """Inscrit un effet (fonction, éventuellement asynchrone) ou une `Decision` à l'instant `t`."""
-        heapq.heappush(self.q, (round(t, 6), cls, self.key(ident), next(self.seq), item))
+        # à instant égal, les décisions passent après tous les effets : elles voient ce qui vient d'arriver à cet instant
+        heapq.heappush(self.q, (round(t, 6), DECISION if isinstance(item, Decision) else cls, self.key(ident), next(self.seq), item))
 
     # ------------------------------------------------------------------ l'horloge d'affichage
     async def show(self, t: float):
@@ -150,24 +154,36 @@ class SeasonScheduler:
         opening = t0 + T["fishing_open_day"]
         self.at(opening, MONDE, "pêche", lambda: w.events.emit("phase", {"name": "fishing", "state": "open"}))
         for a in w.fishers:
-            h = opening + a.offset_days            # son jour de départ ; sa décision de prise a cet instant pour horizon
-            self.at(h, PECHEURS, a.id, Decision(a.id, 1.0, lambda a=a, h=h: decide_catch(w, a, h),
-                                                lambda o, a=a, h=h: self.depart(a, o, h)))
+            h = opening + a.offset_days            # son jour de départ ; son plan de saison a cet instant pour horizon
+            self.at(h, PECHEURS, a.id, Decision(a.id, OUTING_LAG, lambda a=a, h=h: decide_plan(w, a, h),
+                                                lambda o, a=a, h=h: self.planned(a, o, h)))
         self.at(t0 + T["fishing_close_day"], FERMETURE, "pêche", lambda: w.events.emit("phase", {"name": "fishing", "state": "close"}))
         self.at(t0 + T["assembly_day"], CONSEIL, "veillée", self.evening)
         self.at(t0 + T["regrowth_day"], MONDE, "repeuplement", self.regrowth)
 
-    def depart(self, a, o, h: float):
-        """Sa décision est prise : il part. Chaque sortie retire son poisson à sa fin ; le retour (la dernière, plus la route) vend,
-        déclare et laisse les indices."""
+    def planned(self, a, o, h: float):
+        """Son plan de saison est fait : il ouvre sa pêche et part pour sa première sortie."""
         w = self.w
-        trip = w.plan_trip(a, o.value, o.decision, h, declared=o.data.get("declaration"), lake_name=o.data.get("lake"))
-        if trip is None:
+        w.note_plan(a, o)
+        trip = w.open_trip(a, o.value, o.decision, h, declared=o.data.get("declaration"))
+        if trip is not None:
+            self.go(a, trip, o.data["next"], h)
+
+    def go(self, a, trip, nxt: dict, now: float):
+        """Sa prochaine sortie est décidée (à `now`) : le moteur la place dans le temps ; son poisson sort du lac à son retour, où il
+        décide la suivante. Plus de sortie (« plus cette saison », fermeture) : sa pêche s'achève, bilan, vente et déclaration."""
+        w = self.w
+        out = w.start_outing(trip, nxt, now)
+        if out is None:
+            self.at(now, PECHEURS, a.id, lambda: w.finish_trip(trip))
             return
-        for k, out in enumerate(trip.outs):
-            self.at(self.t0 + out["day"] + 1.0, PECHEURS, a.id, lambda k=k: w.land_outing(trip, k))
-        back = self.t0 + trip.outs[-1]["day"] + 1.0 + trip.days if trip.outs else h + 2 * trip.days
-        self.at(back, PECHEURS, a.id, lambda: w.finish_trip(trip))
+
+        def back():
+            w.land_outing(trip, out)
+            t = out["back"]
+            self.at(t, PECHEURS, a.id, Decision(a.id, OUTING_LAG, lambda: decide_catch(w, a, t),
+                                                lambda o: self.go(a, trip, o.data["next"], t)))
+        self.at(out["back"], PECHEURS, a.id, back)
 
     # ------------------------------------------------------------------ la veillée
     async def evening(self):

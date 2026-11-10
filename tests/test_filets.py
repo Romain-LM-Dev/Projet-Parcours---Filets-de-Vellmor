@@ -160,7 +160,10 @@ def test_openai_compatible_client_with_retry(tmp_path):
                 self.end_headers()
                 return
             user = body["messages"][-1]["content"]
-            content = (json.dumps({"prise": 3.5, "justification": "Je reste raisonnable."}) if '"prise"' in user
+            content = (json.dumps({"prise_saison": 3.5, "declaration": 3.5, "premiere_sortie": "tout de suite", "lieu": "rive",
+                                   "justification": "Je reste raisonnable."}) if '"prise_saison"' in user
+                       else json.dumps({"prise": 0.5, "quand": "dans 2 jours", "duree": "longue", "lieu": "rive",
+                                        "justification": "Je reste raisonnable."}) if '"prise"' in user
                        else json.dumps({"message": "Je propose trois tonnes.", "destinataire": "tous",
                                         "proposition_quota": 3, "soutien": None, "promesse": 3, "accuse": None}))
             out = json.dumps({"choices": [{"message": {"content": content}}],
@@ -184,7 +187,9 @@ def test_openai_compatible_client_with_retry(tmp_path):
     calls = [e["payload"] for e in evs if e["type"] == "llm_call"]
     assert calls and all(c["status"] == "ok" for c in calls)
     assert sum(c["retries"] for c in calls) == 1
+    llm_plans = [e for e in evs if e["type"] == "decision" and e["payload"]["decision_type"] == "plan" and e["payload"]["agent_kind"] == "llm"]
     llm_catches = [e for e in evs if e["type"] == "decision" and e["payload"]["decision_type"] == "catch"
                    and e["payload"]["agent_kind"] == "llm"]
-    assert llm_catches and all(d["payload"]["value"] == 3.5 for d in llm_catches)
+    assert llm_plans and all(d["payload"]["value"] == 3.5 for d in llm_plans)
+    assert llm_catches and all(d["payload"]["value"] == 0.5 for d in llm_catches)
     assert any(e["type"] == "norm_adopted" for e in evs)

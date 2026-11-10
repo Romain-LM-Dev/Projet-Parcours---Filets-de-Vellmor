@@ -177,7 +177,7 @@ def test_the_council_installs_a_patrol_and_its_captain_chooses_the_route(tmp_pat
     a = world.fishers[0]
     assert world.upkeep(a, 2) - world.upkeep(a, 1) == 15
     # et ceux qui pêchent ne l'ignorent pas
-    assert any("patrouille du lac mesure" in r["user"] for r in rec.requests if '"prise"' in r["user"])
+    assert any("patrouille du lac mesure" in r["user"] for r in rec.requests if '"prise_saison"' in r["user"])
 
 
 def test_the_captain_rule_route_takes_over_when_his_ai_says_nothing(tmp_path):

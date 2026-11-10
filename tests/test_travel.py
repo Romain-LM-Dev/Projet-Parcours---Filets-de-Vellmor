@@ -79,9 +79,10 @@ def test_catching_in_another_lake_empties_that_lake_and_pays_the_road(tmp_path):
     ev = world.apply_catch(a, 3.0, dec, 0.0, lake_name="Orsane")["payload"]
     days = world.distance(home, away)
     assert ev["lake"] == "Orsane" and ev["away"] and ev["home_lake"] == "Vellmor" and ev["zone"] == "large-Orsane"
-    assert ev["travel_days"] == pytest.approx(days, abs=0.01) and ev["travel_cost"] == pytest.approx(world.travel_cost(days), abs=0.1)
+    cost = len(ev["outings"]) * world.leg_cost(days)               # la route se paie à chaque sortie faite
+    assert ev["travel_days"] == pytest.approx(days, abs=0.01) and ev["travel_cost"] == pytest.approx(cost, abs=0.1)
     assert ev["stock_observed"] == 77.0 and ev["stock_before"] == 100.0 and away.stock < 100.0 and home.stock == 100.0
-    assert a.wealth == pytest.approx(wealth + ev["landed"] * 100 - world.travel_cost(days))
+    assert a.wealth == pytest.approx(wealth + ev["landed"] * 100 - cost)
     assert len(ev["outings"]) < len(world.outing_days(a)) and ev["landed"] < 3.0                # la route a pris des sorties
     assert a.lake_choice[world.clock.season_of()] == "Orsane"
     trip = world.trips[world.clock.season_of()][-1]
@@ -125,7 +126,7 @@ def test_rule_fishers_of_a_poor_lake_go_to_the_rich_one_and_the_rich_stay(tmp_pa
     away = next(p for p in first if p.get("away"))
     assert away["travel_cost"] > 0 and away["zone"] == "large-Vellmor"
     decisions = [e["payload"] for e in kinds(read_events(tmp_path, "migrent"), "decision")
-                 if e["payload"]["decision_type"] == "catch" and e["season"] == 1 and e["payload"]["agent"] in poor]
+                 if e["payload"]["decision_type"] == "plan" and e["season"] == 1 and e["payload"]["agent"] in poor]
     assert all(d["lake"] == "Vellmor" and "il pêche dans le lac de Vellmor" in d["justification"] for d in decisions)
 
 
@@ -144,7 +145,7 @@ LAKES = [{"name": "Vellmor", "capacity": 80, "villages": ["Ostrel"]}, {"name": "
 def test_an_ai_sees_the_other_lakes_the_road_and_what_it_costs(tmp_path):
     rec = Recorder()
     fake_game(tmp_path, "ia-voit", rec, population=POP, seasons=1, lake__lakes=LAKES, schema=True)
-    asks = [r for r in rec.requests if '"prise"' in r["user"] and "Mathis" in r["system"]]
+    asks = [r for r in rec.requests if '"prise_saison"' in r["user"] and "Mathis" in r["system"]]
     assert asks
     text = asks[0]["user"]
     assert "Tu pêches d'ordinaire dans le lac de Vellmor, celui de ton village" in text
@@ -152,11 +153,11 @@ def test_an_ai_sees_the_other_lakes_the_road_and_what_it_costs(tmp_path):
     assert re.search(r"à 0\.6 jour de route \(aller et retour compris, 1.1 jours en mer\), tu perdrais \d sorties? sur la saison : tu ramènerais environ \d+ %", text)
     assert re.search(r"la route te coûterait 68 écus \(0\.7 t de poisson\) ; tu y viserais jusqu'à [\d.]+ t, soit au mieux [\d.]+ t une fois "
                      r"la route payée \(contre [\d.]+ t au mieux chez toi\)", text)
-    assert re.search(r"\"prise\": <tonnes dans le lac que tu choisis : entre [\d.]+ et [\d.]+ chez toi ; jusqu'à [\d.]+ t dans le lac d'Orsane>",
+    assert re.search(r"\"prise_saison\": <tonnes dans le lac que tu choisis : entre [\d.]+ et [\d.]+ chez toi ; jusqu'à [\d.]+ t dans le lac d'Orsane, pour toute la saison>",
                      text)
     assert "ce que tu constates de ton lac et des autres, ce que coûte la route, et où pêcher en conséquence" in text
     props = asks[0]["response_format"]["json_schema"]["schema"]["properties"]
-    assert list(props)[:3] == ["justification", "lac", "prise"] and props["lac"]["enum"] == ["Lac de Vellmor", "Lac d'Orsane"]
+    assert list(props)[:3] == ["justification", "lac", "lieu"] and props["lac"]["enum"] == ["Lac de Vellmor", "Lac d'Orsane"]
     assert '"lac": "<le lac où tu pêches : Lac de Vellmor ou Lac d\'Orsane>"' in text
 
 

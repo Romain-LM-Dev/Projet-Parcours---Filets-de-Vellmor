@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from . import prompts, routing
 from .llm import detect_drift, extract_json, to_number
 from .memory import MemoryStore
-from .policies import at_lake, catch_rule, declare_rule, elect_rule, lake_choice_rule, rule_choices, speak_rule, trust_rule
+from .policies import at_lake, catch_rule, declare_rule, elect_rule, lake_choice_rule, outing_rule, rule_choices, speak_rule, trust_rule
+from .rules import DUREES, LONG_H, quand_hours
 from .profiles import Profile
 
 log = logging.getLogger("filets.agents")
@@ -36,6 +37,9 @@ class Agent:
     declared: dict[int, float] = field(default_factory=dict)       # ce qu'il a déclaré à l'ancien, par saison
     outings: dict[int, list[dict]] = field(default_factory=dict)   # ses sorties de chaque saison (voir `World.outings`)
     form: float = 0.0                                              # sa chance de la saison (elle se prolonge d'une saison à l'autre)
+    form_season: int = 0                                           # la saison pour laquelle `form` a été tirée
+    plans: dict[int, dict] = field(default_factory=dict)           # son plan de chaque saison (voir `decide_plan`)
+    prev: dict | None = None                                       # ce qu'il observait à sa décision de sortie précédente (voir `routing.outing_reasons`)
     temper: float = 1.0                                            # sa sévérité : plus de 1, il pardonne moins (tirée une fois)
     lake_choice: dict[int, str] = field(default_factory=dict)      # le lac où il a pêché à chaque saison (le sien, ou un autre)
     spot: int | None = None                                        # son coin de pêche : une parcelle de sa rive (voir `World.spot_of`)
@@ -72,7 +76,7 @@ def _note_observation(obs: dict, dec: dict) -> None:
 def _seed(world, agent: Agent, purpose: str, state: dict) -> int:
     """Une graine stable par (partie, agent, saison, nature, tour) : le fournisseur qui la respecte (Ollama) redonne la même
     réponse au même prompt, donc une partie rejouée avec la même configuration se déroule de la même façon."""
-    key = f"{world.cfg['run']['seed']}|{agent.id}|{world.season}|{purpose}|{state.get('round', 1)}"
+    key = f"{world.cfg['run']['seed']}|{agent.id}|{world.season}|{purpose}|{state.get('round', 1)}|{state.get('done', 0)}"
     return zlib.crc32(key.encode()) & 0x7FFFFFFF
 
 
@@ -87,8 +91,8 @@ async def _ask_llm(world, agent: Agent, purpose: str, messages: list[dict], stat
     hint = {"purpose": purpose, "archetype": agent.archetype, "state": state, "system": system,
             "schema": schema or (prompts.REFLEX_SCHEMA if reflex else prompts.answer_schema(
                 purpose, brief, agent.is_fisher, [world.first_name(a.id) for a in world.fishers if a.id != agent.id],
-                state.get("lake_labels") if purpose == "catch" else None,
-                state.get("catch_extras") if purpose == "catch" else None)),
+                state.get("lake_labels") if purpose in ("catch", "plan") else None,
+                state.get("catch_extras") if purpose in ("catch", "plan") else None)),
             "seed": _seed(world, agent, purpose, state)}                  # le schéma est imposé aux fournisseurs qui le savent
     if max_tokens:
         hint["max_tokens"] = max_tokens
@@ -141,15 +145,42 @@ def reflex_usable(world) -> bool:
     return "reflexe" in world.router.tiers and not getattr(world, "_reflex_down", False)
 
 
-async def decide_catch(world, agent: Agent, horizon: float, rescue: bool = False) -> Outcome:
-    """`rescue` : le grand modèle n'a pas répondu à temps (fenêtre ratée) : la prise est décidée par le modèle de décision."""
+PLACES = {"rive": "rive", "large": "large", "rive voisine": "voisine"}       # « lieu » dit en mots -> `place` du moteur
+
+
+def _place(data: dict | None) -> str | None:
+    """Où il pêche, d'après sa réponse (« rive », « large », « rive voisine ») ; None : rien dit de lisible."""
+    return PLACES.get(str((data or {}).get("lieu", "")).strip().lower())
+
+
+def _chosen_lake(data: dict | None, state: dict):
+    """Le lac que l'IA a choisi parmi ceux à portée, s'il n'est pas le sien."""
+    label = str((data or {}).get("lac", "")).strip()
+    return next((o for o in state.get("lake_options", []) if o["label"] == label), None) if data else None
+
+
+def _bound(world, agent, v: float, lo: float, hi: float, res, label: str = "prise") -> float:
+    """La valeur ramenée dans [lo, hi] ; un arrondi de quelques kilos n'est pas une valeur invalide (un nombre absurde, si)."""
+    if not (lo <= v <= hi):
+        if not (lo - 0.05 <= v <= hi + 0.05):          # un arrondi de quelques kilos n'est pas une valeur invalide
+            world.incident(agent.id, "invalid_value", f"{label} {v} hors de [{lo:g}, {hi:g}]", "bornage", res.call_id)
+        v = max(lo, min(hi, v))
+    return v
+
+
+async def decide_plan(world, agent: Agent, horizon: float) -> Outcome:
+    """Le plan de la saison, à l'ouverture de la pêche (docs/peche.md) : combien il compte prendre en tout, où, ce qu'il compte
+    déclarer, et sa première sortie (quand). Toujours une réflexion du grand modèle ; un agent à règles suit la règle de son archétype.
+    Le plan n'engage pas le moteur : il guide les décisions de sortie suivantes (`agent.plans`, la mémoire)."""
     obs, state, retrieved, used = await world.observe(agent, horizon, "catch")
-    p = agent.profile
-    common = {"agent": agent.id, "agent_kind": p.kind, "decision_type": "catch", "info_horizon": round(horizon, 6),
+    p, season = agent.profile, world.clock.season_of(horizon)
+    n_default = int(state.get("outings_n") or 6)
+    common = {"agent": agent.id, "agent_kind": p.kind, "decision_type": "plan", "info_horizon": round(horizon, 6),
               "retrieved": retrieved, "used_event_ids": used,
               "observed": {"stock_estimate": state["stock_estimate"], "stock_true": state["stock_true"],
                            "quota": state["quota"],
                            **({k: state[k] for k in ("lake_estimates", "lake_stocks") if k in state})}}
+    agent.prev = routing.snapshot(obs)
     if p.kind == "rule":
         where, why_lake = lake_choice_rule(agent.archetype, state)         # son lac, ou un autre s'il y gagne nettement
         there = next((o for o in state.get("lake_options", []) if o["name"] == where), None)
@@ -157,19 +188,115 @@ async def decide_catch(world, agent: Agent, horizon: float, rescue: bool = False
         v, rule = catch_rule(agent.archetype, s_here)
         said, drule = declare_rule(agent.archetype, s_here, v)
         extras, xrule = rule_choices(agent.archetype, s_here)          # où il pêche et combien de sorties, face aux règles
+        plan = {"total": v, "declared": said, "lake": where, "place": extras.get("place"),
+                "outings": extras.get("outings", n_default), "hold": round(s_here["boat_capacity"], 3)}
+        nxt, _ = outing_rule(agent.archetype, {**s_here, "plan": plan, "taken": 0.0, "done": 0}, first=True)
+        nxt = {**nxt, "lake": where, "place": extras.get("place")}
         lake_text = f" ; il pêche dans {prompts.lake_ref(there['label'])} : {why_lake}" if there else ""
         dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {rule} ; {drule}{xrule}{lake_text}.",
                                              "rule": rule, "value": v, "declared": said, "fallback": False, "model": None,
-                                             "tier": None, "llm_call_id": None, **extras,
+                                             "tier": None, "llm_call_id": None, "delay_h": nxt["delay_h"], "hours": nxt["hours"],
+                                             **({"place": extras["place"]} if "place" in extras else {}),
+                                             **({"outings": extras["outings"]} if "outings" in extras else {}),
                                              **({"lake": where} if where else {})}, actor=agent.id)
         _note_observation(obs, dec)
         agent.last_decision = dec
-        return Outcome(v, {"prise": v, "declaration": said, "lake": where, **extras}, dec)
+        agent.plans[season] = plan
+        return Outcome(v, {"declaration": said, "next": nxt, "plan": plan}, dec)
 
     brief = prompts.is_brief(world.cfg["llm"])
-    system, why = routing.choose_system(obs, "catch") if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
+
     def ask_reflex():
-        return _ask_llm(world, agent, "catch", prompts.reflex_messages(p, obs), state, "S1",
+        return _ask_llm(world, agent, "plan", prompts.reflex_messages(p, obs), state, "S1", system_one=prompts.reflex_system_one(p, obs))
+    data, res, flags = await _ask_llm(world, agent, "plan", prompts.catch_messages(p, obs, world.capacity, brief, plan=True), state,
+                                      handled="repris par le réflexe" if reflex_usable(world) else "règle de repli")
+    system, why = "S2", ""
+    if (data is None or to_number(data.get("prise_saison")) is None) and reflex_usable(world):
+        data, res, flags = await ask_reflex()
+        system, why = "S1", "reprise : la réponse du grand modèle manquait ou était illisible"
+        if data is not None and "prise_saison" not in data:
+            data = {**data, "prise_saison": data.get("prise")}
+    fallback, rule = False, None
+    v = to_number(data.get("prise_saison")) if data else None
+    just = str(data.get("justification", "")).strip() if data else ""
+    if system == "S1" and data is not None:
+        just = f"Réflexe (système 1, {res.model}) : {why}."
+    if data is not None and v is None:
+        world.incident(agent.id, "invalid_value", f"prise_saison absente : {str(data)[:150]}", "règle de repli", res.call_id)
+    chosen = _chosen_lake(data, state) if system == "S2" else None
+    lo, hi = state.get("min_catch", 0.0), (chosen["hold"] if chosen else state["boat_capacity"])    # la saison rapporte au moins la prise minimale
+    if v is not None:
+        v = _bound(world, agent, v, lo, hi, res, "prise_saison")
+    else:
+        v, rule = catch_rule(agent.archetype, state)
+        fallback = True
+        just = f"(repli) Règle appliquée : {rule}."
+    v = round(v, 1)
+    # ce qu'il déclarera de la saison : la vérité par défaut (réflexe, repli, champ absent) ; jamais plus que la prise
+    said = to_number(data.get("declaration")) if data and system == "S2" and not fallback else None
+    said = v if said is None else round(min(max(said, 0.0), v), 1)
+    where = chosen["name"] if chosen and not fallback else None
+    extras: dict = {}
+    if fallback:
+        extras, _ = rule_choices(agent.archetype, at_lake(state, None))
+    elif data and system == "S2":
+        if _place(data):
+            extras["place"] = _place(data)
+        n_out = to_number(data.get("sorties"))
+        if n_out is not None and state.get("outings_cap"):
+            extras["outings"] = int(max(1, min(n_default, round(n_out))))
+    n_plan = extras.get("outings", n_default)
+    delay = quand_hours(data.get("premiere_sortie"), horizon) if data and system == "S2" and not fallback else 0.0
+    plan = {"total": v, "declared": said, "lake": where, "place": extras.get("place"), "outings": n_plan, "hold": round(hi, 3)}
+    nxt = {"delay_h": delay, "hours": LONG_H, "target": round(v / max(1, n_plan), 2), "lake": where, "place": extras.get("place")}
+    if v < 0.05:
+        nxt["delay_h"] = None                       # pas de prise prévue : il ne sort pas
+    dec = world.events.emit("decision", {**common, "justification": just or "(sans justification)", "rule": rule,
+                                         "value": v, "declared": said, "fallback": fallback, "model": res.model, "system": system,
+                                         "tier": res.tier, "llm_call_id": res.call_id, "delay_h": nxt["delay_h"], "hours": LONG_H,
+                                         "out_of_role": flags.get("out_of_role", False), **extras,
+                                         **({"lake": where} if where else {})}, actor=agent.id)
+    _note_observation(obs, dec)
+    agent.last_decision = dec
+    agent.plans[season] = plan
+    return Outcome(v, {"declaration": said, "next": nxt, "plan": plan}, dec)
+
+
+async def decide_catch(world, agent: Agent, horizon: float, rescue: bool = False) -> Outcome:
+    """Sa prochaine sortie (docs/peche.md), à l'ouverture puis à chaque retour : quand (un délai, ou « plus cette saison »), où (lac,
+    zone), pour combien de temps (courte ou longue) et combien de tonnes il vise. Le réflexe (système 1) la décide quand rien n'a changé
+    depuis sa décision précédente (`routing.outing_reasons`), le grand modèle sinon ; un agent à règles suit son plan.
+    `rescue` : le grand modèle n'a pas répondu à temps : la sortie est décidée par le modèle de décision."""
+    obs, state, retrieved, used = await world.observe(agent, horizon, "catch")
+    p = agent.profile
+    plan = state.get("plan") or {}
+    common = {"agent": agent.id, "agent_kind": p.kind, "decision_type": "catch", "info_horizon": round(horizon, 6),
+              "retrieved": retrieved, "used_event_ids": used,
+              "observed": {"stock_estimate": state["stock_estimate"], "stock_true": state["stock_true"],
+                           "quota": state["quota"],
+                           **({k: state[k] for k in ("lake_estimates", "lake_stocks") if k in state})}}
+    prev, agent.prev = agent.prev, routing.snapshot(obs)
+
+    def decided(nxt: dict, v: float) -> dict:
+        return {"delay_h": nxt["delay_h"], "hours": nxt["hours"], "value": v,
+                **({"lake": nxt["lake"]} if nxt.get("lake") else {}), **({"place": nxt["place"]} if nxt.get("place") else {})}
+    if p.kind == "rule":
+        where = plan.get("lake")                         # il suit son plan : le même lac, la même zone
+        there = next((o for o in state.get("lake_options", []) if o["name"] == where), None)
+        nxt, why = outing_rule(agent.archetype, at_lake(state, there))
+        nxt = {**nxt, "lake": where, **({"place": plan["place"]} if plan.get("place") else {})}
+        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {why}.", "rule": why, "fallback": False,
+                                             "model": None, "tier": None, "llm_call_id": None, **decided(nxt, nxt["target"])},
+                                actor=agent.id)
+        _note_observation(obs, dec)
+        agent.last_decision = dec
+        return Outcome(nxt["target"], {"next": nxt}, dec)
+
+    brief = prompts.is_brief(world.cfg["llm"])
+    system, why = routing.choose_outing_system(obs, prev) if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
+
+    def ask_reflex():
+        return _ask_llm(world, agent, "catch", prompts.reflex_messages(p, obs), state, "S1", schema=prompts.REFLEX_OUTING_SCHEMA,
                         system_one=prompts.reflex_system_one(p, obs))
     if rescue:
         system, why = "S1", "reprise : le grand modèle n'a pas répondu à temps"
@@ -188,45 +315,36 @@ async def decide_catch(world, agent: Agent, horizon: float, rescue: bool = False
     if system == "S1" and data is not None:
         conf = (data.get("_confiance") or {}).get("prise")
         just = f"Réflexe (système 1, {res.model}) : {why}." + (f" Confiance {conf:.2f}." if conf is not None else "")
-    common = {**common, "system": system}                        # sans routage adaptatif, tout est système 2
+    common = {**common, "system": system, **({"routing": why} if why else {})}      # sans routage adaptatif, tout est système 2
     if data is not None and v is None:
         world.incident(agent.id, "invalid_value", f"prise absente : {str(data)[:150]}", "règle de repli", res.call_id)
-    chosen = None                                  # le lac que l'IA a choisi, s'il n'est pas le sien (système 2 seulement)
-    if data and system == "S2":
-        label = str(data.get("lac", "")).strip()
-        chosen = next((o for o in state.get("lake_options", []) if o["label"] == label), None)
-    lo, hi = state.get("min_catch", 0.0), (chosen["hold"] if chosen else state["boat_capacity"])    # une sortie rapporte au moins la prise minimale
-    if v is not None and not (lo <= v <= hi):
-        if not (lo - 0.05 <= v <= hi + 0.05):          # un arrondi de quelques kilos n'est pas une valeur invalide
-            world.incident(agent.id, "invalid_value", f"prise {v} hors de [{lo:g}, {hi:g}]", "bornage", res.call_id)
-        v = max(lo, min(hi, v))
-    if v is None:
-        v, rule = catch_rule(agent.archetype, state)
-        fallback = True
+    chosen = _chosen_lake(data, state) if system == "S2" else None       # le lac que l'IA a choisi, s'il n'est pas le sien
+    if system == "S1" or not data:
+        where, place = plan.get("lake"), plan.get("place")          # le réflexe garde le lieu de son plan
+    else:
+        where, place = (chosen["name"] if chosen else None), _place(data) or plan.get("place")
+    there = next((o for o in state.get("lake_options", []) if o["name"] == where), chosen)
+    lo, hi = state.get("min_catch", 0.0), min(state["cale"], there["hold"] if there else state["boat_capacity"], state["boat_capacity"])
+    if v is not None:
+        v = _bound(world, agent, v, lo, hi, res)
+        label = str(data.get("quand", "")).strip().lower()
+        delay = quand_hours(label, horizon) if label else 0.0
+        nxt = {"delay_h": delay, "hours": DUREES.get(str(data.get("duree", "")).strip().lower(), LONG_H), "target": round(v, 2),
+               "lake": where, "place": place}
+    else:
+        nxt, rule = outing_rule(agent.archetype, at_lake(state, there))
+        nxt = {**nxt, "lake": where, "place": place or nxt.get("place")}
+        v, fallback = nxt["target"], True
         just = f"(repli) Règle appliquée : {rule}."
-    v = round(v, 1)
-    # la déclaration à l'ancien : la vérité par défaut (réflexe, repli, champ absent) ; jamais plus que la prise
-    said = to_number(data.get("declaration")) if data and system == "S2" and not fallback else None
-    said = v if said is None else round(min(max(said, 0.0), v), 1)
-    where = chosen["name"] if chosen and not fallback else None
-    # les règles de pêche (zone réservée, nombre de sorties) : ce qu'il répond ; au repli, ce que ferait son caractère
-    extras: dict = {}
-    if fallback:
-        extras, _ = rule_choices(agent.archetype, at_lake(state, None))
-    elif data and system == "S2":
-        if "lieu" in state.get("catch_extras", ()) and str(data.get("lieu", "")).strip().lower() in ("rive", "large"):
-            extras["place"] = str(data["lieu"]).strip().lower()
-        n_out = to_number(data.get("sorties"))
-        if n_out is not None and state.get("outings_cap"):
-            extras["outings"] = int(max(1, min(state["outings_n"], round(n_out))))
+    if v < 0.05:
+        nxt["delay_h"] = None                    # rien à prendre : il ne ressort plus cette saison
+    v = round(v, 2)
     dec = world.events.emit("decision", {**common, "justification": just or "(sans justification)", "rule": rule,
-                                         "value": v, "declared": said, "fallback": fallback, "model": res.model,
-                                         "tier": res.tier, "llm_call_id": res.call_id,
-                                         "out_of_role": flags.get("out_of_role", False), **extras,
-                                         **({"lake": where} if where else {})}, actor=agent.id)
+                                         "fallback": fallback, "model": res.model, "tier": res.tier, "llm_call_id": res.call_id,
+                                         "out_of_role": flags.get("out_of_role", False), **decided(nxt, v)}, actor=agent.id)
     _note_observation(obs, dec)
     agent.last_decision = dec
-    return Outcome(v, {"prise": v, "declaration": said, "lake": where, **extras}, dec)
+    return Outcome(v, {"next": nxt}, dec)
 
 
 async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outcome:

@@ -127,7 +127,7 @@ def name_to_id(world):
 def parse(request, world):
     who = re.search(r"Tu es (.+?), ", request["system"]).group(1)
     season = int(re.search(r"Nous sommes en saison (\d+)", request["user"]).group(1))
-    return name_to_id(world)[who], season, ("catch" if '"prise"' in request["user"] else "speak")
+    return name_to_id(world)[who], season, ("plan" if '"prise_saison"' in request["user"] else "catch" if '"prise"' in request["user"] else "speak")
 
 
 def test_every_prompt_carries_the_true_state_of_the_lake_as_that_fisher_saw_it(tmp_path):
@@ -155,7 +155,7 @@ def test_the_lake_is_called_empty_once_it_is_empty(tmp_path):
     assert late, "la partie doit continuer après l'effondrement"
     assert all("vide : il n'y a plus de poisson" in r["user"] or "presque vide" in r["user"] for r in late)
     final = [r for r in late if parse(r, world)[1] == max(parse(x, world)[1] for x in late)]
-    assert all("0 %" in r["user"] for r in final) and all("il reste vide" in r["user"] for r in final)
+    assert all("0 %" in r["user"] for r in final) and all("il reste vide" in r["user"] or "il vient de se vider" in r["user"] or "presque vide" in r["user"] for r in final)
 
 
 def test_what_a_fisher_read_of_past_seasons_is_what_he_estimated_then(tmp_path):
@@ -163,12 +163,12 @@ def test_what_a_fisher_read_of_past_seasons_is_what_he_estimated_then(tmp_path):
     world, events, requests = play_greedy(tmp_path, "aw3", capacity=120.0)
     own = {}
     for e in events:
-        if e["type"] == "decision" and e["payload"]["decision_type"] == "catch" and e["payload"]["agent_kind"] == "llm":
+        if e["type"] == "decision" and e["payload"]["decision_type"] == "plan" and e["payload"]["agent_kind"] == "llm":
             own[(e["payload"]["agent"], e["season"])] = e["payload"]["observed"]["stock_estimate"]
     checked = 0
     for r in requests:
         agent, season, kind = parse(r, world)
-        if kind != "catch" or season < 3:
+        if kind != "plan" or season < 3:
             continue
         for s in range(1, season):
             m = re.search(rf"saison {s}, jour \d+ \(ouverture de la pêche\) ≈ (\d+) t", r["user"])
@@ -186,14 +186,14 @@ def test_the_decision_trace_leads_back_to_the_earlier_observations(tmp_path):
     first = {(e["payload"]["agent"], e["season"], e["payload"]["decision_type"]): e["event_id"] for e in decisions}
     for e in decisions:
         p = e["payload"]
-        if p["decision_type"] == "catch" and e["season"] >= 2:
-            assert first[(p["agent"], e["season"] - 1, "catch")] in p["used_event_ids"], (p["agent"], e["season"])
+        if p["decision_type"] == "plan" and e["season"] >= 2:
+            assert first[(p["agent"], e["season"] - 1, "plan")] in p["used_event_ids"], (p["agent"], e["season"])
     assert verify("aw4", world.cfg)                        # et rien ne vient du futur
 
 
 def test_memories_carry_their_date(tmp_path):
     world, events, requests = play_greedy(tmp_path, "aw5", capacity=120.0, seasons=3)
-    later = [r["user"] for r in requests if parse(r, world)[1] == 3 and '"prise"' in r["user"]]
+    later = [r["user"] for r in requests if parse(r, world)[1] == 3 and '"prise_saison"' in r["user"]]
     assert later
     section = [u.split("Tes souvenirs qui reviennent :")[1].split("Ce qu'on raconte")[0] for u in later]
     assert all(re.search(r"- \[saison \d+, jour \d+, [^\]]+ \(\d+ h[^\]]*\)\] ", s) for s in section)

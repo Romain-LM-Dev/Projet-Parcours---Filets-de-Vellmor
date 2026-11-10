@@ -70,8 +70,8 @@ def test_many_outings_still_add_up_to_the_catch_and_follow_the_calendar(tmp_path
     for e in catches:
         c = e["payload"]
         days = [o["day"] for o in c["outings"]]
-        assert len(days) == 20 and days == sorted(days)                               # une sortie après l'autre, sur la fenêtre de pêche
-        assert world.T["fishing_open_day"] <= days[0] and days[-1] < world.T["fishing_close_day"]
+        assert len(days) >= 15 and days == sorted(days)                               # une sortie après l'autre, sur la fenêtre de pêche
+        assert world.T["fishing_open_day"] <= days[0] and days[-1] <= world.T["fishing_close_day"]
         assert sum(o["tonnes"] for o in c["outings"]) == pytest.approx(c["landed"], abs=1e-6)
         assert all(o["weather"] == sky[e["season"]][int(o["day"])] for o in c["outings"])
 
@@ -109,14 +109,16 @@ def test_a_catch_of_nothing_is_not_a_failure(tmp_path, case):
 def test_each_outing_is_capped_at_its_share_of_the_hold_not_the_whole_catch(tmp_path):
     world, bus, _ = make_world(tmp_path, "cale-sortie", population__elder=False, lake__capacity=100.0)
     a = world.fishers[0]
-    hold = world.hold[a.id]
+    hold = world.hold_of(a, world.season_stock[world.lake.name])
+    cale = world.cale_of(a, 7.0)                              # (une cale de saison en six sorties, avec une marge de moitié)
     set_outings(a, 1, [2.0, 0.5, 1.0, 1.0, 1.0, 1.0])        # une très bonne sortie (elle déborderait la cale), une mauvaise, quatre ordinaires
     p = world.apply_catch(a, hold, decision(), 0.0)["payload"]
-    # la bonne sortie ne rapporte que sa part de cale (comme une ordinaire) : (1 + 0,5 + 4) / 6 de la cale. Une cale qui plafonnerait
-    # la prise entière rendrait toute la cale, pas de plafond du tout 1,083 fois la cale.
-    assert p["landed"] == pytest.approx(hold * 5.5 / 6, abs=0.001)
+    # la bonne sortie ne rapporte que la cale d'une sortie ; les autres, leur cible (un sixième de la saison) au rendement du jour
     t = [o["tonnes"] for o in p["outings"]]
-    assert t[0] == pytest.approx(t[2], abs=0.003) and t[1] == pytest.approx(t[2] / 2, abs=0.003)
+    share = hold / 6
+    assert 2 * share > cale and t[0] == pytest.approx(cale, abs=0.003)
+    assert t[1] == pytest.approx(share / 2, abs=0.003) and t[2] == pytest.approx(share, abs=0.003)
+    assert p["landed"] == pytest.approx(min(hold, cale + share * 4.5), abs=0.003) and sum(t) == pytest.approx(p["landed"], abs=1e-6)
     assert sum(t) == pytest.approx(p["landed"], abs=1e-6)
 
 
@@ -144,7 +146,7 @@ def test_a_rationed_season_never_lands_more_than_the_lake_held(tmp_path):
         fleet = [e["payload"] for e in catches if e["season"] == season]
         assert sum(c["landed"] for c in fleet) <= fleet[0]["stock_before"] + 1e-6                     # la flotte ne prend pas plus que le lac
     for c in (e["payload"] for e in catches):
-        assert c["stock_after"] >= 0 and c["landed"] <= c["requested"] * c["yield"] + 0.005          # le rationnement ne fait que retrancher
+        assert c["stock_after"] >= 0 and c["landed"] <= c["requested"] + 0.005                    # jamais plus que son plan
         assert sum(o["tonnes"] for o in c["outings"]) == pytest.approx(c["landed"], abs=1e-6)
 
 

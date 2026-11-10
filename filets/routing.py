@@ -56,3 +56,58 @@ def choose_system(obs: dict, purpose: str) -> tuple[str, str]:
         return S2, "parole de la veillée"
     why = reasons_to_think(obs)
     return (S2, "; ".join(why)) if why else (S1, "routine : lac sain et stable, engagement ou règle à suivre")
+
+
+# ------------------------------------------------------------------ les sorties (docs/peche.md)
+def _sky(obs: dict) -> str:
+    w = obs.get("today")
+    return w if w in ("tempête", "calme") else "ordinaire"
+
+
+def snapshot(obs: dict) -> dict:
+    """Ce que le pêcheur avait sous les yeux à une décision : la prochaine sortie ne se compare qu'à cela."""
+    return {"reasons": set(season_reasons(obs)), "est": obs["stock_estimate"], "sky": _sky(obs), "rumors": len(obs.get("rumors") or []),
+            "events": len(obs.get("events") or []), "norms": len(obs.get("norms") or []), "clues": len(obs.get("clues") or [])}
+
+
+def season_reasons(obs: dict) -> list[str]:
+    """Les raisons de la saison : celles d'une décision de prise, plus l'état de son quota et de son plan."""
+    why = reasons_to_think(obs)
+    quota, taken = (obs.get("rule") or {}).get("quota"), obs.get("taken") or 0.0
+    if quota is not None and taken >= 0.8 * quota:
+        why.append("quota de saison presque atteint ou dépassé")
+    plan = obs.get("plan")
+    if plan and obs.get("outing"):
+        left = plan["total"] - taken
+        if left <= 0.05:
+            why.append("plan rempli")
+        elif left > obs["cale"] * max(0, int(obs.get("days_left", 0) / 0.4)):
+            why.append("plan impossible à tenir avant la fermeture")
+    return why
+
+
+def outing_reasons(obs: dict, prev: dict | None) -> list[str]:
+    """Pourquoi la prochaine sortie mérite le système 2 : ce qui a changé depuis sa décision précédente `prev` (un `snapshot`). Sans
+    décision précédente, toutes les raisons de la saison. Liste vide : de la routine, le réflexe suffit."""
+    now = season_reasons(obs)
+    if prev is None:
+        return now
+    why = [r for r in now if r not in prev["reasons"]]
+    cap = obs.get("capacity")
+    if _sky(obs) != prev["sky"]:
+        why.append(f"le temps change ({_sky(obs)})")
+    if len(obs.get("rumors") or []) > prev["rumors"] or len(obs.get("events") or []) > prev["events"]:
+        why.append("rumeur ou événement nouveau")
+    if len(obs.get("norms") or []) > prev["norms"]:
+        why.append("règle nouvelle")
+    if len(obs.get("clues") or []) > prev["clues"]:
+        why.append("indice ou accusation contre lui")
+    if cap and obs["stock_estimate"] < prev["est"] - FALLING_RATIO * cap:
+        why.append("le lac a nettement baissé")
+    return why
+
+
+def choose_outing_system(obs: dict, prev: dict | None) -> tuple[str, str]:
+    """(système, raison) d'une décision de sortie : le réflexe si rien n'a changé depuis la précédente, le grand modèle sinon."""
+    why = outing_reasons(obs, prev)
+    return (S2, "; ".join(why)) if why else (S1, "routine : rien n'a changé depuis ma décision précédente")
