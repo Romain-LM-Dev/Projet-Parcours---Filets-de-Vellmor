@@ -1,0 +1,7 @@
+# La partie de la vidéo de démonstration (docs/demo) : la vallée à trois lacs, trois saisons, une rumeur lancée par le joueur à la
+# saison 2. Faux LLM (rapide, déterministe) : `python -m filets run --config config/demo.yaml --llm scripted --run-id demo`.
+extends: lakes.yaml
+run: {label: demo, seasons: 3, seed: 7}
+scenario:
+  scheduled_injections:
+    - {season: 2, type: announcement, text: "Un marchand de la ville achète tout le poisson le double du prix, mais seulement cette saison."}

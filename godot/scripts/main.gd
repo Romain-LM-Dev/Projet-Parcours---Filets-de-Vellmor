@@ -12,6 +12,7 @@ const WorldView := preload("res://scripts/world_view.gd")
 const Chart := preload("res://scripts/chart.gd")
 const Legend := preload("res://scripts/legend.gd")
 const StartMenu := preload("res://scripts/start_menu.gd")
+const Demo := preload("res://scripts/demo.gd")
 
 ## Vitesses proposées dans la barre du haut.
 const SPEEDS := [0.0625, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
@@ -73,6 +74,7 @@ var n_indicators := 0
 var last_sim_label := "—"
 var selftest := -1.0
 var shot_path := ""
+var demo_path := ""             # --demo=scénario.json : vidéo de démonstration (voir demo.gd)
 var shots: Array = []          # --shots=4,9,15 --shotdir=/chemin : captures à ces secondes
 var shot_dir := ""
 var autostart := -1.0
@@ -127,8 +129,11 @@ func _ready() -> void:
 			view_zoom = float(arg.substr(7))
 		elif arg == "--mesh":
 			view_mesh = true
+		elif arg.begins_with("--demo="):
+			demo_path = arg.substr(7)
 	ws.process_priority = -100           # les messages sont lus avant tout le reste de l'image, détecteur de silence compris
-	add_child(ws)
+	if demo_path == "":                  # en mode démo, aucune connexion au moteur
+		add_child(ws)
 	ws.message.connect(_on_message)
 	ws.status_changed.connect(func(t: String, ok: bool) -> void:
 		ws_ok = ok
@@ -139,6 +144,12 @@ func _ready() -> void:
 			engine = {}
 			menu.set_engine("", false)
 			_update_transport())
+	if demo_path != "":
+		var d := Demo.new()
+		add_child(d)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		d.start(self, demo_path)
 
 
 # ------------------------------------------------------------------ interface

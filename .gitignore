@@ -21,3 +21,6 @@ godot.path
 .vscode/
 .DS_Store
 Thumbs.db
+
+# voix de la vidéo de démonstration : régénérée par docs/demo/narrate.ps1
+docs/demo/voice/
