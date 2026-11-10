@@ -1,7 +1,8 @@
 # FILETS — architecture, temps, communication, stockage
 
 Ce document explique comment les morceaux du jeu se parlent et où vont les données. Le détail des réglages est dans le
-[README](../README.md).
+[README](../README.md). Les diagrammes UML (classes par partie, cas d'utilisation, séquences, communication) sont dans
+[docs/uml](uml/README.md).
 
 ## 1. Architecture
 
