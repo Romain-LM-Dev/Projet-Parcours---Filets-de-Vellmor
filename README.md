@@ -783,6 +783,63 @@ la carte graphique aux LLM). Puis `python -m filets serve --config config/data.y
 cours de partie, la recherche se rabat sur BM25 en mémoire et la partie continue. Tout se fait en asynchrone (asyncpg,
 miniopy-async, aiokafka, httpx). Voir [docs/architecture.md § 6](docs/architecture.md#6-stockage--postgresql--pgvector-et-stockage-objet).
 
+## Documentation et diagrammes UML
+
+Trois documents décrivent la construction du jeu :
+
+* [docs/architecture.md](docs/architecture.md) : les blocs et leurs liens, l'horloge, la mémoire, les tokens, le stockage ;
+* [docs/temps.md](docs/temps.md) : le temps, un seul ordonnanceur (réfléchir ne prend pas de temps, agir en prend ; la
+  veillée au fil de l'eau) ;
+* [docs/uml/](docs/uml/) : 97 diagrammes UML en Mermaid, que GitHub affiche directement, réunis aussi dans un seul PDF :
+  [docs/uml/FILETS-diagrammes-UML.pdf](docs/uml/FILETS-diagrammes-UML.pdf).
+
+Chaque diagramme est précédé d'un paragraphe qui dit comment le lire et suivi des emplacements dans le code
+(`fichier:ligne`). Ils sont complets : chaque classe porte tous ses attributs et toutes ses méthodes (publiques et internes),
+chaque fichier Python et chaque script Godot a sa place.
+
+**Par où commencer**
+
+1. [Cas d'utilisation](docs/uml/cas-utilisation.md) (6 diagrammes et un tableau d'environ 95 cas) : ce que fait le joueur
+   (menu, pilotage, injections, inspecteur, ligne de commande, API), puis ce que font les acteurs de la simulation
+   (pêcheurs, ancien, patrouille, narrateur, modèles).
+2. [Séquences](docs/uml/sequences.md) (15 diagrammes) : huit scénarios dans l'ordre du temps.
+3. [Communication](docs/uml/communication.md) (15 diagrammes) : les mêmes scénarios, vus comme des messages numérotés entre
+   objets (1, 1.1, 2…).
+4. Les classes, partie par partie.
+
+**Classes**
+
+| Partie | Fichier | Diagrammes | Contenu |
+|---|---|---|---|
+| Le monde, le temps, les règles, les lacs | [classes-monde.md](docs/uml/classes-monde.md) | 14 | `World` en neuf vues par domaine (ses 137 méthodes), `Lake`, `Agent`, `Profile`, `Norm`, `Proposal`, `Assembly`, climat, horloge, contrôle, `SeasonScheduler` |
+| Les décisions, les modèles, la mémoire, le RAG | [classes-decisions.md](docs/uml/classes-decisions.md) | 5 | agents, règles d'archétype, routage système 1 / 2, invites, routeur et clients des modèles, mémoire, RAG et vecteurs |
+| L'infrastructure | [classes-infrastructure.md](docs/uml/classes-infrastructure.md) | 6 | salon (`Engine`), API, bus local et Kafka, événements, indicateurs, stockage, services, configuration, catalogue, ligne de commande, banc |
+| L'interface Godot | [classes-godot.md](docs/uml/classes-godot.md) | 36 | les 8 scripts (274 fonctions, `WorldView` en dix vues) et le shader de la vallée |
+
+**Scénarios** (une séquence et une communication chacun)
+
+| | Scénario |
+|---|---|
+| (a) | démarrer une partie depuis le menu |
+| (b) | la décision de prise d'un pêcheur (observation, mémoire et RAG, système 1 / 2, modèle, sorties) |
+| (c) | la veillée au fil de l'eau (deux passes de préparation, une parole à la fois, vote) |
+| (d) | une injection du joueur : la rumeur |
+| (e) | le rejeu d'une partie, avec le bus local puis avec Kafka |
+| (f) | la fin de saison : repeuplement, bilans, lore, récit du narrateur |
+| (g) | le tirage d'une vallée depuis le menu |
+| (h) | l'arrêt d'une partie |
+
+**Conventions.** Un fichier Python fait de fonctions est dessiné comme une classe marquée `<<module>>` ; les routes de l'API y
+sont des pseudo-méthodes (`GET api_health`). Un script Godot est une classe qui hérite de son nœud (`extends Control`…), le
+shader est marqué `<<shader>>`. Mermaid n'ayant ni cas d'utilisation ni diagramme de communication, les cas sont un graphe
+d'acteurs reliés à des ovales (avec `include` et `extend`), la communication un graphe dont les flèches portent des messages
+numérotés. Quand le code n'annonce pas le type d'un attribut, il est déduit de la valeur affectée (`any` sinon) ; les
+méthodes asynchrones ne sont pas marquées.
+
+**Mettre à jour.** `npx -y @mermaid-js/mermaid-cli@11.4.2 -i docs/uml/<fichier>.md -o <dossier>/out.md` vérifie les
+diagrammes d'un fichier ; `python docs/uml/build_pdf.py` refait le PDF (il faut Node.js ; le sommaire du PDF est cette
+section).
+
 ## Arborescence
 
 ```
@@ -802,7 +859,7 @@ config/            default (vallée de base : 4 villages, 8 pêcheurs), large (g
                    six villages, deux patrouilles), random (vallée tirée de la graine), baseline (sans LLM),
                    no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
                    ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, stockage objet)
-docs/              architecture.md : architecture, temps, communication, tokens, asynchrone, stockage
+docs/              architecture.md (architecture, communication, tokens, stockage), temps.md (le temps), uml/ (97 diagrammes UML et leur PDF)
 schemas/           schémas JSON versionnés des événements
 analysis/          requêtes SQL du rapport (queries.sql pour SQLite, queries_pg.sql pour PostgreSQL)
 runs/              runs enregistrés (un exemple fourni)

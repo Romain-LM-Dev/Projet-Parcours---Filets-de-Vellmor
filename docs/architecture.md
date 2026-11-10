@@ -2,7 +2,7 @@
 
 Ce document explique comment les morceaux du jeu se parlent et où vont les données. Le détail des réglages est dans le
 [README](../README.md). Les diagrammes UML (classes par partie, cas d'utilisation, séquences, communication) sont dans
-[docs/uml](uml/README.md).
+[docs/uml](uml/) (voir la section « Documentation et diagrammes UML » du [README](../README.md#documentation-et-diagrammes-uml)).
 
 ## 1. Architecture
 
