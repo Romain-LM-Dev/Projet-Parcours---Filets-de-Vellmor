@@ -76,6 +76,7 @@ var collapsed := false
 var selected := ""
 var hovered := ""
 var animate := true
+var seen_outing := false          # le journal a des `outing` : la barque sort à chacun, plus au `catch` de bilan
 var paused := false                 # partie en pause : tout est figé, et la carte le dit
 var thinking: Array = []             # agents dont une décision est en cours (status.thinking) : bulle « … »
 var time_scale := 1.0               # vitesse des animations, calée sur celle de la partie (0 = figé)
@@ -1220,13 +1221,16 @@ func on_event(ev: Dictionary) -> void:
 				_banner("Une rumeur court", _short(str(p.get("params", {}).get("text", "")), 70), Art.INJECT)
 			elif it == "set_communication":
 				_banner("Communication modifiée", str(p.get("params", {}).get("value", "")), Art.INJECT)
-		"catch":
+		"outing", "catch":
 			var id: String = str(p.get("agent", ""))
+			if ty == "outing":
+				seen_outing = true
 			if agents.has(id):
 				var a: Dictionary = agents[id]
-				if bool(p.get("secret", false)):
+				if bool(p.get("secret", false)) and ty == "catch":
 					_mark(id, "en cachette", Color("#ff8a5c"), 3.5)       # vu du joueur seul
-				if animate:
+				# la barque sort à chaque `outing` (au jour de la sortie) ; `catch` n'est que le bilan, sauf dans un vieux journal sans `outing`
+				if animate and (ty == "outing" or not seen_outing):
 					var h := str(a["info"].get("hamlet", ""))
 					var dk: Dictionary = deco["docks"].get(h, {})
 					var spot := _fishing_spot(a, str(p.get("zone", "")), p.get("cell"))
@@ -1239,7 +1243,7 @@ func on_event(ev: Dictionary) -> void:
 						a["path"] = [[spot, 1.4], [a["home"], 0.0]]
 					else:
 						a["path"] = _trip(a, dk, spot)
-					a["landed"] = float(p.get("landed", 0.0))
+					a["landed"] = float(p.get("tonnes" if ty == "outing" else "landed", 0.0))
 		"patrol_route":
 			if int(p.get("season", 0)) != patrol_season:
 				patrol_routes.clear()                  # une nouvelle saison : les routes de la précédente ne comptent plus

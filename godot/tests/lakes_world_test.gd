@@ -98,7 +98,7 @@ func _initialize() -> void:
 			visitor = str(id)
 			break
 	var target: int = (w._lake_of_hamlet(str(w.agents[visitor]["info"].get("hamlet", ""))) + 1) % w.lakes.size()
-	w.on_event({"type": "catch", "sim_time": 1.0, "payload": {"agent": visitor, "zone": "large-" + str(w.lakes[target]["name"]),
+	w.on_event({"type": "outing", "sim_time": 1.0, "payload": {"agent": visitor, "zone": "large-" + str(w.lakes[target]["name"]),
 		"away": true, "lake": str(w.lakes[target]["name"]), "landed": 1.0, "secret": false}})
 	var trip: Array = w.agents[visitor]["path"]
 	var wet := trip.filter(func(s): return w.is_water(s[0]) and w._lake_at(s[0]) == target)
@@ -112,7 +112,7 @@ func _initialize() -> void:
 			break
 	var home_k: int = w._lake_of_hamlet(str(w.agents[fisher]["info"].get("hamlet", "")))
 	var deep: Dictionary = w.lake_cells[home_k][w.lake_cells[home_k].size() / 2]
-	w.on_event({"type": "catch", "sim_time": 1.0, "payload": {"agent": fisher, "zone": str(w.agents[fisher]["info"].get("hamlet", "")),
+	w.on_event({"type": "outing", "sim_time": 1.0, "payload": {"agent": fisher, "zone": str(w.agents[fisher]["info"].get("hamlet", "")),
 		"landed": 1.0, "secret": false, "cell": [deep["c"].x, deep["c"].y]}})
 	var held: Array = w.agents[fisher]["path"].filter(func(s): return float(s[1]) > 0.0)
 	check(held.size() == 1 and (held[0][0] as Vector2).distance_to(w._parcel_pos(deep["c"])) < 1.5 / w.PARCELS,

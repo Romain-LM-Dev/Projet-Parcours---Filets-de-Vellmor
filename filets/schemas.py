@@ -81,6 +81,9 @@ PAYLOADS: dict[str, dict] = {
          "place": {"enum": ["rive", "large"]},      # prise, sa rive réservée : où il pêche (sa rive, ou le large de son lac)
          "outings": INT},               # prise, sorties limitées par une règle : le nombre de sorties qu'il fait
     ),
+    "outing": obj({"agent": STR, "hamlet": STR, "zone": STR, "cell": {"type": "array", "items": INT}, "day": NUM, "weather": STR,
+                   "tonnes": NUM, "secret": BOOL},
+                  {"lake": STR, "away": BOOL}),    # une sortie, émise à sa fin ; (plusieurs lacs) le lac ; hors du lac du village
     "catch": obj({"agent": STR, "hamlet": STR, "requested": NUM, "landed": NUM, "stock_observed": NUM,
                   "stock_before": NUM, "stock_after": NUM, "decision_event_id": STR, "info_horizon": NUM,
                   "rationed": BOOL, "stock_at_horizon": NUM, "stock_at_action": NUM},

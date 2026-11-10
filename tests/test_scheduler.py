@@ -89,6 +89,18 @@ def test_a_decision_after_an_outing_sees_its_catch(tmp_path):
     assert min(s for _, s in seen) < max(s for _, s in seen) - 0.5
 
 
+def test_each_outing_is_an_event_on_its_own_day_before_the_catch_balance(tmp_path):
+    _, events = play(tmp_path, "sortie", seasons=1, time__departure_spread_days=[0.0, 4.0])
+    for c in kinds(events, "catch"):
+        a = c["payload"]["agent"]
+        mine = [e for e in kinds(events, "outing") if e["payload"]["agent"] == a]
+        assert [o["payload"]["day"] for o in mine] == [o["day"] for o in c["payload"]["outings"]]
+        assert [o["payload"]["tonnes"] for o in mine] == pytest.approx([o["tonnes"] for o in c["payload"]["outings"]], abs=0.01)
+        for o in mine:
+            assert o["sim_time"] == pytest.approx(o["payload"]["day"] + 1.0) and o["sim_time"] <= c["sim_time"]
+    assert len({o["sim_time"] for o in kinds(events, "outing")}) > 1
+
+
 def test_nothing_sails_after_the_fishing_close(tmp_path):
     world, events = play(tmp_path, "ferme", seasons=2, time__departure_spread_days=[3.0, 4.0], time__fishing_close_day=12.0)
     for season in (1, 2):

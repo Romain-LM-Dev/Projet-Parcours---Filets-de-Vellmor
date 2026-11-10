@@ -1565,6 +1565,14 @@ class World:
         trip.got.append(got)
         trip.after = lake.stock
         self.lake_update("catch", -got, lake)
+        # la sortie se voit à sa fin (la carte y fait partir la barque) ; le bilan `catch` ne vient qu'au retour
+        o, home = trip.outs[k], trip.home
+        self.events.emit("outing", {
+            "agent": trip.agent.id, "hamlet": trip.agent.profile.hamlet, "zone": trip.zone,
+            "cell": [lake.parcels[trip.cell]["i"], lake.parcels[trip.cell]["j"]], "day": o["day"], "weather": o["weather"],
+            "tonnes": round(got, 3), "secret": trip.secret,
+            **({"lake": lake.name} if self.multi else {}), **({"away": True} if lake is not home else {}),
+        }, actor=trip.agent.id)
         return got
 
     def finish_trip(self, trip: Trip) -> dict:

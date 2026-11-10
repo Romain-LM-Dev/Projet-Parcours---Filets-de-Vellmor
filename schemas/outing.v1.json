@@ -1,0 +1,49 @@
+{
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "hamlet": {
+      "type": "string"
+    },
+    "zone": {
+      "type": "string"
+    },
+    "cell": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "day": {
+      "type": "number"
+    },
+    "weather": {
+      "type": "string"
+    },
+    "tonnes": {
+      "type": "number"
+    },
+    "secret": {
+      "type": "boolean"
+    },
+    "lake": {
+      "type": "string"
+    },
+    "away": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "agent",
+    "hamlet",
+    "zone",
+    "cell",
+    "day",
+    "weather",
+    "tonnes",
+    "secret"
+  ],
+  "additionalProperties": false
+}
