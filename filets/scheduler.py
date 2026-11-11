@@ -270,6 +270,7 @@ class Village:
         out = []
         for aid in asm.participants:
             a, rnd = w.agents[aid], self.spoken[aid] + 1
+            # sa réplique suivante ne se prépare qu'une fois la précédente dite (spoken ne grimpe qu'à la prise de parole) : son `said` la contient
             if aid not in self.prepared and rnd <= self.rounds and w.has_reason_to_speak(a, asm, rnd):
                 out.append((self, aid, rnd, self.t, lambda a=a, rnd=rnd, h=self.t: speak(w, a, asm, rnd, h)))
         return out
@@ -280,9 +281,12 @@ class Village:
             self.done = True
             return None
         last = self.asm.utterances[-1]["payload"]["to"] if self.asm.utterances else None
-        if last in self.prepared:
+        prev = self.asm.utterances[-1]["payload"]["speaker"] if self.asm.utterances else None
+        if last in self.prepared and last != prev:
             return last
-        return min(self.prepared, key=lambda aid: self.s.key(f"{self.asm.scope}|{aid}"))
+        # personne ne parle deux fois de suite s'il reste quelqu'un d'autre de prêt ; puis ceux qui ont le moins parlé, puis la graine
+        others = [aid for aid in self.prepared if aid != prev] or list(self.prepared)
+        return min(others, key=lambda aid: (self.spoken[aid], self.s.key(f"{self.asm.scope}|{aid}")))
 
     def stale(self, aid: str) -> bool:
         """Depuis qu'elle est préparée, a-t-on répondu à son auteur (adressé, nommé, accusé) ou concurrencé sa règle ?"""

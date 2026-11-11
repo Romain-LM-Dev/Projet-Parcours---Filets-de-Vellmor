@@ -57,7 +57,10 @@ Une simulation à événements discrets.
 - **Préparation** : chaque participant qui a quelque chose à dire prépare sa réplique sur le compte rendu tel qu'il est
   (décisions en parallèle). Une réplique peut viser quelqu'un (`destinataire`) ou tous.
 - **Prise de parole** : une seule personne parle à la fois ; une réplique dure `speech_minutes` (défaut 20 minutes simulées).
-  Ordre de parole : d'abord une personne à qui l'on vient de s'adresser, puis les autres selon la clé tirée de la graine.
+  Ordre de parole : d'abord une personne à qui l'on vient de s'adresser, puis celles qui ont le moins parlé ce soir, puis la clé
+  tirée de la graine ; jamais deux répliques de suite du même orateur s'il reste quelqu'un d'autre de prêt. Un message vide
+  est un silence : le tour passe, sans bulle ni `utterance` (seule la `decision` le note). Un message qui n'est qu'un nom de
+  champ ou un gabarit (« message », « <ta réplique> ») est une réponse illisible (repli), pas une réplique.
 - **Chaîne** : si, entre la préparation d'une réplique et son tour, quelqu'un s'est adressé à son auteur (ou a proposé une
   règle sur laquelle il voulait se prononcer), il la prépare de nouveau sur le nouveau compte rendu. Sinon elle reste valable :
   les répliques qui ne se répondent pas ne s'attendent pas.
@@ -81,8 +84,9 @@ Une simulation à événements discrets.
   `EventFactory.defer`, numérotés à `flush`), pas dans l'ordre des réponses.
 - **Veillée** : toutes les répliques sont préparées d'abord à l'ouverture (`assembly_day`), sur la salle vide. Une réplique, quand elle
   est dite, dure `time.speech_minutes` (20) et ses effets (parole, proposition, soutien…) s'appliquent à sa fin ; `utterance.heard` est
-  ce que son auteur savait en la préparant. Prochain orateur : celui à qui la dernière réplique s'adressait (s'il a une réplique prête),
-  sinon la clé de la graine (`{graine}|order|{saison}|{village}|{agent}`). Une réplique prête est **préparée de nouveau** si, depuis, on
+  ce que son auteur savait en la préparant. Prochain orateur : celui à qui la dernière réplique s'adressait (s'il a une réplique prête
+  et n'est pas l'orateur précédent), sinon le moins entendu ce soir, puis la clé de la graine (`{graine}|order|{saison}|{village}|{agent}`) ;
+  la réplique suivante d'un orateur n'est préparée qu'une fois la précédente dite (elle voit « ce que tu as déjà dit »). Une réplique prête est **préparée de nouveau** si, depuis, on
   s'est adressé à son auteur (`destinataire`), on l'a nommé ou accusé, ou une autre règle a concurrencé la sienne. Après avoir parlé,
   chacun prépare sa réplique suivante seulement s'il en a une raison (`World.has_reason_to_speak`, `scenario.quiet_listeners`), au plus
   `assembly_rounds` répliques. Plus de parole après `assembly_close_day`.

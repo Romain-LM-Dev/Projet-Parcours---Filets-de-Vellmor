@@ -314,3 +314,22 @@ def test_the_speech_prompt_says_everything_is_heard_by_all(tmp_path, monkeypatch
     prompts = speak_log(monkeypatch)
     play(tmp_path, "heard", seasons=1)
     assert prompts and all("entendu de tous" in p and "restent privés" in p for p in prompts)
+
+
+def test_nobody_speaks_twice_in_a_row_while_others_are_ready(tmp_path, monkeypatch):
+    speak_log(monkeypatch, destinataire="tous")
+    _, events = play(tmp_path, "twice", seasons=1, scenario__quiet_listeners=False)
+    by_scope = {}
+    for u in kinds(events, "utterance"):
+        by_scope.setdefault(u["payload"]["scope"], []).append(u["payload"]["speaker"])
+    assert by_scope
+    for order in by_scope.values():
+        first_round = order[:len(set(order))]
+        assert len(first_round) == len(set(first_round))        # chacun parle une fois avant que quiconque reparle
+
+
+def test_a_placeholder_message_is_not_a_speech(tmp_path, monkeypatch):
+    speak_log(monkeypatch, message="message")
+    _, events = play(tmp_path, "placeholder", seasons=1)
+    assert not [u for u in kinds(events, "utterance") if u["payload"]["text"] == "message"]
+    assert any(e["payload"]["detail"].startswith("message : nom de champ") for e in kinds(events, "incident"))

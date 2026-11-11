@@ -381,6 +381,10 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
     common = {**common, "system": "S2"}                          # la parole est toujours de la réflexion (voir `routing.py`)
     data, res, flags = await _ask_llm(world, agent, "speak", prompts.speak_messages(p, obs, world.capacity, brief), state)
     fallback, rule = False, None
+    said = str((data or {}).get("message", "")).strip().strip("«»\"' ").lower()
+    if data is not None and (said in ("message", "ta réplique", "réplique") or (said.startswith("<") and said.endswith(">"))):
+        world.incident(agent.id, "invalid_value", "message : nom de champ ou gabarit recopié", "règle de repli", res.call_id)
+        data = None                                # un gabarit n'est pas une réplique : réponse illisible
     silent = data is not None and not str(data.get("message", "")).strip()      # message vide : il se tait (rien de neuf à dire)
     if data is None:
         data, rule = speak_rule(arch, state)
