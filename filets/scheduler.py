@@ -312,6 +312,9 @@ class Village:
         if self.t + self.duration > self.close_t:
             self.done = True
             return False
+        if not str(out.data.get("message", "")).strip():       # il se tait : son tour est passé, sans bulle ni temps écoulé
+            self.spoken[aid] += 1
+            return False
         w = self.w
         end = round(self.t + self.duration, 6)         # (arrondi comme le temps des événements : ceux-ci passent avant les horizons suivants)
         with SimClock.local(end):          # la réplique dure ; ses effets s'appliquent à sa fin

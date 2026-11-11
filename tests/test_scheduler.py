@@ -279,3 +279,38 @@ def test_the_routine_outing_goes_to_the_decision_model_and_a_rumor_wakes_the_big
     assert {d["agent"] for d in woken} == {d["agent"] for d in later}                       # chacun y a pensé, une fois la rumeur connue
     rumor_free = [d for d in later if "rumeur" not in d["routing"]]
     assert all(d["info_horizon"] > min(w["info_horizon"] for w in woken if w["agent"] == d["agent"]) for d in rumor_free)
+
+
+# ============================================================ la qualité de la parole (répétition, silence, aveu public)
+def speak_log(monkeypatch, **fields):
+    """Le faux LLM répond ce qu'on impose à chaque réplique ; on note le texte de chaque invite de parole."""
+    prompts = []
+    force(monkeypatch, "speak", **fields)
+    orig = ScriptedClient.complete
+
+    async def complete(self, model, messages, hint, tier):
+        if hint.get("purpose") == "speak":
+            prompts.append(messages[-1]["content"])
+        return await orig(self, model, messages, hint, tier)
+    monkeypatch.setattr(ScriptedClient, "complete", complete)
+    return prompts
+
+
+def test_the_second_speech_prompt_shows_what_the_speaker_already_said(tmp_path, monkeypatch):
+    prompts = speak_log(monkeypatch, message="Le lac se vide, restons prudents.")
+    _, events = play(tmp_path, "repeat", seasons=1, scenario__quiet_listeners=False)
+    assert any("Ce que tu as déjà dit ce soir" in p and "Le lac se vide, restons prudents." in p for p in prompts)
+    assert not any("Ce que tu as déjà dit ce soir" in p for p in prompts[:1])
+
+
+def test_an_empty_message_means_the_speaker_stays_silent(tmp_path, monkeypatch):
+    speak_log(monkeypatch, message="")
+    _, events = play(tmp_path, "silence", seasons=1)
+    assert not kinds(events, "utterance")
+    assert any(e["payload"].get("justification") == "(se tait : rien de neuf à dire)" for e in kinds(events, "decision"))
+
+
+def test_the_speech_prompt_says_everything_is_heard_by_all(tmp_path, monkeypatch):
+    prompts = speak_log(monkeypatch)
+    play(tmp_path, "heard", seasons=1)
+    assert prompts and all("entendu de tous" in p and "restent privés" in p for p in prompts)

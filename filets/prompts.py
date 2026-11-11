@@ -686,7 +686,10 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
                  if obs.get("sanctions") else "")
     who_line = "".join(f"{x}\n" for x in (obs.get("delegate"), obs.get("patrol_line")) if x)
     direct = (f"On s'est adressé à toi :\n{_bullets(obs['addressed'])}\n\n" if obs.get("addressed") else "")
-    room = (f"Ce qui a déjà été dit ce soir :\n{transcript}\n\n{direct}Propositions de règle sur la table :\n{proposals}\n\n"
+    said = (f"Ce que tu as déjà dit ce soir :\n{_bullets(obs['said'])}\nNe le répète pas : ne parle que si tu as du neuf (une réponse à "
+            "quelqu'un, une proposition nouvelle, un soutien). Sinon, réponds avec \"message\": \"\" : tu te tais.\n\n"
+            if obs.get("said") else "")
+    room = (f"Ce qui a déjà été dit ce soir :\n{transcript}\n\n{said}{direct}Propositions de règle sur la table :\n{proposals}\n\n"
             f"{sanctions}")
     acts = ("À toi de parler. Tu peux proposer une règle, soutenir une proposition, promettre, accuser"
             + sanction_acts)
@@ -695,6 +698,9 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
         f"Veillée chez l'ancien ({obs['scope_label']}){turn}. Présents : {people}.\n\n"
         f"{room}{who_line}{acts}"
         + f", ou simplement donner ton avis. {rumor_hint}Rien ne t'oblige à tenir parole.\n"
+        "Tout ce que tu dis à la veillée est entendu de tous. Ce que tu as vraiment pêché, ce que tu déclares à l'ancien et "
+        "tes intentions cachées restent privés : ton carnet n'est pas fait pour être récité. Ne les révèle (un aveu) que si tu "
+        "choisis de le faire.\n"
         + lake_reminder(obs) + rule_review(obs) + rule_types_help(obs, brief)
         + "Réponds en JSON : {" + ", ".join(fields) + "}"
     )

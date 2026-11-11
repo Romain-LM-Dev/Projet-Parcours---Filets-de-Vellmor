@@ -381,13 +381,16 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
     common = {**common, "system": "S2"}                          # la parole est toujours de la réflexion (voir `routing.py`)
     data, res, flags = await _ask_llm(world, agent, "speak", prompts.speak_messages(p, obs, world.capacity, brief), state)
     fallback, rule = False, None
-    if data is None or not str(data.get("message", "")).strip():
-        if data is not None:
-            world.incident(agent.id, "invalid_value", "message vide", "règle de repli", res.call_id)
+    silent = data is not None and not str(data.get("message", "")).strip()      # message vide : il se tait (rien de neuf à dire)
+    if data is None:
         data, rule = speak_rule(arch, state)
         fallback = True
+    elif silent:
+        data = {"message": ""}
     if fallback:
         just = f"(repli) Règle appliquée : {rule}."
+    elif silent:
+        just = "(se tait : rien de neuf à dire)"
     else:
         acts = []
         proposed = world.read_proposal(data, agent)

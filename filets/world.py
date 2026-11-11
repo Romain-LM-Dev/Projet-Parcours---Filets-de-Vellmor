@@ -1473,6 +1473,7 @@ class World:
                 + ("" if u["payload"]["to"] == "tous" else f", à {self.name(u['payload']['to'])}")
                 + f" : « {u['payload']['text']} »" for u in visible_u[-12:]]
             used += [u["event_id"] for u in visible_u[-12:]]
+            obs["said"] = [f"« {u['payload']['text']} »" for u in visible_u if u["payload"]["speaker"] == agent.id]
             obs["addressed"] = [f"{self.name(u['payload']['speaker'])} : « {u['payload']['text']} »"
                                 for u in visible_u[-12:] if u["payload"]["to"] == agent.id and u["payload"]["speaker"] != agent.id]
             props = [pr for pr in assembly.proposals.values() if pr.t <= horizon]
