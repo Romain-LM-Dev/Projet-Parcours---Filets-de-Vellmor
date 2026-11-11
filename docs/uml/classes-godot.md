@@ -1,12 +1,12 @@
-# Diagrammes de classes de l'interface Godot
+# Diagrammes de classes de l'interface Godot (sans simplification)
 
-L'interface Godot 4.7 ne décide de rien : elle affiche ce que le moteur Python publie et lui envoie les ordres du joueur. Elle tient en huit scripts GDScript (`godot/scripts/`). En GDScript, un script est une classe : `extends` donne l'héritage, `preload(...)` puis `.new()` fait qu'un script en crée un autre (composition : l'objet créé vit et meurt avec son propriétaire), et les appels `Art.xxx(...)` sont des appels statiques (dépendance, rien n'est possédé).
+L'interface Godot 4.7 ne décide de rien : elle affiche ce que le moteur Python publie et lui envoie les ordres du joueur. Elle tient en neuf scripts GDScript (`godot/scripts/`). En GDScript, un script est une classe : `extends` donne l'héritage, `preload(...)` puis `.new()` fait qu'un script en crée un autre (composition : l'objet créé vit et meurt avec son propriétaire), et les appels `Art.xxx(...)` sont des appels statiques (dépendance, rien n'est possédé).
 
 Conventions de lecture : `+` = attribut ou méthode publique, `-` = privée (nom commençant par `_`). Dans les sections 3 à 11, chaque script est détaillé avec toutes ses variables, constantes, signaux et fonctions (les noms en majuscules sont des constantes `const`). `Control`, `Node` et `RefCounted` sont des classes du moteur Godot, pas du projet.
 
 ## 1. Qui possède qui
 
-Ce diagramme montre l'héritage des scripts vers les classes Godot et la propriété : `Main` (la scène principale) crée la carte, la courbe, la légende, le menu et le client WebSocket ; le menu crée à son tour sa mini-carte. Les flèches pointillées étiquetées « signal » vont de l'émetteur vers celui qui l'écoute : c'est ainsi que le menu et la carte remontent les actions du joueur à `Main`.
+Ce diagramme montre l'héritage des scripts vers les classes Godot et la propriété : `Main` (la scène principale) crée la carte, la courbe, la légende, le menu et le client WebSocket (et, en mode vidéo seulement, le lecteur de démonstration `Demo`, qui rejoue un journal) ; le menu crée à son tour sa mini-carte. Les flèches pointillées étiquetées « signal » vont de l'émetteur vers celui qui l'écoute : c'est ainsi que le menu et la carte remontent les actions du joueur à `Main`.
 
 ```mermaid
 classDiagram
@@ -61,6 +61,12 @@ classDiagram
         +set_season(season, v)
         +set_live(ratio)
     }
+    class Demo {
+        +main
+        +beats
+        +events
+        +start(m, path)
+    }
     class Legend {
         +villages
         +set_villages(names)
@@ -93,7 +99,10 @@ classDiagram
     Control <|-- StartMenu
     Control <|-- MenuMap
     Node <|-- WsClient
+    Node <|-- Demo
     Main *-- WsClient : "ws (preload, add_child)"
+    Main *-- Demo : "d (option --demo, add_child)"
+    Demo o-- Main : "main (start)"
     Main *-- WorldView : "world"
     Main *-- Chart : "chart"
     Main *-- Legend : "legend"
@@ -107,18 +116,19 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd:8` (`extends Control`), `:10-14` (les cinq `preload`), `:24-27` et `:45` (attributs `ws`, `world`, `chart`, `menu`, `legend`).
-- `godot/scripts/main.gd:109` et `:130-132` (création de `ws`, `add_child(ws)`, `ws.message.connect(_on_message)`) ; `:375` (`WorldView.new()`) ; `:436` (`Chart.new()`) ; `:546` (`Legend.new()`) ; `:550` (`StartMenu.new()`).
-- `godot/scripts/main.gd:377` (`world.agent_clicked.connect(_select)`), `:552-554` (`menu.start_requested`, `menu.generate_requested`, `menu.cancelled`).
+- `godot/scripts/main.gd:8` (`extends Control`), `:10-15` (les six `preload`, dont `Demo`), `:25` (attribut `ws`).
+- `godot/scripts/main.gd:111` et `:136-137` (création de `ws`, `add_child(ws)`, `ws.message.connect(_on_message)`) ; `:386` (`WorldView.new()`) ; `:447` (`Chart.new()`) ; `:557` (`Legend.new()`) ; `:561` (`StartMenu.new()`) ; `:148` (`Demo.new()`, seulement avec `--demo=`).
+- `godot/scripts/main.gd:388` (`world.agent_clicked.connect(_select)`), `:563-565` (`menu.start_requested`, `menu.generate_requested`, `menu.cancelled`).
+- `godot/scripts/demo.gd:4` (`extends Node`), `:39` (`start(m, path)`, appelée par `Main` avec lui-même).
 - `godot/scripts/ws_client.gd:3` (`extends Node`), `:5-6` (signaux), `:58` (`send`), `:65` (`pending`).
-- `godot/scripts/world_view.gd:15` (`extends Control`), `:17` (signal), `:1075` (`reset_world`), `:1167` (`on_event`), `:272` (`zoom_at`) ; attributs `:70-91`.
-- `godot/scripts/chart.gd:3`, `:18`, `:29`, `:49` ; `godot/scripts/legend.gd:3`, `:8`.
-- `godot/scripts/start_menu.gd:10` (`extends Control`), `:12` (`preload` de `MenuMap`), `:14-16` (signaux), `:624-626` (`map = MenuMap.new()` et connexion des signaux), `:650` (`set_catalog`), `:1377` (`build_config`), `:1417` (`open`), `:1424` (`close`).
-- `godot/scripts/menu_map.gd:3`, `:5` (`preload` de `world_view.gd`, alias `WV`), `:7-8` (signaux), `:31` (`set_data`), `:63` (`token_positions`), `:11` (`hamlets = WV.DEFAULT_HAMLETS`).
+- `godot/scripts/world_view.gd:15` (`extends Control`), `:17` (signal), `:1076` (`reset_world`), `:1168` (`on_event`), `:273` (`zoom_at`).
+- `godot/scripts/chart.gd:3` (`extends Control`), `:18` (`reset`), `:29` (`set_season`), `:49` (`set_live`) ; `godot/scripts/legend.gd:3`, `:8` (`set_villages`).
+- `godot/scripts/start_menu.gd:10` (`extends Control`), `:12` (`preload` de `MenuMap`), `:14-16` (signaux), `:624` (`map = MenuMap.new()`), `:650` (`set_catalog`), `:1377` (`build_config`), `:1417` (`open`), `:1424` (`close`).
+- `godot/scripts/menu_map.gd:3` (`extends Control`), `:5` (`preload` de `world_view.gd`, alias `WV`), `:7-8` (signaux), `:31` (`set_data`), `:63` (`token_positions`).
 
 ## 2. Dépendances statiques : `Art` et le shader de la vallée
 
-`Art` n'est jamais instanciée : toutes les classes d'affichage appellent ses fonctions statiques. `WorldView` possède en plus un `ShaderMaterial` (attribut `mat`) construit sur le shader `valley.gdshader` : ce shader dessine le sol (eau, poissons, sécheresse, mailles) et reçoit ses `uniform` depuis `WorldView`. Les membres complets de `Art` et du shader sont donnés aux sections 3 et 12.
+`Art` n'est jamais instanciée : toutes les classes d'affichage appellent ses fonctions statiques. `WorldView` possède en plus un `ShaderMaterial` (attribut `mat`) construit sur le shader `valley.gdshader` : ce shader dessine le sol (eau, poissons, sécheresse, mailles) et reçoit ses `uniform` depuis `WorldView`. Les membres complets de `Art` et du shader sont donnés aux sections 3 et 11.
 
 ```mermaid
 classDiagram
@@ -363,6 +373,7 @@ classDiagram
         +Chart : Script
         +Legend : Script
         +StartMenu : Script
+        +Demo : Script
         +SPEEDS : Array
         +INCIDENT_LABELS : Dictionary
         +BREACH_WORD : Dictionary
@@ -415,6 +426,7 @@ classDiagram
         +last_sim_label : String
         +selftest : float
         +shot_path : String
+        +demo_path : String
         +shots : Array
         +shot_dir : String
         +autostart : float
@@ -444,6 +456,7 @@ classDiagram
         +ind_sub : Dictionary
         +ind_title : Dictionary
         +end_status : Dictionary
+        +feed_groups : Dictionary
         -_acc : float
     }
     Control <|-- Main
@@ -453,8 +466,8 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd` variables (78) : `ws` :24, `world` :25, `chart` :26, `menu` :27, `lbl_run` :28, `lbl_clock` :29, `lbl_status` :30, `ind_labels` :31, `feed` :32, `narration` :33, `trust_view` :34, `trust_dirty` :35, `trust_mode` :36, `trust_observer` :37, `trust_who` :38, `feed_only_selected` :39, `inspector` :40, `rules_view` :41, `tabs` :42, `comm_opt` :43, `vis_check` :44, `legend` :45, `lbl_weather` :46, `weather_days` :47, `weather_season` :48, `lbl_patrol` :49, `patrol_texts` :50, `lake_labels` :51, `patrol_text_season` :52, `patrol_installed` :53, `reps` :54, `rumor_edit` :55, `run` :58, `agents` :59, `feed_lines` :60, `proposals` :61, `norms` :62, `norms_now` :63, `selected` :66, `inspector_dirty` :67, `feed_dirty` :68, `catching_up` :69, `t0_ms` :70, `n_events` :71, `n_indicators` :72, `last_sim_label` :73, `selftest` :74, `shot_path` :75, `shots` :76, `shot_dir` :77, `autostart` :78, `view_zoom` :79, `view_mesh` :80, `autostart_at` :81, `menu_shot` :82, `catalog` :85, `engine` :86, `engine_seen_ms` :87, `engine_state` :88, `ws_ok` :89, `last_error` :90, `transport` :91, `btn_pause` :92, `btn_stop` :93, `btn_stop_top` :94, `stop_dlg` :95, `btn_new` :96, `speed_buttons` :97, `lbl_progress` :98, `lbl_thinking` :99, `end_overlay` :100, `end_title` :101, `end_text` :102, `end_new` :103, `ind_sub` :145, `ind_title` :146, `end_status` :642, `_acc` :1539.
-- `godot/scripts/main.gd` constantes (9) : `WS` :10, `WorldView` :11, `Chart` :12, `Legend` :13, `StartMenu` :14, `SPEEDS` :17, `INCIDENT_LABELS` :20, `BREACH_WORD` :64, `KPI_SUB` :1108.
+- `godot/scripts/main.gd` variables (80) : `ws` :25, `world` :26, `chart` :27, `menu` :28, `lbl_run` :29, `lbl_clock` :30, `lbl_status` :31, `ind_labels` :32, `feed` :33, `narration` :34, `trust_view` :35, `trust_dirty` :36, `trust_mode` :37, `trust_observer` :38, `trust_who` :39, `feed_only_selected` :40, `inspector` :41, `rules_view` :42, `tabs` :43, `comm_opt` :44, `vis_check` :45, `legend` :46, `lbl_weather` :47, `weather_days` :48, `weather_season` :49, `lbl_patrol` :50, `patrol_texts` :51, `lake_labels` :52, `patrol_text_season` :53, `patrol_installed` :54, `reps` :55, `rumor_edit` :56, `run` :59, `agents` :60, `feed_lines` :61, `proposals` :62, `norms` :63, `norms_now` :64, `selected` :67, `inspector_dirty` :68, `feed_dirty` :69, `catching_up` :70, `t0_ms` :71, `n_events` :72, `n_indicators` :73, `last_sim_label` :74, `selftest` :75, `shot_path` :76, `demo_path` :77, `shots` :78, `shot_dir` :79, `autostart` :80, `view_zoom` :81, `view_mesh` :82, `autostart_at` :83, `menu_shot` :84, `catalog` :87, `engine` :88, `engine_seen_ms` :89, `engine_state` :90, `ws_ok` :91, `last_error` :92, `transport` :93, `btn_pause` :94, `btn_stop` :95, `btn_stop_top` :96, `stop_dlg` :97, `btn_new` :98, `speed_buttons` :99, `lbl_progress` :100, `lbl_thinking` :101, `end_overlay` :102, `end_title` :103, `end_text` :104, `end_new` :105, `ind_sub` :156, `ind_title` :157, `end_status` :653, `feed_groups` :1263, `_acc` :1632.
+- `godot/scripts/main.gd` constantes (10) : `WS` :10, `WorldView` :11, `Chart` :12, `Legend` :13, `StartMenu` :14, `Demo` :15, `SPEEDS` :18, `INCIDENT_LABELS` :21, `BREACH_WORD` :65, `KPI_SUB` :1151.
 
 ### 7.2 Les nœuds Godot gardés par `Main`
 
@@ -511,7 +524,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd` : Label `lbl_run` :28, `lbl_clock` :29, `lbl_status` :30, `lbl_weather` :46, `lbl_patrol` :49, `lbl_progress` :98, `lbl_thinking` :99, `end_title` :101, `end_text` :102; RichTextLabel `feed` :32, `narration` :33, `trust_view` :34, `inspector` :40, `rules_view` :41; OptionButton `trust_who` :38, `comm_opt` :43; CheckBox `feed_only_selected` :39; TabContainer `tabs` :42; CheckButton `vis_check` :44; Control `legend` :45, `end_overlay` :100; LineEdit `rumor_edit` :55; PanelContainer `transport` :91; Button `btn_pause` :92, `btn_stop` :93, `btn_stop_top` :94, `btn_new` :96, `end_new` :103; ConfirmationDialog `stop_dlg` :95.
+- `godot/scripts/main.gd` : Label `lbl_run` :29, `lbl_clock` :30, `lbl_status` :31, `lbl_weather` :47, `lbl_patrol` :50, `lbl_progress` :100, `lbl_thinking` :101, `end_title` :103, `end_text` :104; RichTextLabel `feed` :33, `narration` :34, `trust_view` :35, `inspector` :41, `rules_view` :42; OptionButton `trust_who` :39, `comm_opt` :44; CheckBox `feed_only_selected` :40; TabContainer `tabs` :43; CheckButton `vis_check` :45; Control `legend` :46, `end_overlay` :102; LineEdit `rumor_edit` :56; PanelContainer `transport` :93; Button `btn_pause` :94, `btn_stop` :95, `btn_stop_top` :96, `btn_new` :98, `end_new` :105; ConfirmationDialog `stop_dlg` :97.
 
 ### 7.3 Initialisation et construction de l'interface
 
@@ -533,7 +546,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd` fonctions (8) : `_ready` :106, `_pad` :149, `_make_theme` :157, `_label` :211, `_card` :220, `_seg` :231, `_kpi` :247, `_build_ui` :271.
+- `godot/scripts/main.gd` fonctions (8) : `_ready` :108, `_pad` :160, `_make_theme` :168, `_label` :222, `_card` :231, `_seg` :242, `_kpi` :258, `_build_ui` :282.
 
 ### 7.4 Pilotage de la partie (pause, vitesse, arrêt, menu)
 
@@ -562,7 +575,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd` fonctions (15) : `_speed_label` :572, `_controllable` :584, `_toggle_pause` :588, `_on_stop_pressed` :594, `_on_menu_start` :598, `_on_menu_generate` :603, `_on_status` :608, `_show_end` :645, `_refresh_end_text` :653, `_update_transport` :665, `_unhandled_key_input` :695, `_rumor` :702, `_rich` :708, `_ind_title` :716, `_send` :723.
+- `godot/scripts/main.gd` fonctions (15) : `_speed_label` :583, `_controllable` :595, `_toggle_pause` :599, `_on_stop_pressed` :605, `_on_menu_start` :609, `_on_menu_generate` :614, `_on_status` :619, `_show_end` :656, `_refresh_end_text` :664, `_update_transport` :676, `_unhandled_key_input` :706, `_rumor` :713, `_rich` :719, `_ind_title` :727, `_send` :734.
 
 ### 7.5 Messages reçus du moteur et événements
 
@@ -581,7 +594,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd` fonctions (5) : `_on_message` :729, `_on_event` :757, `_reset_kpis` :1113, `_on_indicator` :1122, `_reset` :1161.
+- `godot/scripts/main.gd` fonctions (5) : `_on_message` :740, `_on_event` :768, `_reset_kpis` :1156, `_on_indicator` :1165, `_reset` :1204.
 
 ### 7.6 Fil des interactions, règles, confiance
 
@@ -591,6 +604,8 @@ Les fonctions de `Main` de cette zone du fichier (les en-têtes de section du sc
 classDiagram
     class Main {
         -_feed(text: String, ids: Array)
+        -_group(key: String, init: Dictionary) Dictionary
+        -_feed_group(key: String, text: String, ids: Array)
         -_render_feed()
         -_render_rules()
         -_rule_text(p: Dictionary) String
@@ -606,7 +621,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd` fonctions (11) : `_feed` :1206, `_render_feed` :1219, `_render_rules` :1230, `_rule_text` :1265, `_breach_text` :1272, `_set_norm_now` :1280, `_norm_card` :1291, `trust_bar` :1304, `_set_trust_mode` :1312, `_fill_trust_who` :1319, `_render_trust` :1331.
+- `godot/scripts/main.gd` fonctions (13) : `_feed` :1250, `_group` :1266, `_feed_group` :1275, `_render_feed` :1288, `_render_rules` :1299, `_rule_text` :1334, `_breach_text` :1341, `_set_norm_now` :1349, `_norm_card` :1360, `trust_bar` :1373, `_set_trust_mode` :1381, `_fill_trust_who` :1388, `_render_trust` :1400.
 
 ### 7.7 Inspecteur d'agent
 
@@ -622,7 +637,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd` fonctions (2) : `_select` :1369, `_render_inspector` :1379.
+- `godot/scripts/main.gd` fonctions (2) : `_select` :1438, `_render_inspector` :1448.
 
 ### 7.8 Utilitaires et boucle d'image
 
@@ -650,7 +665,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/main.gd` fonctions (14) : `_agent` :1448, `_who` :1452, `_tag` :1462, `_show_weather` :1467, `_sky_text` :1481, `_weather_note` :1493, `_day_word` :1509, `_scope` :1513, `_scope_rank` :1521, `_assembly_of` :1526, `_num` :1530, `_esc` :1535, `_process` :1542, `_selftest_report` :1610.
+- `godot/scripts/main.gd` fonctions (14) : `_agent` :1541, `_who` :1545, `_tag` :1555, `_show_weather` :1560, `_sky_text` :1574, `_weather_note` :1586, `_day_word` :1602, `_scope` :1606, `_scope_rank` :1614, `_assembly_of` :1619, `_num` :1623, `_esc` :1628, `_process` :1635, `_selftest_report` :1703.
 
 ## 8. `StartMenu` (start_menu.gd)
 
@@ -985,7 +1000,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` constantes (19) : `DEFAULT_HAMLETS` :19, `SLOTS` :22, `LAYOUTS` :26, `ELDER_POS` :31, `LAKE_C` :32, `LAKE_R` :33, `MAX_LAKES` :36, `LAKE_BOXES` :37, `ROOM` :44, `RING_R` :45, `ISO_LAKE_K` :48, `LOTS_PER_W` :54, `ZOOM_MAX` :55, `MARGIN_K` :56, `LAND_SPEED` :57, `WATER_SPEED` :58, `DUSK` :59, `NIGHT` :60, `BOAT_SCALE` :1964.
+- `godot/scripts/world_view.gd` constantes (19) : `DEFAULT_HAMLETS` :19, `SLOTS` :22, `LAYOUTS` :26, `ELDER_POS` :31, `LAKE_C` :32, `LAKE_R` :33, `MAX_LAKES` :36, `LAKE_BOXES` :37, `ROOM` :44, `RING_R` :45, `ISO_LAKE_K` :48, `LOTS_PER_W` :54, `ZOOM_MAX` :55, `MARGIN_K` :56, `LAND_SPEED` :57, `WATER_SPEED` :58, `DUSK` :59, `NIGHT` :60, `BOAT_SCALE` :1975.
 - `godot/scripts/world_view.gd` signaux (1) : `agent_clicked` :17.
 
 ### 9.2 Variables
@@ -1011,6 +1026,7 @@ classDiagram
         +selected : String
         +hovered : String
         +animate : bool
+        +seen_outing : bool
         +paused : bool
         +thinking : Array
         +time_scale : float
@@ -1077,7 +1093,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` variables (77) : `terrain` :62, `decor` :63, `under` :64, `shade` :65, `lights` :66, `over` :67, `mat` :68, `agents` :70, `order` :71, `stock_ratio` :72, `stock_t` :73, `capacity` :74, `collapsed` :75, `selected` :76, `hovered` :77, `animate` :78, `paused` :79, `thinking` :80, `time_scale` :81, `effects` :82, `bubbles` :83, `badges` :84, `rules` :85, `cur_season` :86, `_proposal_author` :87, `season_days` :90, `sim_time` :91, `light` :92, `phase` :93, `assembly_scope` :94, `hamlet_pos` :95, `lakes` :96, `iso_o` :97, `iso_a` :98, `iso_b` :99, `iso_sq` :100, `iso_ex` :101, `cam` :103, `top` :104, `zoom` :105, `zoom_min` :106, `cam_off` :107, `council_c` :108, `council_r` :109, `elder_pos` :110, `world_k` :111, `PARCELS` :112, `n_lots` :113, `n_steps` :114, `world` :115, `dragging` :116, `glide` :117, `glide_to` :118, `mini_drag` :119, `show_mesh` :120, `lake_cells` :122, `parcel_lake` :123, `field` :124, `mask_img` :125, `walk` :126, `sail` :127, `hamlet_lake` :128, `patrol_routes` :129, `patrol_season` :130, `salon_ids` :131, `salon` :132, `btn_salon_min` :133, `btn_salon_open` :134, `_salon_draw` :135, `hamlet_fires` :136, `dry` :137, `t` :138, `banners` :139, `deco` :142, `fish` :143, `wakes` :144, `splashes` :145.
+- `godot/scripts/world_view.gd` variables (78) : `terrain` :62, `decor` :63, `under` :64, `shade` :65, `lights` :66, `over` :67, `mat` :68, `agents` :70, `order` :71, `stock_ratio` :72, `stock_t` :73, `capacity` :74, `collapsed` :75, `selected` :76, `hovered` :77, `animate` :78, `seen_outing` :79, `paused` :80, `thinking` :81, `time_scale` :82, `effects` :83, `bubbles` :84, `badges` :85, `rules` :86, `cur_season` :87, `_proposal_author` :88, `season_days` :91, `sim_time` :92, `light` :93, `phase` :94, `assembly_scope` :95, `hamlet_pos` :96, `lakes` :97, `iso_o` :98, `iso_a` :99, `iso_b` :100, `iso_sq` :101, `iso_ex` :102, `cam` :104, `top` :105, `zoom` :106, `zoom_min` :107, `cam_off` :108, `council_c` :109, `council_r` :110, `elder_pos` :111, `world_k` :112, `PARCELS` :113, `n_lots` :114, `n_steps` :115, `world` :116, `dragging` :117, `glide` :118, `glide_to` :119, `mini_drag` :120, `show_mesh` :121, `lake_cells` :123, `parcel_lake` :124, `field` :125, `mask_img` :126, `walk` :127, `sail` :128, `hamlet_lake` :129, `patrol_routes` :130, `patrol_season` :131, `salon_ids` :132, `salon` :133, `btn_salon_min` :134, `btn_salon_open` :135, `_salon_draw` :136, `hamlet_fires` :137, `dry` :138, `t` :139, `banners` :140, `deco` :143, `fish` :144, `wakes` :145, `splashes` :146.
 
 ### 9.3 Les nœuds Godot gardés par `WorldView`
 
@@ -1110,7 +1126,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` : ColorRect `terrain` :62; Control `decor` :63, `under` :64, `shade` :65, `lights` :66, `over` :67, `cam` :103, `top` :104, `salon` :132; ShaderMaterial `mat` :68; Image `mask_img` :125; Button `btn_salon_min` :133, `btn_salon_open` :134.
+- `godot/scripts/world_view.gd` : ColorRect `terrain` :62; Control `decor` :63, `under` :64, `shade` :65, `lights` :66, `over` :67, `cam` :104, `top` :105, `salon` :133; ShaderMaterial `mat` :68; Image `mask_img` :126; Button `btn_salon_min` :134, `btn_salon_open` :135.
 
 ### 9.4 Caméra, mise en page, entrées
 
@@ -1141,7 +1157,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (17) : `_ready` :148, `_layer` :201, `_on_resized` :208, `_set_world` :227, `_layout_world` :236, `_center_view` :246, `_apply_cam` :256, `zoom_at` :272, `pan` :280, `_scr` :287, `glide_to_ground` :292, `_scroll` :298, `_unhandled_input` :331, `iso_boxes` :351, `lake_boxes` :358, `layout` :368, `lake_shape` :395.
+- `godot/scripts/world_view.gd` fonctions (17) : `_ready` :149, `_layer` :202, `_on_resized` :209, `_set_world` :228, `_layout_world` :237, `_center_view` :247, `_apply_cam` :257, `zoom_at` :273, `pan` :281, `_scr` :288, `glide_to_ground` :293, `_scroll` :299, `_unhandled_input` :332, `iso_boxes` :352, `lake_boxes` :359, `layout` :369, `lake_shape` :396.
 
 ### 9.5 Lacs, eau et champ d'eau
 
@@ -1170,7 +1186,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (15) : `water_at` :400, `is_water` :414, `_lake_at` :419, `_parcel_pos` :434, `_build_lakes` :440, `_update_council` :476, `_build_field` :489, `_refresh_fish_layer` :548, `lake_point` :561, `_lake_of_hamlet` :566, `_lake_named` :571, `_push_lakes` :579, `_ratio` :588, `_px` :593, `_nm` :598.
+- `godot/scripts/world_view.gd` fonctions (15) : `water_at` :401, `is_water` :415, `_lake_at` :420, `_parcel_pos` :435, `_build_lakes` :441, `_update_council` :477, `_build_field` :490, `_refresh_fish_layer` :549, `lake_point` :562, `_lake_of_hamlet` :567, `_lake_named` :572, `_push_lakes` :580, `_ratio` :589, `_px` :594, `_nm` :599.
 
 ### 9.6 Salon de la veillée et isométrie
 
@@ -1191,7 +1207,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (7) : `_salon_rect` :606, `_seat` :611, `_apt` :621, `_salon_on` :625, `set_salon` :630, `_update_iso` :638, `_ground_ellipse` :649.
+- `godot/scripts/world_view.gd` fonctions (7) : `_salon_rect` :607, `_seat` :612, `_apt` :622, `_salon_on` :626, `set_salon` :631, `_update_iso` :639, `_ground_ellipse` :650.
 
 ### 9.7 Mailles et chemins
 
@@ -1214,7 +1230,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (9) : `_step_of` :658, `_step_pos` :662, `_lot_pos` :666, `_build_grids` :671, `_free_step` :687, `_route` :707, `_land_route` :723, `_snap_water` :728, `_dock` :737.
+- `godot/scripts/world_view.gd` fonctions (9) : `_step_of` :659, `_step_pos` :663, `_lot_pos` :667, `_build_grids` :672, `_free_step` :688, `_route` :708, `_land_route` :724, `_snap_water` :729, `_dock` :738.
 
 ### 9.8 Décor
 
@@ -1240,7 +1256,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (12) : `_house_at` :761, `_lot_free` :779, `_generate_decor` :793, `_screen_near` :902, `_road_px` :908, `_curve` :922, `_draw_decor` :933, `_tree` :989, `_house` :1015, `_ellipse` :1051, `_star` :1059, `_fire_pos` :1068.
+- `godot/scripts/world_view.gd` fonctions (12) : `_house_at` :762, `_lot_free` :780, `_generate_decor` :794, `_screen_near` :903, `_road_px` :909, `_curve` :923, `_draw_decor` :934, `_tree` :990, `_house` :1016, `_ellipse` :1052, `_star` :1060, `_fire_pos` :1069.
 
 ### 9.9 État du monde et événements
 
@@ -1258,7 +1274,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (4) : `reset_world` :1075, `set_rep` :1157, `remember_proposal` :1163, `on_event` :1167.
+- `godot/scripts/world_view.gd` fonctions (4) : `reset_world` :1076, `set_rep` :1158, `remember_proposal` :1164, `on_event` :1168.
 
 ### 9.10 Bandeaux, déplacements, trajets, patrouille
 
@@ -1286,7 +1302,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (14) : `_banner` :1374, `_move` :1385, `_fishing_spot` :1398, `_trip` :1415, `_zone_pos` :1433, `_patrol_pos` :1440, `_draw_patrol` :1455, `_draw_patrol_boat` :1466, `_link` :1486, `_mark` :1493, `_short` :1500, `_num` :1504, `_sync_fish` :1510, `_update_fish` :1542.
+- `godot/scripts/world_view.gd` fonctions (14) : `_banner` :1385, `_move` :1396, `_fishing_spot` :1409, `_trip` :1426, `_zone_pos` :1444, `_patrol_pos` :1451, `_draw_patrol` :1466, `_draw_patrol_boat` :1477, `_link` :1497, `_mark` :1504, `_short` :1511, `_num` :1515, `_sync_fish` :1521, `_update_fish` :1553.
 
 ### 9.11 Boucle d'image, clics, règles
 
@@ -1306,7 +1322,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (6) : `_process` :1560, `_gui_input` :1637, `_pick` :1673, `_set_rule` :1686, `_draw_rules` :1697, `_draw_lake_rules` :1746.
+- `godot/scripts/world_view.gd` fonctions (6) : `_process` :1571, `_gui_input` :1648, `_pick` :1684, `_set_rule` :1697, `_draw_rules` :1708, `_draw_lake_rules` :1757.
 
 ### 9.12 Dessin : sol, lumière, feu, salon, liens, barques, pions
 
@@ -1332,7 +1348,7 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (12) : `_draw_under` :1758, `_darkness` :1800, `_draw_shade` :1804, `_draw_lights` :1813, `_draw_fire` :1838, `_draw_salon` :1853, `_bez_pts` :1917, `_draw_links` :1921, `_draw_boat` :1967, `_draw_boat_local` :1973, `_lbl_hit` :2001, `_draw_tokens` :2008.
+- `godot/scripts/world_view.gd` fonctions (12) : `_draw_under` :1769, `_darkness` :1811, `_draw_shade` :1815, `_draw_lights` :1824, `_draw_fire` :1849, `_draw_salon` :1864, `_bez_pts` :1928, `_draw_links` :1932, `_draw_boat` :1978, `_draw_boat_local` :1984, `_lbl_hit` :2012, `_draw_tokens` :2019.
 
 ### 9.13 Dessin : marques, bulles, panneaux, HUD, bandeau, mini-carte, mailles
 
@@ -1361,9 +1377,72 @@ classDiagram
 ```
 
 Dans le code :
-- `godot/scripts/world_view.gd` fonctions (15) : `set_thinking` :2056, `_draw_marks` :2062, `_draw_bubbles` :2084, `_draw_signs` :2143, `_draw_hud` :2160, `_draw_lake_gauges` :2221, `_draw_banner` :2244, `_draw_top` :2270, `_draw_over` :2282, `_mini_rect` :2300, `_mini_pt` :2307, `_mini_goto` :2311, `_draw_mini` :2319, `_cell_poly` :2343, `_draw_mesh` :2349.
+- `godot/scripts/world_view.gd` fonctions (15) : `set_thinking` :2067, `_draw_marks` :2073, `_draw_bubbles` :2095, `_draw_signs` :2154, `_draw_hud` :2171, `_draw_lake_gauges` :2232, `_draw_banner` :2255, `_draw_top` :2281, `_draw_over` :2293, `_mini_rect` :2311, `_mini_pt` :2318, `_mini_goto` :2322, `_draw_mini` :2330, `_cell_poly` :2354, `_draw_mesh` :2360.
 
-## 10. Le shader `valley.gdshader`
+## 10. `Demo` (demo.gd) : le lecteur de la vidéo de démonstration
+
+### 10.1 Variables, constantes et fonctions
+
+Lancé par `Main` seulement avec `--demo=scénario.json` : rejoue un journal dans `main._on_event` au rythme du scénario (temps de vidéo), pilote la caméra, les mailles, l'onglet et l'inspecteur, lit la voix et affiche le sous-titre. En mode démo, `Main` ne se connecte pas au moteur.
+
+```mermaid
+classDiagram
+    class Demo {
+        +TITLE_S : float
+        +CAM_S : float
+        +main : Variant
+        +beats : Array
+        +events : Array
+        +next_ev : int
+        +inds : Array
+        +next_ind : int
+        +chunks : Array
+        +band : PanelContainer
+        +narr_len : float
+        +bi : int
+        +narr_left : float
+        +bt : float
+        +dur : float
+        +t_end : float
+        +sched : Array
+        +sched_i : int
+        +pace : Dictionary
+        +elapsed : float
+        +end_left : float
+        +player : AudioStreamPlayer
+        +sub : Label
+        +title : ColorRect
+        +cam_t : float
+        +cam_from : Vector2
+        +cam_off_from : Vector2
+        +cam_to_zoom : float
+        +cam_to_ground : Vector2
+        +base_dir : String
+        +start(m, path: String)
+        -_feed_until(t: float)
+        -_ground(target: String) Vector2
+        -_split(text: String) Array
+        -_show_chunk(f: float)
+        -_place_band()
+        -_schedule(b: Dictionary)
+        -_begin(b: Dictionary)
+        -_step_cam(delta: float)
+        -_process(delta: float)
+    }
+    Node <|-- Demo
+    class Node {
+        <<Godot>>
+    }
+    class Main
+    Demo o-- Main : main
+```
+
+Dans le code :
+- `godot/scripts/demo.gd` fonctions (10) : `start` :39, `_feed_until` :95, `_ground` :104, `_split` :118, `_show_chunk` :131, `_place_band` :145, `_schedule` :154, `_begin` :206, `_step_cam` :243, `_process` :255.
+- `godot/scripts/demo.gd` variables (28) : `main` :9, `beats` :10, `events` :11, `next_ev` :12, `inds` :13, `next_ind` :14, `chunks` :15, `band` :16, `narr_len` :17, `bi` :18, `narr_left` :19, `bt` :20, `dur` :21, `t_end` :22, `sched` :23, `sched_i` :24, `pace` :25, `elapsed` :26, `end_left` :27, `player` :28, `sub` :29, `title` :30, `cam_t` :31, `cam_from` :32, `cam_off_from` :33, `cam_to_zoom` :34, `cam_to_ground` :35, `base_dir` :36.
+- `godot/scripts/demo.gd` constantes (2) : `TITLE_S` :6, `CAM_S` :7.
+
+## 11. Le shader `valley.gdshader`
 
 Le shader est un élément du diagramme (stéréotype `<<shader>>`) : ses `uniform` sont les paramètres que `WorldView` lui envoie (`mat.set_shader_parameter`), ses fonctions sont les fonctions GLSL de Godot. `fragment()` calcule la couleur de chaque pixel du sol.
 
@@ -1396,18 +1475,19 @@ Dans le code :
 - `godot/shaders/valley.gdshader` uniforms (10) : `lake_mask` :8, `lake_n` :9, `grid` :10, `mesh` :11, `px_size` :12, `iso_o` :13, `iso_ab` :14, `world_k` :15, `dry` :16, `t_offset` :17.
 - Fonctions (6) : `hash` :19, `noise` :20, `fbm` :27, `to_ground` :34, `on_ground` :38, `fragment` :40.
 
-## 11. Couverture : fonctions du code et des diagrammes
+## 12. Couverture : fonctions du code et des diagrammes
 
-Comptage mécanique : les `func` nommées de chaque script (en début de ligne, `static` compris) contre les méthodes écrites dans les diagrammes des sections 3 à 9. Les fonctions anonymes (`func() -> void:` passées à `connect`) ne sont pas des méthodes et ne sont pas comptées. Les scripts de test de `godot/tests/` ne font pas partie de ces diagrammes.
+Comptage mécanique : les `func` nommées de chaque script (en début de ligne, `static` compris) contre les méthodes écrites dans les diagrammes des sections 3 à 10. Les fonctions anonymes (`func() -> void:` passées à `connect`) ne sont pas des méthodes et ne sont pas comptées. Les scripts de test de `godot/tests/` ne font pas partie de ces diagrammes.
 
 | Script | `func` dans le code | fonctions dans les diagrammes | variables (code / diagrammes) | constantes (code / diagrammes) | signaux (code / diagrammes) |
 |---|---|---|---|---|---|
 | `art.gd` | 10 | 10 | 1 / 1 | 18 / 18 | 0 / 0 |
 | `chart.gd` | 6 | 6 | 5 / 5 | 4 / 4 | 0 / 0 |
+| `demo.gd` | 10 | 10 | 28 / 28 | 2 / 2 | 0 / 0 |
 | `legend.gd` | 3 | 3 | 1 / 1 | 0 / 0 | 0 / 0 |
-| `main.gd` | 55 | 55 | 78 / 78 | 9 / 9 | 0 / 0 |
+| `main.gd` | 57 | 57 | 80 / 80 | 10 / 10 | 0 / 0 |
 | `menu_map.gd` | 15 | 15 | 12 / 12 | 1 / 1 | 2 / 2 |
 | `start_menu.gd` | 69 | 69 | 71 / 71 | 12 / 12 | 3 / 3 |
-| `world_view.gd` | 111 | 111 | 77 / 77 | 19 / 19 | 1 / 1 |
+| `world_view.gd` | 111 | 111 | 78 / 78 | 19 / 19 | 1 / 1 |
 | `ws_client.gd` | 5 | 5 | 4 / 4 | 1 / 1 | 2 / 2 |
-| Total | 274 | 274 | | | |
+| Total | 286 | 286 | | | |

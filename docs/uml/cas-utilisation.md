@@ -239,9 +239,11 @@ flowchart LR
     N(["Narrateur"])
     subgraph SYS["Système FILETS"]
         direction TB
-        C1(["Décider sa prise"])
-        C2(["Choisir son lac, son coin, ses sorties"])
-        C3(["Déclarer sa prise à l'ancien"])
+        C1(["Planifier sa saison"])
+        C2(["Décider une sortie"])
+        C3(["Déclarer un retour à l'ancien"])
+        C21(["Mentir sur une sortie"])
+        C22(["Témoigner d'un retour"])
         C4(["Parler à la veillée"])
         C5(["S'adresser à quelqu'un"])
         C6(["Proposer une règle"])
@@ -261,6 +263,9 @@ flowchart LR
         C20(["Réfléchir ou réagir par réflexe"])
     end
     P --- C1
+    P --- C2
+    P --- C3
+    P --- C22
     P --- C4
     P --- C12
     P --- C13
@@ -271,9 +276,10 @@ flowchart LR
     PAT --- C17
     PAT --- C18
     N --- C19
-    C1 -. "«include»" .-> C2
-    C1 -. "«include»" .-> C3
     C1 -. "«include»" .-> C20
+    C2 -. "«include»" .-> C20
+    C2 -. "«include»" .-> C3
+    C21 -. "«extend»" .-> C3
     C4 -. "«include»" .-> C20
     C5 -. "«extend»" .-> C4
     C6 -. "«extend»" .-> C4
@@ -290,7 +296,7 @@ flowchart LR
 ```
 
 Dans le code :
-- Prise et déclaration : `filets/agents.py:144` (`decide_catch`), `:171-186` (système 1), `:204-221` (déclaration au plus égale à la prise, lieu `rive` ou `large`, nombre de sorties), `filets/scheduler.py:160` (`depart`), `filets/world.py:1506` (`plan_trip`), `:1570` (`finish_trip`).
+- Plan, sorties et déclarations (`docs/peche.md`) : `filets/agents.py` (`decide_plan`, `decide_catch`), `filets/routing.py` (`outing_reasons`), `filets/policies.py` (`outing_rule`, `declare_outing`), `filets/scheduler.py` (`planned`, `go`, `report_then_go`), `filets/world.py` (`open_trip`, `start_outing`, `land_outing`, `report_outing`, `finish_trip`, `investigate`, `weigh_evidence`).
 - Parole : `filets/agents.py:232` (`speak`), `:258-285` (actes : proposition, soutien, promesse, accusation, exclusion, réautorisation, patrouille, confiance), `filets/world.py:2066` (`post_utterance`, `utterance` `:2073`, destinataire `to`), `:2094` (`proposal`), `:2119` (`promise`), `:2134` (`accusation`), `:2145` (`judge` : confiance), `:2181` (`propose_sanction`), `:2195` (`propose_patrol`), `:2285` (`_support`).
 - Vote : `filets/agents.py:289` (`ballot`), `:302` (`_sanction_ballot`), `:404` (`_quota_ballot`), `filets/world.py:2222` (`vote_sanction`, `sanction_vote` `:2226`), `:2232` (`close_sanctions`), `:2496` (`closing_vote`).
 - Élection et bilan : `filets/agents.py:329` (`ballot_election`), `:349` (`debrief_villager`), `filets/world.py:1771` (`elect`, `election` `:1801`), `:1809` (`debrief`).
@@ -431,9 +437,11 @@ Les « acteurs » du tableau sont ceux des diagrammes ; « Code » donne le prem
 
 | Cas | Acteur | But | Déclencheur | Résultat | Code |
 |---|---|---|---|---|---|
-| Décider sa prise | Pêcheur | Fixer combien pêcher cette saison | Son jour de départ (ouverture de la pêche + décalage) | Événement `decision`, puis `catch` (scénario b) | `agents.py:144` |
-| Choisir son lac, son coin, ses sorties | Pêcheur | Choisir où et en combien de sorties pêcher | Pendant la décision | `lake`, `place` (rive ou large), `outings` | `agents.py:204-221` |
-| Déclarer sa prise à l'ancien | Pêcheur | Dire ce qu'il a pêché (vrai ou non) | Retour de pêche | Déclaration au plus égale à la prise ; vérifiable plus tard | `agents.py:222`, `world.py:1570` |
+| Planifier sa saison | Pêcheur | Dire ce qu'il compte prendre en tout, où, ce qu'il compte déclarer, et sa première sortie | Son jour de départ (ouverture de la pêche + décalage) | Événement `decision` (`decision_type` plan, toujours le grand modèle) ; `note_plan`, `open_trip` (scénario b) | `agents.py` `decide_plan`, `scheduler.py` `planned` |
+| Décider une sortie | Pêcheur | Choisir quand, où (lac, zone), combien et courte (3 h) ou longue (7 h), ou « plus cette saison » | À l'ouverture puis à chaque retour de sortie | Événement `decision` (`catch`, `system`, `routing`), puis `outing` au retour ; réflexe en routine, grand modèle quand quelque chose change | `agents.py` `decide_catch`, `routing.py` `outing_reasons`, `world.py` `start_outing`, `land_outing` |
+| Déclarer un retour à l'ancien | Pêcheur | Dire ce qu'il a pris à cette sortie (vrai ou non) | Retour de chaque sortie, avec la décision suivante | Événement `report` (un par sortie, jamais plus que la prise) ; bilan `catch` avec le total déclaré | `scheduler.py` `report_then_go`, `world.py` `report_outing`, `policies.py` `declare_outing` |
+| Mentir sur une sortie | Pêcheur | Cacher une part de la prise d'une sortie, une fois ou souvent | Dans sa déclaration (écart de 0,05 t ou plus) | Mensonge gardé par le moteur (taille, jour, `report`), établi ou non sur le cumul des indices | `world.py` `report_outing`, `weigh_evidence` |
+| Témoigner d'un retour | Pêcheur | Voir rentrer la barque d'un voisin de la même zone ou de la rive | Même jour, même zone ; réunis au soir de la veillée | Indice `clue` (`temoin`) avec `outing_event_id`, jour, prise estimée | `world.py` `investigate` |
 | Parler à la veillée | Pêcheur, ancien | Dire quelque chose à tous ou à quelqu'un | Veillée du soir | Événement `utterance` | `agents.py:232`, `world.py:2066` |
 | S'adresser à quelqu'un | Pêcheur | Interpeller un destinataire | Dans sa réplique | `to` de l'`utterance` ; l'adressé parlera en premier | `world.py:2070-2073`, `scheduler.py:258` |
 | Proposer une règle | Pêcheur | Suggérer un quota ou une autre règle de pêche | Dans sa réplique | Événement `proposal` | `world.py:2094` |
@@ -445,10 +453,10 @@ Les « acteurs » du tableau sont ceux des diagrammes ; « Code » donne le prem
 | Voter | Pêcheur | Soutenir une proposition et voter les sanctions | Bulletins avant la clôture | `support` et `sanction_vote` ; résultat `sanction_result`, `norm_adopted` | `agents.py:289`, `world.py:2222` |
 | Choisir l'élu de son village | Pêcheur | Désigner qui parlera au conseil | Entre deux saisons | Événement `election` | `agents.py:329`, `world.py:1771` |
 | Juger ses voisins au retour | Pêcheur | Réviser sa confiance d'après ce que l'ancien rapporte | Entre deux saisons | Confiance mise à jour | `agents.py:349`, `world.py:1809` |
-| Tenir les comptes du lac | Ancien | Faire les comptes et relever les écarts | Soir de la veillée et fin de saison | Événement `lake_audit` | `world.py:772`, `:834` |
+| Tenir les comptes du lac | Ancien | Faire les comptes (perte du lac contre total déclaré) et relever les écarts | Soir de la veillée et fin de saison | Événement `lake_audit` | `world.py:772`, `:834` |
 | Rapporter aux absents | Ancien | Dire aux villageois hors conseil les décisions et les faits établis | Entre deux saisons | Base du débriefing des villageois | `world.py:1809` |
 | Planifier la route de la patrouille | Patrouille | Choisir zones, jours de mer, pêcheur soupçonné | Avant la saison, si le conseil en a voté une | Événement `patrol_route` | `world.py:1819`, `agents.py:376` |
-| Relever les barques | Patrouille | Mesurer les barques croisées | Pendant la saison | Indices (`clue`), rapport de patrouille | `world.py:2004`, `:931` |
+| Relever les barques | Patrouille | Mesurer les sorties croisées (celle dont le jour tombe dans son étape) | Pendant la saison | Indices (`clue`, par sortie), rapport de patrouille | `world.py:2004`, `:931` |
 | Raconter la saison | Narrateur | Raconter au joueur ce que la vallée a vécu | Fin de saison | Événement `narration` (scénario f2) | `world.py:2847` |
 | Réfléchir ou réagir par réflexe | Système de modèles | Répondre à une demande du moteur | Appel de `LLMRouter.complete` | Réponse validée, ou incident (`unparseable`, `no_response`…) | `agents.py:79`, `routing.py:53` |
 

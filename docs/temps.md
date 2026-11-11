@@ -7,10 +7,10 @@ Spécification de la fusion des modes synchrone et asynchrone (décisions de l'u
 
 1. **Réfléchir ne prend pas de temps ; agir en prend.** Une décision (IA ou règle) est instantanée dans le monde : l'horloge
    simulée ne bouge pas pendant qu'une IA réfléchit, et aucune action n'est plus jamais perdue parce qu'une IA a été lente.
-   Une action, elle, dure : une sortie en mer, la route vers un autre lac, une prise de parole.
+   Une action, elle, dure : une sortie en mer (de 3 à 7 heures de pêche, jamais la nuit, voir [peche.md](peche.md)), la route vers un autre lac, une prise de parole.
 2. **Le poisson ne va pas forcément au premier arrivé.** La cale (`hold_of`) et le rendement du coin (`fill_near`) restent
-   calculés sur l'instantané d'ouverture de la saison (`season_stock`, `open_cells`). Chaque sortie retire son poisson du lac au
-   moment où elle a lieu (le stock baisse au fil de la saison, ce que voient les observations suivantes).
+   calculés sur l'instantané d'ouverture de la saison (`season_stock`, `open_cells`). Chaque sortie retire son poisson du lac à
+   son retour (le stock baisse au fil de la saison, ce que voient les observations suivantes).
 3. **La veillée se déroule au fil de l'eau.** Les répliques se préparent en parallèle ; une seule personne parle à la fois ;
    une réplique peut répondre à une autre ou non (voir « La veillée »).
 
@@ -37,12 +37,15 @@ Une simulation à événements discrets.
 1. **Avant la saison** (inchangé, en parallèle) : débrief des absents, élection par village, route de chaque patrouille.
 2. **Ouverture** (jour `fishing_open_day`) : climat, événements, instantané d'ouverture de chaque lac.
 3. **Départs** : chaque pêcheur a un jour de départ tiré de la graine dans `departure_spread_days` (ancien
-   `async_offset_days`, défaut [0, 4]). Sa décision de prise a pour horizon son jour de départ.
-4. **Sorties** : la décision fixe la prise visée, le lac, la déclaration. Les sorties (`economy.outings`, d'un jour chacune)
-   s'étalent de son départ à la fermeture ; s'il va dans un autre lac, la route ajoute ses jours à l'aller et au retour. Chaque
-   sortie applique sa part de prise à sa fin (cale et coin sur l'instantané d'ouverture). Aucune sortie n'est planifiée après
-   `fishing_close_day`. Le retour (dernière sortie) déclenche vente et déclaration, puis les indices (patrouille passée dans sa
-   zone ce jour-là, témoins).
+   `async_offset_days`, défaut [0, 4]). Son plan de saison (grand modèle) a pour horizon son jour de départ ; il porte aussi sa
+   première sortie.
+4. **Sorties** : le pêcheur décide chacune, à l'ouverture puis à chaque retour : quand (un délai en heures, « demain à l'aube »,
+   « plus cette saison »), où (lac, zone), combien, courte (3 h) ou longue (7 h) ; `economy.outings` n'est plus qu'un nombre par défaut
+   pour les agents à règles. Pas de pêche de 21 h à 5 h (elle attend l'aube), plusieurs sorties par jour sont possibles, la route d'un
+   autre lac s'ajoute à l'aller et au retour. Le poisson (cale par sortie, coin sur l'instantané d'ouverture) sort du lac au retour ;
+   la décision suivante est prise à cet instant et déclare la sortie qui vient de finir (`report`). Aucune sortie ne commence après
+   `fishing_close_day`. Quand il ne ressort plus, bilan et vente ; les indices (patrouille passée dans sa zone ce jour-là, témoins du
+   retour) sont réunis par sortie au soir de la veillée.
 5. **Veillée** (de `assembly_day` à `assembly_close_day`) : voir plus bas. Les veillées de villages différents sont
    indépendantes et se déroulent en parallèle.
 6. **Fin** (jour `regrowth_day`) : repeuplement de chaque lac (après toutes ses prises), bilans, lore, puis le récit du
@@ -70,11 +73,10 @@ Une simulation à événements discrets.
 
 ## Choix faits là où la spécification laissait une marge
 
-- **Départ** : `time.departure_spread_days` donne le décalage de chaque pêcheur après `fishing_open_day` ; ses sorties sont espacées
-  pareil chez lui et ailleurs (de son départ à la fermeture, `economy.outings` sorties). Dans un autre lac, l'aller décale chaque sortie
-  de `route` jours et celles dont le retour (encore `route` jours) tomberait après `fishing_close_day` sont perdues : la route
-  se paie en sorties perdues (plus de facteur de rendement), et en écus (`economy.travel_cost`).
-- **Lot de décisions** : une décision porte un délai minimal avant son effet (`lag`, 1 jour pour une prise) ; le lot s'arrête à la première
+- **Départ et sorties** : `time.departure_spread_days` donne le décalage de chaque pêcheur après `fishing_open_day` ; ses sorties sont
+  celles qu'il décide (voir [peche.md](peche.md)), espacées comme il l'entend. Dans un autre lac, l'aller et le retour (`route` jours) s'ajoutent
+  à la pêche ; une sortie qui rentrerait après la veillée n'a pas lieu. La route se paie en écus (`economy.travel_cost`) à chaque sortie.
+- **Lot de décisions** : une décision porte un délai minimal avant son effet (`lag`, la plus courte sortie : 3 heures, pour une décision de sortie) ; le lot s'arrête à la première
   dont l'horizon dépasse ce délai. Leurs événements (`decision`, `llm_call`…) sortent dans l'ordre de la file (mis en attente par
   `EventFactory.defer`, numérotés à `flush`), pas dans l'ordre des réponses.
 - **Veillée** : toutes les répliques sont préparées d'abord à l'ouverture (`assembly_day`), sur la salle vide. Une réplique, quand elle

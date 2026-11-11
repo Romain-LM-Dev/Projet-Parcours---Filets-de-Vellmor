@@ -2,7 +2,7 @@
 
 Un diagramme de communication (ou de collaboration) montre les mêmes échanges qu'un diagramme de séquence, mais en mettant en avant la structure : les objets sont placés dans le plan, chaque lien entre deux objets est une arête, et l'ordre des messages n'est porté que par leur numéro. Un numéro décimal (« 3.1 ») veut dire « émis pendant le traitement du message 3 » ; une lettre (« 5a », « 5b ») marque des messages envoyés en même temps ; entre crochets, la condition d'un message. La séquence montre mieux l'ordre et les blocs (`par`, `loop`, `alt`), la communication montre mieux qui parle à qui. Mermaid n'a pas ce type de diagramme : on le dessine avec un `flowchart` dont les nœuds sont les objets (« nom : Classe ») et dont les étiquettes d'arêtes sont les messages numérotés. Un nœud qui s'écrit à lui-même a une boucle sur lui-même.
 
-Cette page reprend **tous** les scénarios de `sequences.md`, avec les mêmes objets, les mêmes messages et les mêmes découpages : (a1 à a3) démarrer une partie, (b1 à b3) la décision de prise, (c1, c2) la veillée, (d) la rumeur, (e1, e2) le rejeu avec le bus local puis avec Kafka, (f1, f2) la fin de saison et le récit, (g) le tirage d'une vallée, (h) l'arrêt. Les listes « Dans le code » de `sequences.md` donnent les `fichier:ligne` de chaque message ; chaque section ci-dessous rappelle les lignes de ses messages.
+Cette page reprend **tous** les scénarios de `sequences.md`, avec les mêmes objets, les mêmes messages et les mêmes découpages : (a1 à a3) démarrer une partie, (b1 à b3) le plan de saison et les sorties du pêcheur, (c1, c2) la veillée, (d) la rumeur, (e1, e2) le rejeu avec le bus local puis avec Kafka, (f1, f2) la fin de saison et le récit, (g) le tirage d'une vallée, (h) l'arrêt. Les listes « Dans le code » de `sequences.md` donnent les `fichier:ligne` de chaque message ; chaque section ci-dessous rappelle les lignes de ses messages.
 
 ## (a1) Du clic jusqu'à la commande reçue par le moteur
 
@@ -122,7 +122,7 @@ Dans le code : `filets/services/indicators.py:20-43` ; `filets/pipeline.py:28`, 
 ```mermaid
 flowchart LR
     S["sched : SeasonScheduler"]
-    A["agent : decide_catch"]
+    A["agent : decide_plan / decide_catch"]
     W["world : World"]
     MS["memory : VectorMemory"]
     R["retriever : VectorRetriever"]
@@ -130,12 +130,12 @@ flowchart LR
     OL["ollama : Ollama"]
     PG["pg : PostgreSQL pgvector"]
 
-    S -->|"1: at(h, PECHEURS, id, Decision)"| S
+    S -->|"1: at(h, PECHEURS, id, Decision(decide_plan, planned)) ; à chaque retour Decision(decide_catch, report_then_go)"| S
     S -->|"2: play, run_batch, parallel(jobs)"| S
     S -->|"2.1: think(noms, True), publish_status"| S
-    S -->|"3: make() = decide_catch(w, agent, h)"| A
+    S -->|"3: make() = decide_plan ou decide_catch (w, agent, h)"| A
     A -->|"4: observe(agent, h, catch)"| W
-    W -->|"4.1: lake.observe, note_lake, applicable_norm, rule_view, known_catches, carnet, clue_lines, active_rumors, pinned"| W
+    W -->|"4.1: lake.observe, note_lake, applicable_norm, rule_view, known_catches, carnet, clue_lines, lie_book, my_outings, last_landed, cale, active_rumors, pinned"| W
     W -->|"4.2a: aretrieve(query, h, k, exclude)"| MS
     MS -->|"4.2a.1: bank.flush, embed(query)"| EM
     EM -->|"4.2a.2: POST api/embed (cache LRU)"| OL
@@ -155,7 +155,7 @@ Dans le code : `filets/scheduler.py:147-158`, `:84-115`, `:117-145`, `:38-43`, `
 
 ```mermaid
 flowchart LR
-    A["agent : decide_catch"]
+    A["agent : decide_plan / decide_catch"]
     RT["router : LLMRouter"]
     CTL["ctl : GameControl"]
     CL["client : OpenAICompat ou SystemOne"]
@@ -164,9 +164,10 @@ flowchart LR
     OL["ollama : Ollama"]
     EF["events : EventFactory"]
 
-    A -->|"1: lake_choice_rule, catch_rule, declare_rule, rule_choices [agent à règles]"| A
+    A -->|"1: lake_choice_rule, catch_rule, declare_rule, rule_choices, outing_rule [plan, agent à règles]"| A
+    A -->|"1a: outing_rule, declare_outing(last_landed) [sortie, agent à règles]"| A
     A -->|"1.1: emit(decision) Règle appliquée"| EF
-    A -->|"2: choose_system(obs, catch) [agent à IA, profil adaptatif]"| A
+    A -->|"2: choose_outing_system(obs, prev), outing_reasons [sortie, agent à IA, profil adaptatif ; le plan est toujours S2]"| A
     A -->|"3: complete(agent, tier, hint S1 ou S2 + schéma)"| RT
     RT -->|"3.1: checkpoint (pause, arrêt)"| CTL
     RT -->|"3.2: choisit le client du tier"| CL
@@ -188,45 +189,55 @@ flowchart LR
     A -->|"8: emit(incident) [statut non ok, illisible, sortie de rôle]"| EF
 ```
 
-Dans le code : `filets/agents.py:144`, `:154-167`, `:170-186`, `:79-136`, `:108`, `:119`, `:139` ; `filets/routing.py:24`, `:53` ; `filets/llm.py:335-420`, `:154-237`, `:250-322`, `:44-152`, `:406` ; `filets/control.py:83`.
+Dans le code : `filets/agents.py` (`decide_plan`, `decide_catch`, `_ask_llm`, `reflex_usable`) ; `filets/routing.py` (`reasons_to_think`, `outing_reasons`, `choose_outing_system`) ; `filets/policies.py` (`outing_rule`, `declare_outing`) ; `filets/llm.py` (`LLMRouter.complete`, clients, `RateLimiter`, `ModelGate`) ; `filets/control.py` (`checkpoint`).
 
-## (b3) Sortie : décision publiée dans l'ordre, puis prise appliquée
+## (b3) Plan, puis boucle sortie, retour, déclaration, décision suivante
 
 ```mermaid
 flowchart LR
     S["sched : SeasonScheduler"]
-    A["agent : decide_catch"]
+    A["agent : decide_plan / decide_catch"]
     W["world : World"]
     EF["events : EventFactory"]
     REC["rec : Recorder"]
     KB["bus : Kafka"]
     G["main : Main Godot"]
 
-    A -->|"1: borne la prise, déclaration au plus égale"| A
-    A -->|"1.1: catch_rule [prise invalide, fallback]"| A
-    A -->|"2: emit(decision) en tampon (defer)"| EF
-    A -->|"3: _note_observation, last_decision"| W
-    A -->|"4: Outcome"| S
+    A -->|"1: plan : total, lac, lieu, déclaration prévue, première sortie [ouverture]"| A
+    A -->|"2: emit(decision, plan) en tampon (defer)"| EF
+    A -->|"3: _note_observation, agent.prev = snapshot"| W
+    A -->|"4: Outcome(next, declaration)"| S
     S -->|"5: think(noms, False), publish_status"| S
     S -->|"6: flush(buf) dans l'ordre de la file"| EF
     EF -->|"6.1: seq et event_id définitifs, publish(events)"| KB
     EF -->|"6.2: write(ev)"| REC
     S -->|"7: heal_event_ids(renamed)"| W
-    S -->|"8: then(res) = depart(agent, outcome, h)"| S
-    S -->|"8.1: plan_trip(...)"| W
+    S -->|"8: then(res) = planned(agent, outcome, h)"| S
+    S -->|"8.1: note_plan, open_trip(...)"| W
     W -->|"8.2: Trip"| S
-    S -->|"8.3: at(jour + 1, land_outing), at(retour, finish_trip)"| S
-    S -->|"9: land_outing(trip, k) [un jour plus tard]"| W
-    W -->|"9.1: lake.take puis lake_update(catch)"| W
-    W -->|"9.2: emit(lake_update)"| EF
-    S -->|"10: finish_trip(trip) [retour]"| W
-    W -->|"10.1: vente, richesse, déclaration, indices"| W
-    W -->|"10.2: emit(catch)"| EF
-    KB -->|"11: events (catch) via bridge et API"| G
-    G -->|"11.1: _on_event puis world.on_event"| G
+    S -->|"9: go(agent, trip, next, now)"| S
+    S -->|"10: start_outing(trip, spec, now) [fishing_start, cale_of, trip_left, outing_row]"| W
+    W -->|"10.1: out, ou None : at(now, finish_trip)"| S
+    S -->|"11: at(back, back) puis show(t) : des heures plus tard"| S
+    S -->|"12: land_outing(trip, out)"| W
+    W -->|"12.1: lake.take puis emit(lake_update, catch)"| EF
+    W -->|"12.2: emit(outing)"| EF
+    KB -->|"12.3: events (outing) via bridge et API"| G
+    S -->|"13: at(back, Decision(decide_catch, report_then_go))"| S
+    S -->|"14: decide_catch(w, agent, back) : observe, outing_reasons, S1 ou S2"| A
+    A -->|"14.1: emit(decision, catch) en tampon, Outcome(next, declaration)"| EF
+    S -->|"15: report_then_go : report_outing(trip, out, declaration)"| W
+    W -->|"15.1: lies[report_id] [écart de 0,05 t ou plus], emit(report)"| EF
+    EF -->|"15.2: publish(events, report)"| KB
+    S -->|"16: go(agent, trip, next, back) [retour à 10]"| S
+    S -->|"17: finish_trip(trip) [plus de sortie]"| W
+    W -->|"17.1: bilan, vente, richesse, réputation, emit(catch) avec declared"| EF
+    EF -->|"17.2: publish(events, catch)"| KB
+    KB -->|"18: events via bridge et API"| G
+    G -->|"18.1: _on_event puis world.on_event [fil par pêcheur et par jour, inspecteur]"| G
 ```
 
-Dans le code : `filets/agents.py:187-231`, `:65-70`, `:58` ; `filets/scheduler.py:117-135`, `:160-171` ; `filets/events.py:50-69` ; `filets/world.py:387`, `:1506`, `:1559-1568`, `:544-555`, `:1570`, `:1595` ; `filets/lake.py:50` ; `godot/scripts/main.gd:757`, `:776` ; `godot/scripts/world_view.gd:1167`, `:1223`.
+Dans le code : `filets/agents.py` (`decide_plan`, `decide_catch`, `_note_observation`, `Outcome`) ; `filets/scheduler.py` (`open_season`, `planned`, `go`, `back`, `report_then_go`, `parallel`) ; `filets/events.py` (`defer`, `flush`) ; `filets/world.py` (`heal_event_ids`, `note_plan`, `open_trip`, `start_outing`, `land_outing`, `report_outing`, `finish_trip`) ; `filets/lake.py` (`take`) ; `godot/scripts/main.gd` (`_on_event`), `godot/scripts/world_view.gd` (`on_event`).
 
 ## (c1) La boucle de préparation et de parole
 
@@ -242,7 +253,7 @@ flowchart LR
     EF["events : EventFactory"]
 
     S -->|"1: open_assemblies(season, close_t)"| W
-    W -->|"1.1: investigate(season)"| W
+    W -->|"1.1: investigate(season), weigh_evidence(season) : indices par sortie"| W
     S -->|"2: emit(phase assembly open)"| EF
     S -->|"3a: Village(sched, asm1, ta)"| V1
     S -->|"3b: Village(sched, asm2, ta)"| V2

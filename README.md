@@ -96,7 +96,7 @@ logistique oscille, d'où la limite). `lake.growth_rate` dans le YAML, `lake.gro
 `run.stop_on_extinction: false` dans le YAML (`--set run.stop_on_extinction=false`), permet de continuer quand même. Différent de
 `run.stop_on_collapse` (lac sous 5 %, arrêt à la fin de la saison, désactivé par défaut) : un lac effondré peut encore se refaire.
 
-**Le cerveau d'un pêcheur** (colonne « Cerveau », et réglage de l'ancien) dit qui décide de sa prise et de ses paroles :
+**Le cerveau d'un pêcheur** (colonne « Cerveau », et réglage de l'ancien) dit qui décide de son plan de saison, de ses sorties et de ses paroles :
 
 | Cerveau | Ce qui décide |
 |---|---|
@@ -242,8 +242,8 @@ commence au printemps) :
 | Moment | Ce qui se passe |
 |---|---|
 | avant J0 | chaque village choisit son **élu** ; le capitaine de la **patrouille du lac** (une IA) choisit sa route, si le conseil en a voté une |
-| J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %) et décide de sa **prise visée** ; ce qu'il rapporte vraiment dépend du temps de chaque jour, de sa chance, de la saison et des événements |
-| J20 | fermeture : une décision encore en cours est abandonnée et la sortie est perdue (`missed_window`, « sortie perdue ») |
+| J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %), fait son **plan de saison** (grand modèle) et décide sa première sortie ; ensuite il décide chaque sortie à son retour ; ce qu'il rapporte vraiment dépend du temps de chaque jour, de sa chance, de la saison et des événements |
+| J20 | fermeture : aucune sortie ne commence plus ; une sortie commencée rentre normalement ; une décision encore en cours est abandonnée (`missed_window`, « sortie perdue ») |
 | J25 18:00 | veillée chez l'ancien : le **conseil de la vallée** (l'ancien et l'élu de chaque village), des veillées par village, ou aucune ; 1 à 3 tours de parole à tour de rôle (synchrone) ou une parole de chacun, de son côté (asynchrone) ; une parole pas prête à la fermeture est une « réplique perdue » |
 | J29 | fin de veillée : une proposition soutenue par **au moins la moitié des présents au conseil** devient règle pour la saison suivante |
 | J29 21:36 | repeuplement logistique (selon la saison de l'année et les événements), bilan, promesses tenues ou trahies |
@@ -278,27 +278,35 @@ vide laisse prendre de moins en moins (avec `hold_fraction: 1`, tout le poisson 
 soit la taille de son bateau : le grand bateau coûte plus et tente plus. Le caractère infléchit le
 bateau (le nouveau venu endetté a emprunté pour une barque, la famille ancienne a le plus gros).
 
-**La pêche n'est pas toujours bonne.** Le pêcheur décide d'une **prise visée** pour la saison ; elle est étalée sur
-`economy.outings` sorties (6), réparties sur la fenêtre de pêche (la première part un jour propre à chacun), et **chaque sortie rapporte
-selon sa journée** : le **temps du jour**, la **chance du pêcheur**, la saison de l'année et les événements, son expérience (±0,5 % par
-année d'écart à 15 ans) et la difficulté d'un lac bas (sous 30 % de la capacité, le poisson est plus dur à prendre). Une sortie ne dépasse
-pas sa part de la cale, de sorte qu'une saison de bons jours ne rattrape pas tout à fait une saison de tempêtes.
+**La pêche n'est pas toujours bonne.** C'est le pêcheur qui décide, pas le moteur (détail : [docs/peche.md](docs/peche.md)).
+À l'ouverture il fait son **plan de saison** (ce qu'il compte prendre en tout, où, ce qu'il compte déclarer, sa première sortie ; toujours
+le grand modèle, ou la règle de son archétype). Puis, à l'ouverture et à chaque retour, il décide sa **prochaine sortie** : **quand**
+(« dans 3 heures », « demain à l'aube », « plus cette saison »), **où** (sa rive, le large, la rive d'un autre village, un autre lac),
+**combien** il vise, et **courte** (3 h de pêche) ou **longue** (7 h). La nuit on ne pêche pas (21 h à 5 h) ; plusieurs sorties le même
+jour sont possibles ; aucune ne commence après la fermeture. Le réflexe (tev1) décide la sortie quand rien n'a changé depuis sa décision
+précédente ; le grand modèle reprend dès qu'une raison de réfléchir apparaît (un temps qui change, une rumeur, une règle nouvelle, un lac
+qui baisse, un quota presque atteint, un indice contre lui, un plan rempli ou impossible). Le moteur n'applique que la physique : **chaque
+sortie rapporte selon sa journée** : le **temps du jour**, la **chance du pêcheur**, la saison de l'année et les événements, son expérience
+(±0,5 % par année d'écart à 15 ans) et la difficulté d'un lac bas (sous 30 % de la capacité, le poisson est plus dur à prendre). Une sortie
+ne dépasse pas la **cale** du bateau (`World.cale_of`), et la part du poisson de la saison reste un plafond : une saison de bons jours
+ne rattrape pas tout à fait une saison de tempêtes. `economy.outings` ne fixe plus le nombre de sorties : c'est le nombre qu'un agent à règles
+en prévoit par défaut (et la base de la cale).
 
 * **Le temps** (`Climate.calendar`, `World.weather`) est tiré pour chaque saison, jour par jour, et **le même pour tout le lac** : calme,
   ordinaire, agité ou tempête, avec une probabilité qui dépend de la saison de l'année (l'hiver est la saison des gros temps) et une
   inertie (le temps d'hier se prolonge près d'une fois sur deux). Un mauvais jour pèse plus sur une barque que sur un cotre
   (`BAD_DAY_BOATS`) ; un bon jour profite à tous. L'interface l'affiche (barre du bas, fil au début de chaque saison).
 * **La chance** est propre à chaque pêcheur : sa forme de la saison (`economy.luck_streak` : elle **se prolonge d'une saison à l'autre**,
-  un bon passage en annonce un autre) et sa forme du jour (qui se prolonge d'une sortie à l'autre) font varier chaque sortie autour de 1, d'un
+  un bon passage en annonce un autre) et sa forme de chaque sortie (tirée pour son numéro dans la saison) font varier chaque sortie autour de 1, d'un
   écart-type `economy.luck` (0,4). Deux pêcheurs sous le même ciel ne font donc pas la même pêche. Le tout est tiré pour ce pêcheur et cette
   saison : le résultat ne dépend pas de l'ordre dans lequel les barques rentrent.
-* Dans l'événement `catch` : `requested`, `landed`, `yield` et `luck` (moyennes de la saison) et `outings` (pour chaque sortie : `day`,
-  `weather`, `luck`, `yield`, `tonnes`). `economy.luck: 0` supprime la chance, l'expérience et la difficulté du lac bas : il ne reste que le temps.
+* Chaque sortie est un événement `outing` émis à son retour (`day`, `hours`, `tonnes`, `zone`, `lake`). Le bilan `catch` de la saison porte
+  `requested` (la prise du plan), `landed`, `declared` (somme des déclarations), `yield` et `luck` (moyennes) et `outings` (pour chaque sortie : `day`,
+  `weather`, `luck`, `yield`, `tonnes`, `declared`). `economy.luck: 0` supprime la chance, l'expérience et la difficulté du lac bas : il ne reste que le temps.
 
 Un pêcheur raconte sa saison dans sa mémoire (« Sur 6 sorties : 2 par temps calme, 3 par temps ordinaire, 1 dans la tempête. J'en visais
-4 t : une mauvaise pêche »). La déclaration à l'ancien garde la même proportion de la prise réelle : qui déclare tout reste honnête, quelle
-que soit sa saison. La patrouille du lac mesure un pêcheur avec une probabilité proportionnelle à la part de ses sorties où elle était
-dans sa zone.
+4 t : une mauvaise pêche »). À chaque retour il déclare la sortie à l'ancien (voir plus bas) ; qui déclare tout reste honnête, quelle que soit sa saison. La patrouille
+du lac mesure une sortie si elle passait dans sa zone ce jour-là.
 
 **Saisons de l'année et événements** (`climate.py`, réglage `climate`). Chaque saison porte deux facteurs : ce que rapporte la pêche et
 la vitesse de repeuplement du lac.
@@ -422,11 +430,13 @@ réserve, « au repos » un lac fermé. Événements : `proposal` et `norm_adopt
 
 ## Prises secrètes, déclarations et confiance
 
-**Seuls le pêcheur et le joueur connaissent la vraie prise.** En rentrant, chaque pêcheur **déclare** sa prise à l'ancien
-(événement `report` : `declared`, et `landed`, la vraie). Les autres ne connaissent que la déclaration : c'est elle qui figure dans
-leurs décisions, et dans le jugement de la vallée (le narrateur externe du récit de fin de saison, lui, sait la vraie prise). Une IA décide de sa déclaration dans le même appel que sa
-prise (champ `declaration`, aucun token de plus) ; un réflexe déclare la vérité ; parmi les agents à règles, le taiseux déclare la
-règle quand il pêche au-delà (sauf si l'un de ses mensonges vient d'éclater). `scenario.catches_visible` dit si les déclarations sont
+**Seuls le pêcheur et le joueur connaissent la vraie prise.** À chaque retour de sortie, le pêcheur **déclare** cette sortie à l'ancien
+(événement `report`, un par sortie : `declared`, `landed` la vraie, `outing_event_id`, `day`). Il peut dire vrai ou cacher une part, sortie par
+sortie : mentir un peu une fois, ou souvent. Le moteur garde chaque écart de 0,05 t ou plus (taille, jour, sortie) ; le bilan `catch` garde le total déclaré. Les autres ne connaissent que la déclaration : c'est elle qui figure dans
+leurs décisions, et dans le jugement de la vallée (le narrateur externe du récit de fin de saison, lui, sait la vraie prise). Une IA décide de sa déclaration dans la même décision que sa sortie suivante
+(champ `declaration`, ce qu'elle dit de la sortie qu'elle vient de finir) ; un réflexe déclare la vérité ; parmi les agents à règles
+(`policies.declare_outing`), le taiseux cache 40 % d'une sortie avec 30 % de chances (60 % s'il a dépassé son quota, sauf si l'un de ses
+mensonges vient d'éclater), le nouveau venu endetté 15 % avec 20 % de chances, la famille ancienne et le beau parleur disent vrai. `scenario.catches_visible` dit si les déclarations sont
 lues à toute la vallée ou au seul hameau (menu : « Les déclarations à l'ancien sont lues à toute la vallée »).
 
 **Un mensonge se découvre sur des indices, pas au hasard.** Le lac a une zone par village (sa rive, où ses pêcheurs vont
@@ -434,17 +444,19 @@ d'ordinaire) et le large. Le soir de la veillée, les indices de la saison sont 
 `scenario.detection`) :
 
 * **la patrouille du lac**, si le conseil en a voté une (voir plus bas) : son capitaine, une IA, décide où aller d'après les soupçons partagés ; elle croise les barques de la zone où elle se trouve et mesure leur charge (à ±12 %) ;
-* **les voisins** qui pêchent dans la même zone voient une barque rentrer (40 %) et en estiment la charge (à ±30 %) ;
+* **les voisins** qui reviennent le même jour de la même zone, et les villageois de la rive où la barque rentre, voient cette sortie rentrer (40 %, une chance par voisin et par sortie) et en estiment la charge (à ±30 %) ;
 * **la barque d'un interdit** est vue partant à l'aube par son hameau (30 %) ;
 * **le train de vie** : déclarer moins qu'il ne faut pour vivre, et pourtant vivre comme avant, se remarque (50 %) ;
+* Les indices naissent donc **par sortie** (jour, prise estimée, ce qu'elle avait déclaré) ; les deux suivants restent ceux de la saison.
 * **les comptes du lac** : l'ancien mesure ce que la pêche lui a fait perdre (à ±3 % de la capacité) et le compare au total
   déclaré (`lake_audit`).
 
 Qui n'a rien à se reprocher dit devant tous ce qu'il a vu, sauf contre un ami (confiance de 0,8 et plus) ; **qui a triché se tait**
 (son indice reste à lui, dans son carnet). Dès l'ouverture de la veillée, l'ancien **relate ce que les indices établissent** : il
 pèse ceux qui ont été dits devant tous (patrouille 3, témoin 1, départ vu 1, train de vie 0,5, comptes 0,5 s'ils ne tombent pas juste).
-Le mensonge est **établi** (`lie_discovered`) quand ce poids atteint 2 et que la charge estimée dépasse la déclaration de plus de
-25 % (et d'au moins 0,3 t) ; pour un interdit, toute sortie prouvée est une faute. La vallée retient l'estimation des indices, pas
+Le mensonge est **établi** (`lie_discovered`) **sur le cumul** : sortie par sortie, une sortie est suspecte si l'estimation dépasse la
+déclaration de plus de 25 % (et d'au moins `margin_t`, ramené à la taille d'une sortie) ; les poids des indices s'additionnent d'une sortie
+à l'autre jusqu'à 2. Un menteur d'une seule sortie est donc bien plus difficile à établir qu'un menteur répété ; pour un interdit, toute sortie prouvée est une faute. La vallée retient l'estimation des indices, pas
 la vérité ; et comme seuls les indices comptent, l'ancien peut se tromper : le fil l'écrit `ACCUSÉ À TORT` (vu de vous seul). Il
 relate, il ne sanctionne pas : les IA lisent ces faits (« Indices et soupçons dans la vallée »), jugent, accusent, et proposent
 d'exclure si elles le veulent.
@@ -505,7 +517,7 @@ jugement des autres et à une proposition d'exclusion ; un dépassement avoué s
 Sur un lac bien rempli, le repère des anciens rappelle qu'au-dessus de la moitié le lac ne se repeuple presque plus et qu'on peut
 pêcher ce surplus sans l'abîmer (la vallée votait 2 t chacun pour 6 t de surplus par pêcheur).
 
-Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), s'il est interdit, sa dernière prise et sa
+Les mensonges établis (sorties, jours, déclaré, estimé) sont écrits dans le livre des mensonges que lit chaque agent (`lie_book`). Dans Godot, l'onglet **Confiance** montre une jauge par pêcheur (sa réputation), s'il est interdit, sa dernière prise et sa
 déclaration (en rouge « ment » s'il a déclaré moins qu'il n'a pêché, ce que vous seul savez) et ses mensonges **établis** par l'ancien sur des indices (il peut se tromper) ; sur la carte, la patrouille navigue de zone en zone, un astre doré marque les élus des villages, un anneau rouge barré marque les
 interdits et les bateaux ont la taille de leur cale ; le fil écrit `MENSONGE` et `EN CACHETTE` (vus de vous seul), `INDICE` (ou `INDICE GARDÉ`), `COMPTES`,
 `MENSONGE ÉTABLI`, `PRIS EN CACHETTE`, `ACCUSÉ À TORT`, `CONFIANCE` (un jugement marqué, d'au moins 0,2), `EXCLUSION` et
@@ -546,8 +558,7 @@ ne l'y oblige : à chaque saison, avant sa prise, il peut choisir un autre lac (
 d'ici (avec deux fois plus d'erreur que sur le sien), la route, ce qu'elle lui laisserait de prise et ce qu'elle lui coûterait, et ce que
 le lac lui laisserait viser là-bas. **La route est une contrainte, que le moteur applique** : un lac est à une distance de l'autre
 (`lakes.LAKE_CENTERS`, `economy.travel_days` jours pour traverser la carte, 1,5 par défaut, à l'aller) ; chaque sortie dure alors
-1 + 2 × route jours au lieu d'un, donc il ne ramène que `1 / (1 + 2 × route)` de ce que la même sortie rapporterait chez lui (47 % pour
-une route de 0,6 jour) ; et la route coûte `economy.travel_cost` écus par jour de mer à chaque sortie (68 écus la saison pour 0,6 jour,
+la pêche plus l'aller et le retour (la route se fait de nuit comme de jour), et la cale limite toujours ce qu'il ramène ; et la route coûte `economy.travel_cost` écus par jour de mer à chaque sortie (68 écus la saison pour 0,6 jour,
 6 sorties). Il pêche alors dans le « large » du lac visé (`catch.away`, `home_lake`, `travel_days`, `travel_cost`), avec ceux de là-bas :
 plus il y a de visiteurs, plus la pression monte. Le moteur ne pose aucun seuil : c'est la réflexion du pêcheur (ou le caractère d'un agent
 à règles : la famille ancienne, attachée à son lac, veut un lac bien meilleur ; le nouveau venu endetté va où l'on pêche ; tous partent
@@ -593,7 +604,7 @@ ne dénonce pas un ami), la vérité des sorties et les déclarations qu'il n'a 
 sans rien trouver inspire moins de méfiance ; un coup d'œil ailleurs une fois sur cinq pour qu'on ne le devine pas. Les pêcheurs savent
 qu'elle existe, pas où elle passera.
 
-**Ce qu'elle trouve.** Une barque est croisée en proportion des jours de sortie où la patrouille était dans sa zone (ou sur ses talons) :
+**Ce qu'elle trouve.** Une sortie est croisée si son jour tombe dans une étape de la patrouille dans sa zone (ou sur ses talons) :
 chance de la mesurer `scenario.detection.patrol` (90 %) fois cette part ; la charge est mesurée à ±12 %. Le relevé est un indice (`clue`,
 `kind: patrouille`, observateur `PAT`) que l'ancien relate à la veillée ; il pèse 3, de quoi établir un mensonge à lui seul. Son capitaine
 note après chaque saison où il est passé, qui il a mesuré et si cela collait avec ce qui était déclaré ; il le relit avant de choisir sa
@@ -602,7 +613,7 @@ route suivante. Un capitaine ne peut être partout : couvrir une zone, c'est en 
 ## Le temps : un seul mode, et les dialogues
 
 Il n'y a plus de choix Synchrone / Asynchrone : un **ordonnanceur à événements** mène chaque saison (spécification : [docs/temps.md](docs/temps.md)).
-Réfléchir ne prend pas de temps simulé, agir en prend : une IA lente ne fait perdre aucune sortie et ne change pas le monde, et les
+Réfléchir ne prend pas de temps simulé, agir en prend : une IA lente ne fait perdre aucune sortie et ne change pas le monde (le plan de saison et chaque sortie sont des réflexions : elles ne coûtent rien ; les sorties durent des heures), et les
 décisions qu'aucun événement ne sépare sont demandées **en parallèle**.
 
 * **Veillée au fil de l'eau.** Les répliques se préparent en parallèle sur le compte rendu du moment ; une seule personne parle à la
@@ -657,8 +668,9 @@ et ses effets sont des événements séparés : `proposal`, `support`, `promise`
 * **bulle** au-dessus de celui qui parle, **flèche bleue** vers son destinataire, onde s'il parle à tous ;
 * **badge doré** `P3 · 2 t` sur l'auteur d'une proposition, **lien vert** de chaque soutien vers l'auteur ;
 * **flèche rouge** pour une accusation ; étiquettes « promesse trahie » / « parole tenue » au bilan ;
-* onglet **Interactions** : le fil complet, filtrable sur l'agent sélectionné ;
-* onglet **Agent** : profil, modèle, avoir, prises, promesses (annoncé vs réel), dernière décision
+* onglet **Interactions** : le fil complet, filtrable sur l'agent sélectionné ; les retours sont **groupés par pêcheur et par jour** (une ligne
+  par pêcheur et par jour, pour rester lisible) ;
+* onglet **Agent** : profil, modèle, avoir, prises, **plan de saison** et **intention** (« ressort demain à l'aube »), promesses (annoncé vs réel), dernière décision
   avec son horizon d'information, sa justification ou la règle appliquée, et **tout ce qui a été
   retrouvé** pour décider (engagements épinglés, souvenirs, archives, rumeurs), puis la mémoire complète ;
 * onglet **Règles** : propositions sur la table et historique des règles adoptées ;
@@ -746,7 +758,7 @@ des parties synchrones, asynchrones, par hameau, sans communication et à règle
 Chaque événement porte `sim_time` (moment dans le monde) et `processed_at` (moment réel).
 
 * **Un seul mode** (ordonnanceur, voir [docs/temps.md](docs/temps.md)) : le temps simulé ne bouge pas pendant qu'un agent
-  réfléchit ; ses actions durent (une sortie d'un jour, la route vers un autre lac) et s'appliquent à leur fin, dans l'ordre de la
+  réfléchit ; ses actions durent (une sortie de 3 à 7 heures de pêche, jamais la nuit, plus la route vers un autre lac) et s'appliquent à leur fin, dans l'ordre de la
   file (temps, classe, clé de la graine), jamais dans celui où les modèles répondent. Entre deux échéances, l'horloge d'affichage
   avance à `sim_hours_per_second` (3 h/s par défaut), accélérée de `idle_speedup`.
 
@@ -791,11 +803,12 @@ Trois documents décrivent la construction du jeu :
 * [docs/temps.md](docs/temps.md) : le temps, un seul ordonnanceur (réfléchir ne prend pas de temps, agir en prend ; la
   veillée au fil de l'eau) ;
 * [docs/uml/](docs/uml/) : 97 diagrammes UML en Mermaid, que GitHub affiche directement, réunis aussi dans un seul PDF :
-  [docs/uml/FILETS-diagrammes-UML.pdf](docs/uml/FILETS-diagrammes-UML.pdf).
+  [docs/uml/FILETS-diagrammes-UML.pdf](docs/uml/FILETS-diagrammes-UML.pdf), avec un dictionnaire des variables et des
+  paramètres, et une affiche A0 de toutes les classes :
+  [docs/uml/FILETS-classes-A0.pdf](docs/uml/FILETS-classes-A0.pdf).
 
 Chaque diagramme est précédé d'un paragraphe qui dit comment le lire et suivi des emplacements dans le code
-(`fichier:ligne`). Ils sont complets : chaque classe porte tous ses attributs et toutes ses méthodes (publiques et internes),
-chaque fichier Python et chaque script Godot a sa place.
+(`fichier:ligne`).
 
 **Par où commencer**
 
@@ -806,6 +819,14 @@ chaque fichier Python et chaque script Godot a sa place.
 3. [Communication](docs/uml/communication.md) (15 diagrammes) : les mêmes scénarios, vus comme des messages numérotés entre
    objets (1, 1.1, 2…).
 4. Les classes, partie par partie.
+5. [Dictionnaire des variables et des paramètres](docs/uml/dictionnaire.md) : chaque clé de configuration (type, défaut,
+   valeurs, sens), les préréglages, les variables d'environnement, la ligne de commande, puis chaque attribut de chaque
+   classe et de chaque script Godot (type, unité, rôle).
+
+**L'affiche A0** ([FILETS-classes-A0.pdf](docs/uml/FILETS-classes-A0.pdf)) réunit toutes les classes sur une feuille. En
+haut, le diagramme des relations : chaque classe à son nom, dans un cadre et une couleur par zone (monde, temps, décisions,
+modèles, mémoire, salon et API, événements et stockage, services et configuration, Godot). En dessous, chaque classe avec
+tous ses attributs et méthodes, dans la couleur de sa zone.
 
 **Classes**
 
@@ -821,7 +842,7 @@ chaque fichier Python et chaque script Godot a sa place.
 | | Scénario |
 |---|---|
 | (a) | démarrer une partie depuis le menu |
-| (b) | la décision de prise d'un pêcheur (observation, mémoire et RAG, système 1 / 2, modèle, sorties) |
+| (b) | le plan de saison et les sorties d'un pêcheur (observation, mémoire et RAG, routage réflexe / grand modèle, sortie, retour, déclaration, décision suivante) |
 | (c) | la veillée au fil de l'eau (deux passes de préparation, une parole à la fois, vote) |
 | (d) | une injection du joueur : la rumeur |
 | (e) | le rejeu d'une partie, avec le bus local puis avec Kafka |
@@ -838,7 +859,7 @@ méthodes asynchrones ne sont pas marquées.
 
 **Mettre à jour.** `npx -y @mermaid-js/mermaid-cli@11.4.2 -i docs/uml/<fichier>.md -o <dossier>/out.md` vérifie les
 diagrammes d'un fichier ; `python docs/uml/build_pdf.py` refait le PDF (il faut Node.js ; le sommaire du PDF est cette
-section).
+section) ; `python docs/uml/build_poster.py` refait l'affiche A0 à partir des diagrammes de classes.
 
 ## Arborescence
 

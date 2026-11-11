@@ -19,7 +19,7 @@ UML = Path(__file__).resolve().parent
 REPO = UML.parent.parent
 OUT = UML / "FILETS-diagrammes-UML.pdf"
 ORDER = ["cas-utilisation", "sequences", "communication", "classes-monde", "classes-decisions", "classes-infrastructure",
-         "classes-godot"]
+         "classes-godot", "dictionnaire"]
 SECTION = "## Documentation et diagrammes UML"
 CSS = """@page { size: A4; margin: 18mm 16mm; }
 body { font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; color: #1b2530; }
@@ -74,11 +74,12 @@ def main() -> None:
     today = dt.date.today().strftime("%d/%m/%Y")
     cover = ('<section class="cover"><p class="kicker">Projet Parcours 2 · EIGSI</p><h1 class="title">FILETS</h1>'
              '<p class="sub">La tragédie des communs au lac de Vellmor</p><p class="what">Diagrammes UML : cas d\'utilisation, '
-             f'séquences, communication et classes de chaque partie du projet</p><p class="date">{today}</p></section>')
+             f'séquences, communication et classes de chaque partie du projet ; dictionnaire des variables et des paramètres</p><p class="date">{today}</p></section>')
     html = (f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>FILETS · Diagrammes UML</title>'
             f'<style>{CSS}</style></head><body>{cover}{(work / "body.html").read_text(encoding="utf-8")}</body></html>')
     (work / "doc.html").write_text(html, encoding="utf-8")
-    subprocess.run([chrome(), "--headless=new", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={OUT}",
+    subprocess.run([chrome(), "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+                    "--generate-pdf-document-outline", f"--print-to-pdf={OUT}",
                     (work / "doc.html").as_uri()], check=True, capture_output=True)
     print(f"{OUT} ({OUT.stat().st_size // 1024} Ko, {len(re.findall(rb'/Type\s*/Page[^s]', OUT.read_bytes()))} pages)")
 

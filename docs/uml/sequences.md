@@ -193,7 +193,7 @@ Dans le code :
 
 ## (b) La décision de prise d'un pêcheur
 
-C'est la décision centrale du jeu : combien pêcher. L'ordonnanceur inscrit pour chaque pêcheur une `Decision` au jour de départ de ce pêcheur, puis les lance par lots en parallèle. Trois diagrammes : b1 l'observation (ce que l'agent sait), b2 le choix système 1 ou 2 et l'appel du modèle (avec le limiteur et la file de modèles), b3 la sortie et l'application de la prise.
+C'est la décision centrale du jeu : quand sortir, où, combien et ce qu'on déclare. À l'ouverture, l'ordonnanceur inscrit pour chaque pêcheur son plan de saison au jour de départ de ce pêcheur ; ensuite chaque sortie est décidée à l'ouverture et à chaque retour, avec la déclaration de la sortie qui vient de finir (détail : `docs/peche.md`). Trois diagrammes : b1 l'observation (ce que l'agent sait), b2 le routage réflexe ou grand modèle et l'appel du modèle, b3 le plan puis la boucle sortie, retour, déclaration, décision suivante.
 
 ### b1. Ordonnancement et observation : mémoire et RAG
 
@@ -203,7 +203,7 @@ Avant tout appel, `observe` assemble ce que l'agent sait à l'instant `horizon` 
 sequenceDiagram
     autonumber
     participant S as SeasonScheduler
-    participant A as decide_catch
+    participant A as decide_plan / decide_catch
     participant W as World
     participant MS as VectorMemory
     participant R as VectorRetriever
@@ -212,15 +212,16 @@ sequenceDiagram
     participant PG as PostgreSQL pgvector
 
     Note over S: jour de départ du pêcheur = horizon h, fixé à open_season
-    S->>S: at(h, PECHEURS, id, Decision(decide_catch, depart))
+    S->>S: at(h, PECHEURS, id, Decision(decide_plan, planned))
+    Note over S: à chaque retour : Decision(decide_catch, report_then_go), même observation (voir b3)
     S->>S: play puis run_batch : assemble le lot
     S->>S: parallel(jobs) puis think(noms, True)
     S->>S: publish_status avec thinking
-    S->>A: make() dans SimClock.local(h) et EventFactory.defer(buf)
+    S->>A: make() = decide_plan ou decide_catch, dans SimClock.local(h) et EventFactory.defer(buf)
     A->>W: observe(agent, h, catch)
     W->>W: lake.observe (estimation bruitée du stock)
     W->>W: note_lake, applicable_norm, rule_view, known_catches
-    W->>W: carnet, clue_lines, active_rumors(h), pinned
+    W->>W: carnet, clue_lines, lie_book, my_outings, last_landed, cale, active_rumors(h), pinned
     par mémoire de l'agent
         W->>MS: aretrieve(query, h, top_k, exclude)
         MS->>MS: bank.flush()
@@ -244,21 +245,16 @@ sequenceDiagram
     W-->>A: obs, state, retrieved, used
 ```
 
-Dans le code :
-- Ordonnancement : `filets/scheduler.py:147-158` (`open_season`, `Decision(a.id, 1.0, ...)` à `opening + a.offset_days`), `:84-98` (`play`), `:100-115` (`run_batch`), `:117-135` (`parallel`), `:137-145` (`think`), `:38-43` (`Decision`), `:64-67` (`at`).
-- Observation : `filets/world.py:1250` (`observe`), `:1262-1263` (`lake.observe`, `note_lake`), `:1279` (`pinned`), `:1314-1321` (mémoire et corpus : `retrieve`/`search`, ou `aretrieve`/`asearch` en `asyncio.gather` avec la base), `:1322-1334` (assemblage de `retrieved`, rumeurs en tête `:1328`), `:684` (`active_rumors`), `:1200` (`carnet`), `:1020` (`clue_lines`).
-- Mémoire : `filets/memory.py:60` (`retrieve`), `:119-135` (`VectorMemory.aretrieve`), `:91` (`MemoryBank.flush`).
-- RAG : `filets/rag.py:179` (`Retriever.search`), `:257-272` (`VectorRetriever.asearch`), `:231` (`_flush_lore`).
-- Plongement : `filets/vectors.py:72-95` (`embed` : cache, lots, `POST /api/embed` `:65`).
+Dans le code : `filets/scheduler.py` (`open_season`, `planned`, `go`, `play`, `run_batch`, `parallel`, `think`, `Decision`, `at`) ; `filets/world.py` (`observe`, `note_lake`, `pinned`, `active_rumors`, `carnet`, `clue_lines`) ; `filets/memory.py` (`retrieve`, `VectorMemory.aretrieve`, `MemoryBank.flush`) ; `filets/rag.py` (`Retriever.search`, `VectorRetriever.asearch`, `_flush_lore`) ; `filets/vectors.py` (`embed`).
 
 ### b2. Le choix système 1 ou système 2 et l'appel du modèle
 
-Un agent à règles ne consulte aucun modèle : sa prise vient de `catch_rule`. Un agent à IA passe par le routage : avec le profil de réflexion « adaptatif », une routine (lac sain et stable) va au système 1 (réflexe, rapide), tout le reste au système 2 (réflexion, schéma JSON imposé). Sans profil adaptatif tout est système 2. L'appel passe par `LLMRouter.complete`, qui choisit le client du niveau, puis par la file `ModelGate` (si le fournisseur est local) et le limiteur de débit, avant le POST vers Ollama.
+Deux décisions existent (`docs/peche.md`). Le plan de saison (`decide_plan`) est toujours une réflexion du grand modèle (système 2) ; un agent à règles applique la règle de son archétype. La décision de sortie (`decide_catch`, à l'ouverture puis à chaque retour) choisit quand, où, combien et courte ou longue : un agent à règles suit son plan (`outing_rule`), un agent à IA passe par `routing.choose_outing_system`, qui compare ce qu'il voit à sa décision précédente (`outing_reasons`). Rien de nouveau : réflexe (système 1, trois questions typées `quand`, `duree`, `prise`). Une raison nouvelle (météo, rumeur, règle, lac qui baisse, quota presque atteint, indice, plan rempli ou impossible) : grand modèle (système 2, schéma JSON imposé). Sans profil adaptatif tout est système 2. L'appel passe par `LLMRouter.complete`, qui choisit le client du niveau, puis par la file `ModelGate` (si le fournisseur est local) et le limiteur de débit, avant le POST vers Ollama.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant A as decide_catch
+    participant A as decide_plan / decide_catch
     participant RT as LLMRouter
     participant CTL as GameControl
     participant CL as Client Ollama
@@ -268,10 +264,15 @@ sequenceDiagram
     participant EF as EventFactory
 
     alt agent à règles
-        A->>A: lake_choice_rule, catch_rule, declare_rule, rule_choices
+        A->>A: plan : lake_choice_rule, catch_rule, declare_rule, rule_choices, outing_rule
+        A->>A: sortie : outing_rule, declare_outing(last_landed)
         A->>EF: emit(decision) justification Règle appliquée
     else agent à IA
-        A->>A: routing.choose_system(obs, catch) si profil adaptatif
+        alt plan de saison
+            A->>A: toujours système 2
+        else décision de sortie
+            A->>A: routing.choose_outing_system(obs, prev) : outing_reasons, si profil adaptatif
+        end
         alt système 1 réflexe
             A->>RT: complete(agent, tier reflexe ou petit, hint S1)
         else système 2 réflexion
@@ -317,69 +318,83 @@ sequenceDiagram
     end
 ```
 
-Dans le code :
-- Agent : `filets/agents.py:144` (`decide_catch`), `:154-167` (règles), `:170` (`routing.choose_system`), `:171-186` (réflexe et reprise), `:79-136` (`_ask_llm`, `world.router.complete` `:108`, reprise `petit` `:119`, incidents `:121-136`), `:139` (`reflex_usable`).
-- Routage : `filets/routing.py:24` (`reasons_to_think`), `:53` (`choose_system`) ; `filets/prompts.py:42` (`is_adaptive`).
-- Routeur : `filets/llm.py:335-362` (`LLMRouter.__init__`, `describe`), `:365-420` (`complete`), `:406` (événement `llm_call`), `:384` (cas annulé).
-- Clients : `filets/llm.py:154-174` (`OpenAICompatClient`, `gate` `:173`, `limiter` `:167`), `:176-188` (`complete` avec `gate.acquire` `:181`), `:190-237` (`_complete`, `limiter.wait` `:207`, POST `:209`), `:250-322` (`SystemOneClient`, `gate` `:266`, `complete` `:269-278`).
-- File et limiteur : `filets/llm.py:44-59` (`RateLimiter`), `:61-152` (`ModelGate` : `acquire` `:109`, `release` `:124`, `_dispatch` `:132`, `_start_switch` `:147`).
-- Contrôle : `filets/control.py:83` (`checkpoint`).
+Dans le code : `filets/agents.py` (`decide_plan`, `decide_catch`, `_ask_llm`, `reflex_usable`) ; `filets/routing.py` (`reasons_to_think`, `outing_reasons`, `choose_outing_system`) ; `filets/prompts.py` (`is_adaptive`, `reflex_messages`, `catch_messages`) ; `filets/policies.py` (`outing_rule`, `declare_outing`) ; `filets/llm.py` (`LLMRouter.complete`, `OpenAICompatClient`, `SystemOneClient`, `RateLimiter`, `ModelGate`) ; `filets/control.py` (`checkpoint`).
 
-### b3. La sortie : décision publiée dans l'ordre, puis prise appliquée
+### b3. Le plan, puis la boucle sortie, retour, déclaration, décision suivante
 
-Les événements des décisions d'un lot sont mis en attente et ne sont émis qu'à la fin, dans l'ordre de la file (jamais dans l'ordre où les modèles répondent). Pour chaque décision, `then` appelle `depart`, qui prépare la sortie ; les effets sur le lac sont des événements du futur dans la file. Le poisson sort du lac à la fin de chaque sortie (un jour simulé après le départ), et le retour vend, déclare et laisse des indices.
+Les événements des décisions d'un lot sont mis en attente et émis à la fin, dans l'ordre de la file. Au jour de départ du pêcheur, `planned` note le plan, ouvre sa pêche (`open_trip`) et lance sa première sortie avec `go` : `start_outing` la place dans le temps (pas de pêche de 21 h à 5 h, route d'un autre lac en plus). Rien ne sort du lac avant le retour. À l'instant du retour, `back` appelle `land_outing` (le poisson sort du lac, événement `outing`), puis une nouvelle décision `decide_catch` est inscrite à ce même instant : elle voit la prise débarquée (`last_landed`), décide la sortie suivante et dit ce qu'il déclare de celle qui vient de finir. `report_then_go` émet le `report` de cette sortie puis relance `go`. Quand `start_outing` ne renvoie rien (« plus cette saison », fermeture, retour après la veillée), `finish_trip` clôt la pêche : bilan `catch` avec le total déclaré. Les indices ne naissent pas ici : ils sont réunis au soir de la veillée (`investigate`, scénario c).
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant S as SeasonScheduler
-    participant A as decide_catch
+    participant A as decide_plan / decide_catch
     participant W as World
     participant EF as EventFactory
     participant REC as Recorder
     participant KB as Bus Kafka
     participant G as Main main.gd
 
-    A->>A: borne la prise [min, cale], déclaration au plus égale à la prise
-    opt prise absente ou invalide
-        A->>A: catch_rule (repli), fallback = true
-    end
-    A->>EF: emit(decision)
-    Note over EF: dans defer : mis en tampon avec un identifiant provisoire
-    A->>W: _note_observation(obs, dec), agent.last_decision = dec
-    A-->>S: Outcome(valeur, données, décision)
-    S->>S: think(noms, False) puis publish_status
+    Note over S,A: ouverture : Decision(decide_plan, planned) au jour de départ du pêcheur
+    A->>A: grand modèle (ou règle) : plan avec total, lac, lieu, déclaration prévue, première sortie
+    A->>EF: emit(decision, decision_type plan) en tampon (defer)
+    A->>W: _note_observation(obs, dec), agent.prev = routing.snapshot(obs)
+    A-->>S: Outcome(valeur, data next + declaration, décision)
+    S->>S: think(noms, False), publish_status
     S->>EF: flush(buf) dans l'ordre de la file
     EF->>EF: seq et event_id définitifs
     EF->>KB: publish(events, decision)
     EF->>REC: write(ev)
     S->>W: heal_event_ids(renamed)
-    loop pour chaque décision du lot, dans l'ordre
-        S->>S: SimClock.local(h) puis then(res) = depart(agent, outcome, h)
-        S->>W: plan_trip(agent, valeur, décision, h, declared, lake_name)
-        W-->>S: Trip (sorties, jours, lac, coin)
-        S->>S: at(jour + 1, land_outing(trip, k)) pour chaque sortie
-        S->>S: at(retour, finish_trip(trip))
+    S->>S: then(res) = planned(agent, outcome, h)
+    S->>W: note_plan(agent, outcome)
+    S->>W: open_trip(agent, requested, decision, h, declared)
+    W-->>S: Trip
+    S->>S: go(agent, trip, next, h)
+    loop tant que la prochaine sortie existe
+        S->>W: start_outing(trip, spec, now)
+        W->>W: fishing_start (nuit, aube), cale_of, trip_left, outing_row
+        alt delay_h absent, après la fermeture ou retour après la veillée
+            W-->>S: None
+            S->>S: at(now, finish_trip) : sortie de la boucle
+        else sortie placée
+            W-->>S: out (début, retour back, cale, zone, cellule)
+            S->>S: at(back, PECHEURS, id, back)
+            Note over S,W: temps simulé : la décision n'a rien coûté, la sortie dure des heures
+            S->>S: show(t) avance l'horloge jusqu'à back
+            S->>W: land_outing(trip, out)
+            W->>W: lake.take(wanted, cellule), route payée
+            W->>EF: emit(lake_update, cause catch)
+            W->>EF: emit(outing)
+            EF->>KB: publish(events, outing)
+            KB-->>G: via bridge et API : la barque rentre, +x t, ligne du fil
+            S->>S: at(back, Decision(decide_catch, report_then_go))
+            S->>A: decide_catch(w, agent, back) : observe, outing_reasons, S1 ou S2 (voir b2)
+            A->>EF: emit(decision, decision_type catch, system, routing, declared)
+            A-->>S: Outcome(next, declaration)
+            S->>EF: flush(buf), publish(events, decision)
+            S->>S: then(res) = report_then_go(o, back)
+            S->>W: report_outing(trip, out, declaration)
+            W->>W: écart de 0,05 t ou plus : lies[report_id] (taille, jour, report)
+            W->>EF: emit(report)
+            EF->>KB: publish(events, report)
+            S->>S: go(agent, trip, next, back)
+        end
     end
-    Note over S,W: temps simulé : la décision n'a rien coûté, la sortie dure un jour
-    S->>S: show(t) avance l'horloge jusqu'à l'échéance
-    S->>W: land_outing(trip, k)
-    W->>W: lake.take(part, cellule) puis lake_update(catch)
-    W->>EF: emit(lake_update)
-    S->>W: finish_trip(trip) au retour
-    W->>W: vente, richesse, déclaration à l'ancien, indices, réputation
-    W->>EF: emit(catch)
+    S->>W: finish_trip(trip)
+    W->>W: bilan, vente, richesse, réputation (dernière sortie : sa zone et son coin)
+    W->>EF: emit(catch) avec declared (somme des report) et outings
     EF->>KB: publish(events, catch)
     KB-->>G: via bridge et API : topic events
     G->>G: _on_event puis world.on_event
-    Note over G: la barque sort, +x t s'affiche, une ligne entre dans le fil
+    Note over G: fil groupé par pêcheur et par jour, inspecteur : plan et intention
 ```
 
 Dans le code :
-- Décision : `filets/agents.py:187-231` (bornage, repli, déclaration, événement `decision` `:222`), `:65-70` (`_note_observation`), `:58` (`Outcome`).
-- Publication ordonnée : `filets/scheduler.py:117-135` (`parallel`, `flush` `:131`), `filets/events.py:50-57` (`defer`), `:59-69` (`flush`, `heal_event_ids` appelé `scheduler.py:133`), `filets/world.py:387` (`heal_event_ids`).
-- Effets : `filets/scheduler.py:160-171` (`depart`, `plan_trip` `:163`), `filets/world.py:1506` (`plan_trip`), `:1559-1568` (`land_outing`), `:544-555` (`lake_update`, `lake_update` émis `:550`), `:1570` (`finish_trip`, événement `catch` `:1595`), `filets/lake.py:50` (`take`).
-- Affichage : `godot/scripts/main.gd:757` (`_on_event`, `catch` `:776`), `godot/scripts/world_view.gd:1167` (`on_event`, `catch` `:1223`).
+- Décisions : `filets/agents.py` (`decide_plan`, `decide_catch`, `_note_observation`, `Outcome`) ; `filets/routing.py` (`outing_reasons`).
+- Publication ordonnée : `filets/scheduler.py` (`parallel`, `flush`) ; `filets/events.py` (`defer`, `flush`) ; `filets/world.py` (`heal_event_ids`).
+- Boucle : `filets/scheduler.py` (`open_season`, `planned`, `go`, `back`, `report_then_go`) ; `filets/world.py` (`note_plan`, `open_trip`, `start_outing`, `fishing_start`, `cale_of`, `trip_left`, `outing_row`, `land_outing`, `report_outing`, `finish_trip`) ; `filets/lake.py` (`take`).
+- Affichage : `godot/scripts/main.gd` (`_on_event`), `godot/scripts/world_view.gd` (`on_event`).
 
 ## (c) La veillée au fil de l'eau
 
@@ -401,7 +416,8 @@ sequenceDiagram
 
     Note over S: J25 18:00 temps simulé, evening() est un effet de classe CONSEIL
     S->>W: open_assemblies(season, close_t)
-    W->>W: investigate(season) : indices de la saison réunis
+    W->>W: investigate(season) : indices par sortie réunis
+    W->>W: weigh_evidence(season) : l'ancien pèse les indices sortie par sortie
     S->>EF: emit(phase assembly open)
     S->>V1: Village(sched, asm1, ta)
     S->>V2: Village(sched, asm2, ta)
@@ -680,7 +696,7 @@ Dans le code :
 
 ## (f) La fin de saison
 
-À J29,9 simulé (jour du repeuplement) l'ordonnanceur appelle `regrowth`. Le monde clôt la saison : l'ancien pèse les indices, chaque lac se repeuple, les promesses sont jugées, la richesse est ajustée, les souvenirs et le « lore » (ce que la vallée sait) sont écrits, et l'événement `season_end` est publié. Le récit du narrateur est lancé en tâche de fond et se rédige pendant la préparation de la saison suivante. Le service d'indicateurs transforme `season_end` en indicateurs de fin de saison, que Godot dessine dans la courbe.
+À J29,9 simulé (jour du repeuplement) l'ordonnanceur appelle `regrowth`. Le monde clôt la saison : l'ancien pèse les indices (sortie par sortie, sur le cumul ; les `report` de chaque retour et le total déclaré du bilan `catch` sont déjà publiés), chaque lac se repeuple, les promesses sont jugées, la richesse est ajustée, les souvenirs et le « lore » (ce que la vallée sait) sont écrits, et l'événement `season_end` est publié. Le récit du narrateur est lancé en tâche de fond et se rédige pendant la préparation de la saison suivante. Le service d'indicateurs transforme `season_end` en indicateurs de fin de saison, que Godot dessine dans la courbe.
 
 ```mermaid
 sequenceDiagram

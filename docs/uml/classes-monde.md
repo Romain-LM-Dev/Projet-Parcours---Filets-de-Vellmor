@@ -8,7 +8,7 @@ Comment lire les diagrammes : `+` public, `-` interne (nom commençant par `_`).
 vivre », un losange vide (`o--`) « garde une référence », `<|--` l'héritage, `..>` « utilise ». Quand le code n'annote pas le type
 d'un attribut, il est déduit de la valeur affectée (`any` si on ne peut pas savoir) ; `X?` veut dire « X ou rien » ; les types
 génériques sont réduits à leur base (`dict`, `list`). Les méthodes `async` ne sont pas marquées. Rien n'est volontairement omis :
-l'union des vues de `World` couvre toutes ses définitions (137 : 136 méthodes plus la propriété `boat_names`, montrée comme attribut).
+l'union des vues de `World` couvre toutes ses définitions (147 : 146 méthodes plus la propriété `boat_names`, montrée comme attribut).
 
 ## 1. `World` : structure, attributs et utilitaires
 
@@ -78,6 +78,7 @@ classDiagram
         +dict trust
         +dict detection
         +dict trips
+        +dict live
         +list clues
         +dict audits
         +dict accusations
@@ -152,8 +153,8 @@ classDiagram
 Sections suivantes : une vue de `World` par domaine.
 
 **Pour aller plus loin**
-- `filets/world.py:213` (`World`)
-- `filets/agents.py:25` (`Agent`)
+- `filets/world.py:205` (`World`)
+- `filets/agents.py:26` (`Agent`)
 - `filets/lake.py:19` (`Lake`)
 
 ## 2. `World` : lacs, zones et déplacements
@@ -209,22 +210,30 @@ classDiagram
 
 ## 4. `World` : pêche, sorties et météo
 
-Le déroulement physique d'une pêche : jours de sortie, météo, plan du voyage, prises, retour, entretien du bateau. Le moteur ne fait que compter et appliquer la physique ; la quantité demandée vient de la décision de l'agent. Vue réduite à ce domaine : `World` y est montré sans ses attributs (voir la section 1).
+Le déroulement physique de la pêche de saison : jours de sortie, météo, ouverture de la pêche (`open_trip`, d'après le plan que le pêcheur a décidé), puis, pour chaque sortie qu'il décide, départ (`start_outing`, `fishing_start` : pas de pêche la nuit), cale du bateau (`cale_of`), prise (`outing_row`), retour (`land_outing`), déclaration de ce retour (`report_outing`) et bilan de saison (`finish_trip`). Le moteur ne fait que compter et appliquer la physique ; le plan, le moment, le lieu, la quantité et la déclaration de chaque sortie viennent de la décision du pêcheur. Vue réduite à ce domaine : `World` y est montré sans ses attributs (voir la section 1).
 
 ```mermaid
 classDiagram
     class World {
         +world_text(agent) str
-        +beyond_declared(estimate, said) bool
+        +beyond_declared(estimate, said, outing) bool
         +upkeep(agent, season) float
         +weather(season) list
         +outing_days(agent, route) list
+        +outing_row(agent, season, day, lake, stock, k) dict
         +outings(agent, season, stock, lake) list
         +note_lake(agent, season, horizon, est, purpose, rnd)
         +observe(agent, horizon, purpose, assembly, rnd)
+        +cale_of(agent, hours) float
+        +trip_left(agent, trip, lake, stock) float
+        +fishing_start(t, hours) float
+        +open_trip(agent, requested, decision, horizon, declared, ration, stock_at_action) Trip?
+        +start_outing(trip, spec, now) dict?
+        +note_plan(agent, out) None?
+        +land_outing(trip, out) float
+        +report_outing(trip, out, declared) dict?
         +apply_catch(agent, requested, decision, horizon, ration, stock_at_action, declared, lake_name) dict
-        +plan_trip(agent, requested, decision, horizon, ration, stock_at_action, declared, lake_name) Trip?
-        +land_outing(trip, k) float
+        +leg_cost(days) float
         +finish_trip(trip) dict
     }
 ```
@@ -232,7 +241,7 @@ classDiagram
 
 ## 5. `World` : indices, mensonges, confiance et sanctions
 
-Ce que chacun sait ou croit des autres : rumeurs, prises connues, mensonges et triche, réputation, enquête et preuves, faits de confiance, carnet de l'agent et dossier remis avant les sanctions. Vue réduite à ce domaine : `World` y est montré sans ses attributs (voir la section 1).
+Ce que chacun sait ou croit des autres : rumeurs, prises connues, mensonges et triche (livre des mensonges établis : `lie_words`, `lie_lines`), réputation, enquête et preuves, faits de confiance, carnet de l'agent et dossier remis avant les sanctions. Vue réduite à ce domaine : `World` y est montré sans ses attributs (voir la section 1).
 
 ```mermaid
 classDiagram
@@ -248,7 +257,9 @@ classDiagram
         +judge(observer, changes, source_event_id)
         +investigate(season)
         +weigh_evidence(season)
-        +establish(a, season, trip, said, est, clues)
+        +establish(a, season, trip, said, est, clues, flagged)
+        +lie_words(outs, n) str
+        +lie_lines(agent, horizon, season) list
         +clue_text(c, viewer) str
         +clue_lines(agent, horizon, season) list
         +trust_facts(agent, season, horizon, since) dict
@@ -372,7 +383,7 @@ classDiagram
 
 ## 10. Données du conseil, du voyage et du pêcheur
 
-`Proposal`, `Sanction`, `Assembly`, `Trip` et `Norm` sont des `dataclass` de `world.py` ; `Agent` et `Outcome` viennent de `agents.py`,
+`Proposal`, `Sanction`, `Assembly`, `Trip` et `Norm` sont des `dataclass` de `world.py` (`Trip` est la pêche d'un pêcheur pour toute la saison : son plan, la liste de ses sorties `outs` décidées l'une après l'autre, ce que chacune a rapporté, et le bilan à son dernier retour) ; `Agent` et `Outcome` viennent de `agents.py`,
 `Profile` de `profiles.py`. Un `Norm` est une `Proposal` devenue règle après le vote (il garde son `proposal_id`). Une `Assembly`
 regroupe les paroles, les propositions et les sanctions soumises au vote d'une veillée.
 
@@ -420,27 +431,19 @@ classDiagram
         +dict decision
         +float horizon
         +float? declared
-        +Lake lake
         +Lake home
-        +float days
-        +str zone
-        +int cell
-        +float spot
-        +dict view
-        +dict pick
-        +str? place
         +bool secret
-        +float stock_observed
         +dict obs
-        +list outs
-        +list full
-        +int? cap_out
-        +list wanted
+        +dict view
         +float ration
-        +float stock_at_action
+        +float? stock_at_action
+        +list outs
         +list got
+        +dict taken
         +float? before
         +float? after
+        +set breach
+        +bool done
     }
     class Norm {
         +str scope
@@ -467,6 +470,9 @@ classDiagram
         +dict declared
         +dict outings
         +float form
+        +int form_season
+        +dict plans
+        +dict? prev
         +float temper
         +dict lake_choice
         +int? spot
@@ -505,7 +511,7 @@ classDiagram
     World "1" *-- "0..*" Assembly : assemblies
     World "1" *-- "0..*" Norm : norms
     World "1" *-- "1..*" Agent : agents
-    World ..> Trip : cree via plan_trip
+    World ..> Trip : open_trip (un par pecheur et saison)
     Assembly "1" *-- "0..*" Proposal : proposals
     Assembly "1" *-- "0..*" Sanction : sanctions
     Norm ..> Proposal : adoptee depuis proposal_id
@@ -522,9 +528,9 @@ classDiagram
 - `filets/world.py:128` (`Sanction`)
 - `filets/world.py:141` (`Assembly`)
 - `filets/world.py:164` (`Trip`)
-- `filets/world.py:196` (`Norm`)
-- `filets/agents.py:25` (`Agent`)
-- `filets/agents.py:58` (`Outcome`)
+- `filets/world.py:188` (`Norm`)
+- `filets/agents.py:26` (`Agent`)
+- `filets/agents.py:62` (`Outcome`)
 - `filets/profiles.py:92` (`Profile`)
 
 ## 11. Population : fonctions de `profiles.py`
@@ -649,9 +655,12 @@ classDiagram
         +int MAX_DURATION
         +dict ALIASES
         +dict VALUE_TOLERANCE
+        +dict DUREES
+        +dict QUAND
         +kind_of(raw) str?
         +plural(n, word) str
         +words(kind, value, place, boat, cap) str
+        +quand_hours(label, now) float?
     }
     class lakes {
         <<module>>
@@ -813,7 +822,8 @@ classDiagram
         +parallel(jobs) list
         +think(names, on)
         +open_season()
-        +depart(a, o, h)
+        +planned(a, o, h)
+        +go(a, trip, nxt, now)
         +evening()
         +prepare(jobs)
         +regrowth()
@@ -857,7 +867,7 @@ classDiagram
 ```
 
 **Pour aller plus loin**
-- `filets/scheduler.py:46` (`SeasonScheduler`)
-- `filets/scheduler.py:38` (`Decision`)
-- `filets/scheduler.py:233` (`Village`)
-- `filets/world.py:2995` : une saison = un `SeasonScheduler(...).play()`
+- `filets/scheduler.py:49` (`SeasonScheduler`)
+- `filets/scheduler.py:41` (`Decision`)
+- `filets/scheduler.py:252` (`Village`)
+- `filets/world.py:3158` : une saison = un `SeasonScheduler(...).play()`

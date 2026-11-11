@@ -7,13 +7,15 @@ fonctions sont montrés comme `<<module>>` (fonctions et constantes publiques). 
 
 ## 1. Fonctions de décision, règles d'archétype et routage
 
-`agents.py` offre les fonctions de décision (`decide_catch`, `speak`, `ballot`…). Chacune choisit son chemin : réflexe ou réflexion (`routing.py`), règle d'archétype (`policies.py`) ou appel au modèle via `world.router`. `Outcome` est le résultat commun.
+`agents.py` offre les fonctions de décision (`decide_plan` : le plan de la saison ; `decide_catch` : chaque sortie, avec ce qu'il déclare à son retour ; `speak`, `ballot`…). Chacune choisit son chemin : réflexe ou réflexion (`routing.py`), règle d'archétype (`policies.py`) ou appel au modèle via `world.router`. `Outcome` est le résultat commun.
 
 ```mermaid
 classDiagram
     class agents {
         <<module>>
+        +dict PLACES
         +reflex_usable(world) bool
+        +decide_plan(world, agent, horizon) Outcome
         +decide_catch(world, agent, horizon, rescue) Outcome
         +speak(world, agent, assembly, rnd, horizon) Outcome
         +ballot(world, agent, asm) None?
@@ -33,6 +35,9 @@ classDiagram
         +dict declared
         +dict outings
         +float form
+        +int form_season
+        +dict plans
+        +dict? prev
         +float temper
         +dict lake_choice
         +int? spot
@@ -63,12 +68,14 @@ classDiagram
         +obeys(archetype, s) bool
         +rule_choices(archetype, s) tuple
         +catch_rule(archetype, s) tuple
+        +outing_rule(archetype, s, first) tuple
         +patrol_vote(archetype, lies, action) bool
         +elect_rule(others, experience, me) str
         +trust_rule(archetype, facts, ctx) dict
         +sanction_vote(archetype, trust, action) bool
         +sanction_rule(archetype, s, judged) dict
         +declare_rule(archetype, s, v) tuple
+        +declare_outing(archetype, s, landed) tuple
         +projected(stock, capacity, r) float
         +lake_choice_rule(archetype, s) tuple
         +at_lake(s, option) dict
@@ -83,6 +90,10 @@ classDiagram
         +float FALLING_RATIO
         +reasons_to_think(obs) list
         +choose_system(obs, purpose) tuple
+        +snapshot(obs) dict
+        +season_reasons(obs) list
+        +outing_reasons(obs, prev) list
+        +choose_outing_system(obs, prev) tuple
     }
     class World
     class Profile
@@ -101,15 +112,19 @@ classDiagram
 ```
 
 **Pour aller plus loin**
-- `filets/agents.py:25` (`Agent`)
-- `filets/agents.py:58` (`Outcome`)
-- `filets/agents.py:144` (`decide_catch`)
-- `filets/agents.py:232` (`speak`)
-- `filets/agents.py:289` (`ballot`)
+- `filets/agents.py:26` (`Agent`)
+- `filets/agents.py:62` (`Outcome`)
+- `filets/agents.py:171` (`decide_plan`)
+- `filets/agents.py:265` (`decide_catch`)
+- `filets/agents.py:363` (`speak`)
+- `filets/agents.py:420` (`ballot`)
 - `filets/policies.py:55` (`catch_rule`)
-- `filets/policies.py:384` (`speak_rule`)
-- `filets/policies.py:308` (`propose_rule`)
+- `filets/policies.py:95` (`outing_rule`)
+- `filets/policies.py:264` (`declare_outing`)
+- `filets/policies.py:420` (`speak_rule`)
+- `filets/policies.py:344` (`propose_rule`)
 - `filets/routing.py:24` (`reasons_to_think`)
+- `filets/routing.py:89` (`outing_reasons`)
 - `filets/routing.py:53` (`choose_system`)
 
 ## 2. Les invites (`prompts.py`)
@@ -126,9 +141,12 @@ classDiagram
         +dict BRIEF_MAX_TOKENS
         +int REFLEX_MAX_TOKENS
         +dict REFLEX_SCHEMA
+        +dict REFLEX_OUTING_SCHEMA
+        +list LIEUX
         +str PATROL_WHO
         +str WORLD_LAKES
         +list RULE_KINDS
+        +any WHEN_HELP
         +int BALLOT_MAX_TOKENS
         +dict NARRATION_SCHEMA
         +int NARRATION_MAX_TOKENS
@@ -169,7 +187,8 @@ classDiagram
         +context_block(obs, brief) str
         +lake_options_block(obs) str
         +hide_stakes(obs) str
-        +catch_messages(p, obs, capacity, brief) list
+        +season_block(obs) str
+        +catch_messages(p, obs, capacity, brief, plan) list
         +veillee_block(obs) str
         +speak_messages(p, obs, capacity, brief) list
         +ballot_schema(ids) dict
@@ -199,8 +218,8 @@ classDiagram
 ```
 
 **Pour aller plus loin**
-- `filets/prompts.py:669` (`narration_messages`)
-- `filets/prompts.py:691` (`reflex_system_one`)
+- `filets/prompts.py:733` (`narration_messages`)
+- `filets/prompts.py:755` (`reflex_system_one`)
 
 ## 3. Modèles : routeur, clients, limiteurs
 
@@ -274,6 +293,7 @@ classDiagram
         +float scale
         +__init__(pcfg, seed)
         +complete(model, messages, hint, tier) LLMResult
+        +fisher_answer(hint, arch, s, noise, out_of_role) dict
     }
     class RateLimiter {
         +any interval
@@ -314,9 +334,11 @@ classDiagram
     class scripted {
         <<module>>
         +dict JUSTIF
+        +list WORDS
         +any SCARCITY
         +any ACCUSATORY
         +dict ECHO
+        +word_for(hours, rng) str
         +react_to_rumor(purpose, arch, s, data) None?
     }
     class World
@@ -348,7 +370,7 @@ classDiagram
 - `filets/llm.py:250` (`SystemOneClient`)
 - `filets/llm.py:44` (`RateLimiter`)
 - `filets/llm.py:61` (`ModelGate`)
-`filets/scripted.py:33` (`ScriptedClient`)
+`filets/scripted.py:48` (`ScriptedClient`)
 
 ## 4. Mémoire et recherche de contexte (RAG)
 

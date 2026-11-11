@@ -50,7 +50,7 @@ classDiagram
         +check_storage(cfg, say) None?
     }
     class Bus {
-        <<classe de base>>
+        <<interface>>
         +publish(topic, event, key) None?
         +subscribe(topic, callback) None?
         +send_command(cmd) None?
@@ -413,7 +413,7 @@ classDiagram
 - `filets/events.py:14` (`Recorder`)
 `filets/pipeline.py:16` (`IndicatorPublisher`)
 `filets/indicators.py:36` (`IndicatorEngine`)
-- `filets/schemas.py:234` (`validate_event`)
+- `filets/schemas.py:245` (`validate_event`)
 `filets/console.py:5` (`console_printer`)
 
 ## 4. Stockage : historique et objets
