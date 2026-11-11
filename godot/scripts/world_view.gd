@@ -1235,9 +1235,16 @@ func on_event(ev: Dictionary) -> void:
 					var dk: Dictionary = deco["docks"].get(h, {})
 					var spot := _fishing_spot(a, str(p.get("zone", "")), p.get("cell"))
 					var to_lake := _lake_named(str(p.get("zone", "")), -1)
+					if not (a["path"] as Array).is_empty() or float(a["hold"]) > 0.0:
+						# il ressort avant d'avoir fini la sortie précédente (même jour) : l'ancienne est finie, il repart de chez lui
+						a["path"] = []
+						a["hold"] = 0.0
+						a["pos"] = a["home"]
 					if bool(p.get("away", false)) and to_lake >= 0 and not dk.is_empty():
 						# parti dans un autre lac : il marche jusqu'à sa rive (le ponton le plus proche de chez lui), y prend une barque
-						_mark(id, "loin de chez lui", Color("#e2bd6a"), 4.0)
+						if int(a.get("away_season", -1)) != cur_season:       # une fois par saison suffit
+							a["away_season"] = cur_season
+							_mark(id, "loin de chez lui", Color("#e2bd6a"), 4.0)
 						a["path"] = _trip(a, _dock(to_lake, dk["shore"]), spot)
 					elif dk.is_empty():
 						a["path"] = [[spot, 1.4], [a["home"], 0.0]]

@@ -89,9 +89,9 @@ func _initialize() -> void:
 
 	# prises secrètes : un mensonge se lit dans le fil (seuls le menteur et le joueur le savent), sa découverte aussi ;
 	# la jauge de confiance de chacun suit la confiance publiée par le moteur
-	var lies := 0
 	var found := 0
-	var clues := 0
+	var clue_keys := {}
+	var gaps := {}
 	var votes := 0
 	var strong := 0
 	var reputations := {}
@@ -101,12 +101,13 @@ func _initialize() -> void:
 	var elections := 0
 	for ev in events:
 		var p: Dictionary = ev["payload"]
-		if ev["type"] == "report" and float(p["landed"]) - float(p["declared"]) > 0.05:
-			lies += 1
+		if ev["type"] == "report":      # le fil regroupe les retours d'un pêcheur par jour : on cumule de même
+			var rk := "%s|%d" % [p["agent"], int(floor(float(p.get("day", ev.get("sim_time", 0)))))]
+			gaps[rk] = float(gaps.get(rk, 0.0)) + float(p["landed"]) - float(p["declared"])
 		elif ev["type"] == "lie_discovered":
 			found += 1
 		elif ev["type"] == "clue":
-			clues += 1
+			clue_keys["%s|%s|%s|%d" % [p["subject"], p.get("observer"), p["kind"], int(floor(float(p.get("day", -1))))]] = true
 		elif ev["type"] == "sanction_result":
 			votes += 1
 		elif ev["type"] == "world_event":
@@ -125,6 +126,11 @@ func _initialize() -> void:
 	check(joined.count("CONFIANCE") == strong, "une ligne « CONFIANCE » par jugement marqué d'un agent (%d, trouvé %d)" % [strong, joined.count("CONFIANCE")])
 	var established := joined.count("MENSONGE ÉTABLI")
 	check(established + joined.count("PRIS EN CACHETTE") + joined.count("ACCUSÉ À TORT") == found, "une ligne par mensonge établi par l'ancien (%d)" % found)
+	var lies := 0
+	for g in gaps:
+		if float(gaps[g]) > 0.05:
+			lies += 1
+	var clues := clue_keys.size()
 	check(joined.count("MENSONGE") - established == lies, "une ligne « MENSONGE » par déclaration mensongère (%d)" % lies)
 	check(joined.count("INDICE") == clues, "une ligne « INDICE » par indice (%d, trouvé %d)" % [clues, joined.count("INDICE")])
 	check(world_events > 0 and joined.count("ÉVÉNEMENT") == world_events, "une ligne « ÉVÉNEMENT » par événement du climat (%d)" % world_events)

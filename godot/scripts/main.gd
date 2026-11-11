@@ -790,6 +790,8 @@ func _on_event(ev: Dictionary) -> void:
 			if a:
 				var s := str(int(ev.get("season", 0)))
 				a["catches"][s] = float(a["catches"].get(s, 0.0)) + float(p.get("landed", 0))
+				if p.get("declared") != null:
+					a["declared"][s] = float(p["declared"])
 			var gap := ""
 			if absf(float(p.get("stock_at_action", 0)) - float(p.get("stock_at_horizon", 0))) > 0.5:
 				gap = "  [color=#6f7896](lac vu à %.0f t, %.0f t au départ)[/color]" % [float(p.get("stock_at_horizon", 0)),
@@ -809,22 +811,35 @@ func _on_event(ev: Dictionary) -> void:
 					var lk := str(lake_labels.get(str(p.get("lake", "")), "Lac " + str(p.get("lake", ""))))
 					trip = "  [color=#e2bd6a](pêche dans le %s, à %.1f j de route : %d écus)[/color]" % [lk.substr(0, 1).to_lower() + lk.substr(1),
 						float(p.get("travel_days", 0)), int(round(float(p.get("travel_cost", 0))))]
-				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s%s%s" % [_who(id), float(p.get("landed", 0)), aim, trip, gap], [id])
+				_feed(lab + _tag("PÊCHE", "#7fd0e8") + " %s ramène [b]%.1f t[/b]%s%s%s%s" % [_who(id), float(p.get("landed", 0)), aim, trip, gap,
+					("  [color=#6f7896](%d sorties)[/color]" % (p["outings"] as Array).size()) if p.get("outings") is Array and (p["outings"] as Array).size() > 1 else ""], [id])
 				if p.get("breach") is Array and not (p["breach"] as Array).is_empty():     # ce que seul le joueur voit
 					_feed(lab + _tag("RÈGLE ENFREINTE", "#ff8a5c") + " %s : %s  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
 						_who(id), _breach_text(p["breach"])], [id])
 		"report":
-			# la déclaration à l'ancien : les autres ne connaissent qu'elle ; un mensonge n'est visible que d'ici
+			# la déclaration à l'ancien, une par sortie : le fil les regroupe par pêcheur et par jour ; un mensonge n'est visible que d'ici
 			var id := str(p.get("agent", ""))
 			var a = _agent(id)
 			var landed := float(p.get("landed", 0))
 			var said := float(p.get("declared", 0))
 			if a:
-				a["declared"][str(int(ev.get("season", 0)))] = said
+				var sk := str(int(ev.get("season", 0)))
+				a["declared"][sk] = float(a["declared"].get(sk, 0.0)) + said     # (le bilan `catch` donne ensuite le total exact)
 				trust_dirty = true
-			if landed - said > 0.05:
-				_feed(lab + _tag("MENSONGE", "#ff8a5c") + " %s déclare [b]%s t[/b] à l'ancien, en a pêché [b][color=#ff8a7e]%s t[/color][/b]  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
-					_who(id), _num(said), _num(landed)], [id])
+			var g: Dictionary = _group("r|%s|%d" % [id, int(floor(float(p.get("day", ev.get("sim_time", 0)))))], {"n": 0, "landed": 0.0, "said": 0.0})
+			g["n"] = int(g["n"]) + 1
+			g["landed"] = float(g["landed"]) + landed
+			g["said"] = float(g["said"]) + said
+			var lied: bool = float(g["landed"]) - float(g["said"]) > 0.05
+			if lied or int(g["n"]) > 1:
+				var head := "%s rentre %d fois : " % [_who(id), int(g["n"])] if int(g["n"]) > 1 else ""
+				var body := ""
+				if lied:
+					body = "%sdéclare [b]%s t[/b] à l'ancien, en a pêché [b][color=#ff8a7e]%s t[/color][/b]  [color=#6f7896](seuls lui et vous le savez)[/color]" % [
+						head if head != "" else _who(id) + " ", _num(g["said"]), _num(g["landed"])]
+				else:
+					body = "%s[b]%s t[/b], déclare [b]%s t[/b]" % [head, _num(g["landed"]), _num(g["said"])]
+				_feed_group("r|%s|%d" % [id, int(floor(float(p.get("day", ev.get("sim_time", 0)))))], lab + _tag("MENSONGE" if lied else "DÉCLARATION", "#ff8a5c" if lied else "#7fe0c8") + " " + body, [id])
 		"lie_discovered":
 			# l'ancien tient un mensonge (ou une sortie en cachette) pour établi sur des indices ; le joueur voit s'il se trompe
 			var id := str(p.get("agent", ""))
@@ -840,24 +855,35 @@ func _on_event(ev: Dictionary) -> void:
 			var what := ("%s, interdit de pêche, pris à pêcher en cachette : %s" % [_who(id), est]) if bool(p.get("secret", false)) \
 				else ("%s a déclaré %s t, la vallée établit %s" % [_who(id), _num(p.get("declared", 0)), est])
 			_feed(lab + _tag("ACCUSÉ À TORT" if bool(p.get("wrongful", false)) else ("PRIS EN CACHETTE" if bool(p.get("secret", false)) else "MENSONGE ÉTABLI"), "#ff6a5c")
-				+ " %s · %s%s  [color=#6f7896](vraie prise : %s t)[/color]" % [what, how, (" (" + ", ".join(wit) + ")") if not wit.is_empty() else "", _num(p.get("landed", 0))], [id])
+				+ " %s · %s%s%s  [color=#6f7896](vraie prise : %s t)[/color]" % [what, how, (" (" + ", ".join(wit) + ")") if not wit.is_empty() else "",
+					(" · sur %d sorties" % (p["outings"] as Array).size()) if p.get("outings") is Array and (p["outings"] as Array).size() > 1 else "",
+					_num(p.get("landed", 0))], [id])
 		"clue":
 			var sub := str(p.get("subject", ""))
 			var obs := str(p.get("observer")) if p.get("observer") != null else ""
 			var kind := str(p.get("kind", ""))
-			var said := "" if p.get("declared") == null else " (déclaré %s t)" % _num(p.get("declared"))
+			var gk := "c|%s|%s|%s|%s" % [sub, obs, kind, str(int(floor(float(p.get("day", -1)))))]
+			var cg: Dictionary = _group(gk, {"n": 0, "est": 0.0, "dec": 0.0, "has_dec": false})
+			cg["n"] = int(cg["n"]) + 1                       # un indice par sortie : même pêcheur, même jour, une seule ligne
+			cg["est"] = float(cg["est"]) + float(p.get("estimate", 0) if p.get("estimate") != null else 0)
+			if p.get("declared") != null:
+				cg["has_dec"] = true
+				cg["dec"] = float(cg["dec"]) + float(p["declared"])
+			var said := "" if not bool(cg["has_dec"]) else " (déclaré %s t)" % _num(cg["dec"])
 			var txt := ""
 			match kind:
 				"patrouille":
-					txt = "la patrouille mesure environ [b]%s t[/b] dans la barque de %s%s" % [_num(p.get("estimate", 0)), _who(sub), said]
+					txt = "la patrouille mesure environ [b]%s t[/b] dans la barque de %s%s" % [_num(cg["est"]), _who(sub), said]
 				"temoin":
-					txt = "%s a vu la barque de %s rentrer avec environ [b]%s t[/b]%s" % [_who(obs), _who(sub), _num(p.get("estimate", 0)), said]
+					txt = "%s a vu la barque de %s rentrer avec environ [b]%s t[/b]%s" % [_who(obs), _who(sub), _num(cg["est"]), said]
 				"depart":
 					txt = "%s a vu la barque de %s, interdit de pêche, partir à l'aube" % [_who(obs), _who(sub)]
 				_:
 					txt = "%s trouve que %s vit bien pour ce qu'il déclare%s" % [_who(obs), _who(sub), said]
 			var kept := "" if bool(p.get("public", true)) else "  [color=#6f7896](il le garde pour lui : seuls lui et vous le savez)[/color]"
-			_feed(lab + _tag("INDICE" if bool(p.get("public", true)) else "INDICE GARDÉ", "#7fe0c8") + " " + txt + kept, [sub, obs])
+			if int(cg["n"]) > 1:
+				txt += " [color=#6f7896](%d sorties ce jour-là)[/color]" % int(cg["n"])
+			_feed_group(gk, lab + _tag("INDICE" if bool(p.get("public", true)) else "INDICE GARDÉ", "#7fe0c8") + " " + txt + kept, [sub, obs])
 		"lake_audit":
 			var col := "#ff8a7e" if bool(p.get("significant", false)) else "#8f97b2"
 			_feed(lab + _tag("COMPTES", "#7fe0c8") + " [color=%s]la pêche a fait perdre environ %s t au lac ; les déclarations en expliquent %s t[/color]" % [
@@ -1046,6 +1072,12 @@ func _on_event(ev: Dictionary) -> void:
 			if a:
 				a["last_decision"] = p
 				a["last_decision_label"] = last_sim_label
+				match str(p.get("decision_type", "")):
+					"plan":
+						a["plan"] = p
+						a["plan_label"] = last_sim_label
+					"catch":
+						a["outing_dec"] = p
 		"incident":
 			var id := str(p.get("agent", ""))
 			var a = _agent(id)
@@ -1175,6 +1207,7 @@ func _reset(ev: Dictionary) -> void:
 		"replay": bool(ev.get("replay", false))}
 	agents.clear()
 	feed_lines.clear()
+	feed_groups.clear()
 	proposals.clear()
 	norms.clear()
 	norms_now.clear()
@@ -1225,6 +1258,31 @@ func _feed(text: String, ids: Array) -> void:
 	if feed_only_selected.button_pressed and selected != "" and not ids.has(selected):
 		return
 	feed.append_text(text + "\n")
+
+
+var feed_groups := {}       # clé -> {"agg": cumul, "line": ligne du fil} : une ligne par pêcheur et par jour
+
+
+func _group(key: String, init: Dictionary) -> Dictionary:
+	if not feed_groups.has(key):
+		if feed_groups.size() > 600:
+			feed_groups.clear()
+		feed_groups[key] = {"agg": init, "line": null}
+	return feed_groups[key]["agg"]
+
+
+## Écrit la ligne du groupe : la crée, ou réécrit celle déjà au fil.
+func _feed_group(key: String, text: String, ids: Array) -> void:
+	var g: Dictionary = feed_groups[key]
+	if g["line"] != null and feed_lines.has(g["line"]):
+		g["line"]["text"] = text
+		if catching_up > 0:
+			feed_dirty = true
+		else:
+			_render_feed()
+	else:
+		_feed(text, ids)
+		g["line"] = feed_lines.back()
 
 
 func _render_feed() -> void:
@@ -1424,9 +1482,33 @@ func _render_inspector() -> void:
 				res = ("[color=#58d08a]tenue[/color]" if pr["kept"] else "[color=#ff6a5c]trahie[/color]") + " (%.1f t)" % float(pr["landed"])
 			ps.append("S%d ≤ %s t : %s" % [int(pr["season"]), _num(pr["amount"]), res])
 		s += "Promesses : %s\n" % (" · ".join(ps) if not ps.is_empty() else "—")
+	var pl: Dictionary = a.get("plan", {})
+	if not pl.is_empty():
+		s += "
+[color=#f3dca8][b]PLAN DE SAISON[/b][/color] (%s)
+" % str(a.get("plan_label", ""))
+		s += "Compte prendre %s t" % _num(pl.get("value", 0))
+		if pl.get("declared") != null:
+			s += " · déclarer %s t" % _num(pl.get("declared"))
+		if pl.get("outings") != null:
+			s += " · %s sorties" % _num(pl.get("outings"))
+		if pl.get("place") != null:
+			s += " · coin : %s" % _esc(str(pl.get("place")))
+		s += "
+"
+	var od: Dictionary = a.get("outing_dec", {})
+	if not od.is_empty():
+		var dly: Variant = od.get("delay_h")
+		var intent := "plus cette saison"
+		if dly != null:
+			intent = "ressort demain à l'aube" if float(dly) >= 12.0 else "ressort dans %s h" % _num(dly)
+			intent += " pour %s h de pêche" % _num(od.get("hours", 0))
+		var sys := "réflexion (grand modèle)" if str(od.get("system", "S2")) == "S2" else "réflexe"
+		s += "[color=#f3dca8][b]INTENTION[/b][/color] %s · décidé par : %s%s
+" % [intent, sys, (" · " + _esc(str(od["routing"]))) if od.get("routing") != null else ""]
 	var d: Dictionary = a["last_decision"]
 	if not d.is_empty():
-		s += "\n[color=#f3dca8][b]DERNIÈRE DÉCISION[/b][/color] (%s, %s)\n" % [str(a["last_decision_label"]), "prise" if str(d.get("decision_type", "")) == "catch" else "parole"]
+		s += "\n[color=#f3dca8][b]DERNIÈRE DÉCISION[/b][/color] (%s, %s)\n" % [str(a["last_decision_label"]), {"catch": "prise", "plan": "plan"}.get(str(d.get("decision_type", "")), "parole")]
 		if d.get("value") != null:
 			s += "Valeur : [b]%s t[/b] · " % _num(d.get("value"))
 		s += "information connue jusqu'à t = %.2f j" % float(d.get("info_horizon", 0))
