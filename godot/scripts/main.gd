@@ -27,6 +27,7 @@ var world         # world_view.gd
 var chart         # chart.gd
 var menu          # start_menu.gd
 var lbl_run: Label
+var lbl_subtitle: Label
 var lbl_clock: Label
 var lbl_status: Label
 var ind_labels := {}
@@ -303,6 +304,7 @@ func _build_ui() -> void:
 	var subtitle := _label("la tragédie des communs au lac de Vellmor", 17, "title_italic", Art.MUTED)
 	subtitle.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	top.add_child(subtitle)
+	lbl_subtitle = subtitle
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(sp)

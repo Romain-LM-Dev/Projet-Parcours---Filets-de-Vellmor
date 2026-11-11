@@ -1,36 +1,128 @@
 {
-  "run": "runs/demo/events.jsonl",
-  "about": "Scénario de la vidéo de démonstration. Chaque temps démarre quand la partie rejouée atteint `t` (jours simulés) : la narration est lue (voix) et sous-titrée ; `rate` = jours simulés par seconde de vidéo jusqu'au temps suivant (0 : la partie est figée pendant la narration) ; `camera` : overview (toute la vallée), fit (zoom 1 centré), village:<Nom> (zoom 2,2 sur ce village), lake:<Nom> ; `mesh` : montrer les mailles ; `tab` : onglet de droite ; `inspect` : agent montré dans l'inspecteur.",
+  "run": "runs/demo_ia/events.jsonl",
+  "title": "FILETS",
+  "subtitle": "Une vallée où chaque personnage est une IA",
+  "end": [
+    "Dominante IABD",
+    "Intelligence artificielle et big data"
+  ],
+  "audience": "Élèves d'une école d'ingénieurs généraliste qui choisissent leur dominante : la vidéo présente ce qu'on fait en dominante IABD à travers ce projet.",
+  "voice": {
+    "tool": "edge-tts",
+    "name": "fr-FR-VivienneMultilingualNeural",
+    "fallback": "fr-FR-DeniseNeural",
+    "rate": "-4%"
+  },
+  "pace": {
+    "utterance": 3.0,
+    "proposal": 1.5,
+    "norm_adopted": 2.5,
+    "lie_discovered": 2.0,
+    "ban": 2.5,
+    "outing": 0.4,
+    "catch": 0.4,
+    "injection": 2.0,
+    "narration": 1.5,
+    "per_day": 0.25
+  },
+  "about": "Scénario de la vidéo de démonstration. Un temps couvre la partie de son `t` (jours simulés) au `t` du temps suivant, et dure à l'écran le temps de sa voix (`say`) plus `hold` secondes de silence. Ce temps d'écran se partage entre les événements visibles de la portion selon `pace` : les moments chargés vont lentement, les creux vite. Deux temps au même `t` figent la partie. `camera` : overview (toute la vallée), fit (zoom 1 centré), village:<Nom> (zoom 2,2 sur ce village) ; `mesh` : les mailles ; `tab` : onglet de droite ; `inspect` : agent montré dans l'inspecteur. `title`, `subtitle` : la carte du début ; `end` : la carte de fin (deux lignes).",
   "beats": [
-    {"t": 0, "rate": 0, "camera": "overview",
-     "say": "Voici FILETS, une simulation de la tragédie des communs. Dix-sept personnages vivent dans une vallée à trois lacs : les pêcheurs de six villages, un ancien et une patrouille. Chacun est piloté par une intelligence artificielle, ou par la règle de son caractère."},
-    {"t": 0, "rate": 0, "camera": "fit",
-     "say": "La carte est isométrique, comme dans Age of Empires. La molette zoome, le clic droit fait glisser la vue, et la mini-carte, en bas à droite, montre toute la vallée."},
-    {"t": 0, "rate": 0, "camera": "fit", "mesh": true,
-     "say": "Le monde est fait de mailles : les parcelles des lacs, chacune avec son poisson et sa chance ; les lots des maisons, qui sont des obstacles ; et les pas des personnages, qui contournent l'eau et les maisons."},
-    {"t": 0.25, "rate": 0.5, "camera": "village:Ostrel", "mesh": false, "tab": "Interactions",
-     "say": "La saison s'ouvre. Chaque pêcheur décide de sa prise : combien pêcher, dans quel lac, à quel coin, et ce qu'il déclarera à l'ancien. Réfléchir ne prend pas de temps dans le monde ; agir, si : la barque sort, pêche, puis revient."},
-    {"t": 4, "rate": 1.2, "camera": "fit", "tab": "Interactions",
-     "say": "À droite, le fil des interactions raconte chaque prise : ce que le pêcheur visait, ce qu'il a vraiment rapporté, sa chance et le temps qu'il faisait. Les indicateurs suivent le stock de chaque lac et le respect des règles."},
-    {"t": 12, "rate": 1.2, "camera": "fit", "tab": "Agent", "inspect": "F05",
-     "say": "L'inspecteur montre ce qu'un agent avait en tête pour décider : ses souvenirs, les passages du corpus retrouvés, ses engagements. C'est sa mémoire, alimentée au fil de la partie."},
-    {"t": 25.75, "rate": 0.25, "tab": "Interactions",
-     "say": "Le soir, la veillée réunit l'ancien et l'élu de chaque village. Les répliques viennent au fil de l'eau : une seule personne parle à la fois, et celui à qui l'on s'adresse répond. On propose des règles, on les soutient, on promet, on accuse."},
-    {"t": 29, "rate": 0.3, "tab": "Règles",
-     "say": "Une règle est adoptée à la majorité : pas plus de six tonnes par pêcheur. Le conseil dispose de cinq types de règles, le quota, la réserve, le repos d'un lac, la limite de sorties et la taille des bateaux, pour toute la vallée, un village ou un seul lac."},
-    {"t": 29.9, "rate": 0, "tab": "Récit du narrateur",
-     "say": "En fin de saison, les lacs se repeuplent. Un narrateur extérieur raconte alors la vérité de la saison, y compris ce que les villageois ignorent."},
-    {"t": 30, "rate": 2.5, "camera": "overview", "tab": "Interactions",
-     "say": "Saison deux. Le joueur peut intervenir. Ici, il lance une rumeur : un marchand achèterait le poisson au double du prix. La rumeur entre dans la mémoire de chaque pêcheur et pèse sur ses décisions."},
-    {"t": 40, "rate": 2.5, "camera": "fit",
-     "say": "Au retour, chacun déclare sa prise à l'ancien, et peut mentir. La patrouille, les témoins et les comptes du lac laissent des indices, que l'ancien pèse à la veillée."},
-    {"t": 55.75, "rate": 1.2,
-     "say": "Deuxième veillée : le lac baisse, et le conseil resserre la règle à quatre tonnes par pêcheur."},
-    {"t": 60, "rate": 2.5, "camera": "overview",
-     "say": "Saison trois. Les lacs ne se vident pas au même rythme : un pêcheur peut aller pêcher dans un autre lac, au prix de la route et de sorties perdues."},
-    {"t": 85.75, "rate": 0.4, "tab": "Règles",
-     "say": "À la dernière veillée, le conseil adopte une règle propre au lac de Brémol, et exclut de la pêche un pêcheur qui a perdu la confiance de la vallée."},
-    {"t": 89.9, "rate": 0, "camera": "overview", "tab": "Récit du narrateur",
-     "say": "FILETS mesure ainsi comment la parole, la confiance et les règles collectives protègent, ou non, une ressource commune. Toute la partie est enregistrée, et peut être rejouée."}
+    {
+      "t": 0,
+      "hold": 1,
+      "camera": "overview",
+      "say": "Dix-sept personnages, trois lacs, et personne n'a écrit ce qu'ils vont faire. Les décisions que tu vas voir, ce sont des IA qui les prennent."
+    },
+    {
+      "t": 0,
+      "hold": 0.5,
+      "camera": "fit",
+      "say": "La plupart des pêcheurs sont pilotés par un modèle de langage qui tourne en local, sur la carte graphique d'un PC portable. Pas de serveur, pas d'abonnement."
+    },
+    {
+      "t": 0,
+      "hold": 1,
+      "camera": "fit",
+      "mesh": true,
+      "say": "La carte aussi est calculée. Le monde est découpé en cases : du poisson et de la chance dans chaque case de lac, des maisons qui bloquent le passage, des chemins recalculés à chaque déplacement."
+    },
+    {
+      "t": 0.5,
+      "hold": 4,
+      "camera": "village:Ostrel",
+      "mesh": false,
+      "tab": "Interactions",
+      "say": "Le matin, chacun décide s'il sort, où, combien de temps, et ce qu'il déclarera en rentrant. Pour la routine, un petit modèle répond très vite. Quand quelque chose change, c'est le grand modèle qui réfléchit."
+    },
+    {
+      "t": 6,
+      "hold": 2,
+      "camera": "fit",
+      "tab": "Interactions",
+      "say": "Chaque action devient un événement. Dans la version complète, ils passent par Kafka, comme dans les systèmes de données des grandes plateformes, et les indicateurs se calculent en direct."
+    },
+    {
+      "t": 14,
+      "hold": 2,
+      "camera": "fit",
+      "tab": "Agent",
+      "inspect": "F05",
+      "say": "On peut ouvrir la tête d'un agent. Sa mémoire est une base de vecteurs : il retrouve ses souvenirs par le sens, pas par les mots. C'est le RAG, la technique des assistants qui répondent à partir de documents."
+    },
+    {
+      "t": 25.75,
+      "hold": 10,
+      "tab": "Interactions",
+      "say": "Le soir, les élus des villages se réunissent. Personne ne leur dit quoi répondre : trois tonnes ou quatre, ils argumentent et se soutiennent. Et ce soir, l'ancien se trompe : Lucien est accusé d'avoir menti, alors qu'il avait tout déclaré."
+    },
+    {
+      "t": 29,
+      "hold": 2,
+      "tab": "Règles",
+      "say": "La vallée tranche : trois tonnes maximum par pêcheur. La patrouille, elle, est rejetée."
+    },
+    {
+      "t": 29.9,
+      "hold": 1.5,
+      "tab": "Récit du narrateur",
+      "say": "À la fin de chaque saison, un narrateur, lui aussi joué par un modèle, raconte ce qui s'est passé."
+    },
+    {
+      "t": 30,
+      "hold": 2,
+      "camera": "overview",
+      "tab": "Interactions",
+      "say": "Saison deux. On tente une expérience : on lance une rumeur. Un marchand paierait le poisson le double. Est-ce que ça change les décisions ? Les données le diront."
+    },
+    {
+      "t": 40,
+      "hold": 2,
+      "camera": "fit",
+      "say": "Chaque retour de pêche laisse des traces. Les voisins voient les barques rentrer, et l'ancien recoupe les indices, un peu comme on croise des sources de données."
+    },
+    {
+      "t": 55.75,
+      "hold": 8,
+      "say": "À la veillée, Inès et Maëlle sont prises à mentir, grâce aux témoins. Et Gildas dit tout haut qu'il a entendu la rumeur, mais qu'il respectera la règle."
+    },
+    {
+      "t": 60,
+      "hold": 1.5,
+      "camera": "overview",
+      "say": "Troisième saison. Le lac de Vellmor attire tout le monde : on vient de toute la vallée y pêcher, et c'est lui qui baisse le plus."
+    },
+    {
+      "t": 85.75,
+      "hold": 6,
+      "tab": "Règles",
+      "say": "Dernière veillée. Gildas, qui avait promis, est pris à son tour. La patrouille est enfin votée. Et oui, les IA se répètent parfois, et l'ancien s'est trompé : c'est aussi ce qu'on étudie."
+    },
+    {
+      "t": 89.9,
+      "hold": 3,
+      "camera": "overview",
+      "tab": "Récit du narrateur",
+      "say": "Des modèles de langage, du RAG, un flux de données en continu, et de l'analyse. C'est ce qu'on fait en dominante IABD : des IA qui tournent pour de vrai, et les données pour comprendre ce qu'elles font."
+    }
   ]
 }

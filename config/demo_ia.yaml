@@ -1,0 +1,11 @@
+# La partie de la vidéo de démonstration jouée par les vrais modèles (Ollama, comme `ollama_open.yaml`) : Qwen 2.5 3B pour la
+# réflexion, 1,5B pour les pêcheurs moins expérimentés, tev1 0,8B pour les réflexes (sorties de routine, bulletins).
+#   python -m filets run --config config/demo_ia.yaml --run-id demo_ia --fast --no-linger        (~1 h sur une RTX 3060 6 Go)
+extends: demo.yaml
+run: {label: demo_ia}
+llm:
+  reflection: adaptive
+  tiers:
+    grand: {provider: ollama, model: "qwen2.5:3b"}
+    petit: {provider: ollama, model: "qwen2.5:1.5b"}
+    reflexe: {provider: ollama_s1, model: "tev1:0.8b"}
