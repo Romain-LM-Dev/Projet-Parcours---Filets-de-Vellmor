@@ -755,12 +755,13 @@ class World:
                 "source_event_id": source_event_id}, actor=observer.id)
 
     # ------------------------------------------------------------ indices, jugement, interdiction, patrouille
-    def beyond_declared(self, estimate: float, said: float) -> bool:
+    def beyond_declared(self, estimate: float, said: float, outing: bool = False) -> bool:
         """L'estimation dépasse-t-elle nettement la déclaration : de plus de 25 % de celle-ci (au-delà de l'erreur de la
         patrouille, ±12 %) et d'au moins 0,3 t ? Un plancher de 1 t laissait passer un mensonge flagrant sur une petite prise
         (1,9 t mesurées pour 1 t déclarée)."""
         det = self.detection
-        return estimate - said > max(det["margin_t"], det["margin_ratio"] * said)
+        margin = det["margin_t"] * (2.0 / max(1, int(self.econ.get("outings", 6))) if outing else 1.0)      # (une sortie pèse une fraction de la saison)
+        return estimate - said > max(margin, det["margin_ratio"] * said)
 
     def investigate(self, season: int):
         """Le soir de la veillée, les indices de la saison sont réunis. La patrouille a relevé les barques qu'elle a croisées
@@ -778,13 +779,17 @@ class World:
         elder = self.elder.id if self.elder else None
         patrol_ids = {a.id for a in self.patrol_agents}
 
-        def clue(kind: str, observer: str | None, trip: dict, estimate: float | None = None):
+        def clue(kind: str, observer: str | None, trip: dict, estimate: float | None = None, outing: dict | None = None):
             subject = self.agents[trip["agent"]]
             public = observer is None or observer == elder or observer in patrol_ids or \
                 (not self.cheated(observer, season) and self.trust[observer].get(subject.id, TRUST_START) < LOYAL)
-            p = {"kind": kind, "observer": observer, "subject": subject.id, "zone": trip["zone"],
-                 "estimate": None if estimate is None else round(max(0.0, estimate), 1), "public": public,
-                 "declared": None if trip["secret"] else subject.declared.get(season)}
+            if trip["secret"]:
+                said = None
+            else:
+                said = outing["said"] if outing else subject.declared.get(season)
+            p = {"kind": kind, "observer": observer, "subject": subject.id, "zone": outing["zone"] if outing else trip["zone"],
+                 "estimate": None if estimate is None else round(max(0.0, estimate), 1), "public": public, "declared": said,
+                 **({"day": outing["day"], "outing_event_id": outing["id"] or ""} if outing else {})}
             ev = self.events.emit("clue", p, actor=observer or subject.id)
             self.clues.append({**p, "season": season, "t": now, "event_id": ev["event_id"]})
             if not public:                         # il l'a vu, et le garde pour lui
@@ -795,12 +800,16 @@ class World:
             return v * (1 + rng.uniform(-err, err))
 
         for t in trips:
-            if t["patrol"] and patrol_ids and rng.random() < det["patrol"] * t["patrol"]:
-                clue("patrouille", t.get("patrol_by") or self.patrol_agent.id, t, noisy(t["landed"], det["patrol_error"]))
-            for o in self.fishers:                 # les barques qui pêchaient dans la même zone
-                mine = by_agent.get(o.id)
-                if o.id != t["agent"] and mine is not None and mine["zone"] == t["zone"] and rng.random() < det["witness"]:
-                    clue("temoin", o.id, t, noisy(t["landed"], det["witness_error"]))
+            for o in t["outs"]:            # chaque sortie a ses indices : la patrouille si elle passait là ce jour-là, un voisin de la même zone
+                cover, by = self.patrol_cover(season, o["zone"], [o["day"]], t["agent"])
+                if cover and patrol_ids and rng.random() < det["patrol"] * cover:
+                    clue("patrouille", by or self.patrol_agent.id, t, noisy(o["landed"], det["patrol_error"]), o)
+                for m in self.fishers:        # un voisin qui revient de la même zone le même jour, ou qui regarde sa rive depuis le village
+                    mine = by_agent.get(m.id)
+                    saw = m.id != t["agent"] and (m.profile.hamlet == o["zone"] or (mine is not None and any(
+                        q["zone"] == o["zone"] and int(q["t"]) == int(o["t"]) for q in mine["outs"])))
+                    if saw and rng.random() < det["witness"]:
+                        clue("temoin", m.id, t, noisy(o["landed"], det["witness_error"]), o)
             home = self.agents[t["agent"]].profile.hamlet
             neighbours = [o for o in self.fishers if o.id != t["agent"] and o.profile.hamlet == home]
             if t["secret"]:
@@ -842,18 +851,30 @@ class World:
             clues = [c for c in self.clues if c["season"] == season and c["subject"] == a.id and c["public"]]
             if not clues:
                 continue
-            nums = [(EVIDENCE[c["kind"]], c["estimate"]) for c in clues if c["estimate"] is not None]
-            est = sum(w * e for w, e in nums) / sum(w for w, _ in nums) if nums else None
-            weight = sum(EVIDENCE[c["kind"]] for c in clues)
-            said = 0.0 if trip["secret"] else a.declared.get(season, trip["landed"])
             if trip["secret"] or trip.get("breach"):       # une sortie interdite, ou contre une règle : sa seule présence prouve
-                caught = weight >= det["proof"]
-            else:
-                caught = est is not None and self.beyond_declared(est, said) and weight + books >= det["proof"]
-            if caught:
-                self.establish(a, season, trip, said, est, clues)
+                nums = [(EVIDENCE[c["kind"]], c["estimate"]) for c in clues if c["estimate"] is not None]
+                est = sum(w * e for w, e in nums) / sum(w for w, _ in nums) if nums else None
+                if sum(EVIDENCE[c["kind"]] for c in clues) >= det["proof"]:
+                    self.establish(a, season, trip, 0.0 if trip["secret"] else trip["said"], est, clues, [])
+                continue
+            # sinon, sortie par sortie : les indices de CETTE sortie disent plus que ce qu'il en a déclaré ? Les poids s'additionnent
+            # d'une sortie à l'autre (et ceux qui ne visent aucune sortie en particulier : train de vie), le jugement est celui de la saison
+            flagged = []
+            for o in trip["outs"]:
+                cs = [c for c in clues if c.get("outing_event_id") and c["outing_event_id"] == o["id"] and c["estimate"] is not None]
+                if not cs:
+                    continue
+                w = sum(EVIDENCE[c["kind"]] for c in cs)
+                est_o = sum(EVIDENCE[c["kind"]] * c["estimate"] for c in cs) / w
+                if self.beyond_declared(est_o, o["said"], True):
+                    flagged.append({**o, "est": round(est_o, 1), "weight": w})
+            weight = sum(f["weight"] for f in flagged) + sum(EVIDENCE[c["kind"]] for c in clues if not c.get("outing_event_id"))
+            if flagged and weight + books >= det["proof"]:
+                seen = {f["id"]: f["est"] for f in flagged}
+                value = sum(seen.get(o["id"], o["said"]) for o in trip["outs"])         # ce que la vallée en croit : les estimations où elle a vu
+                self.establish(a, season, trip, trip["said"], value, clues, flagged)
 
-    def establish(self, a: Agent, season: int, trip: dict, said: float, est: float | None, clues: list[dict]):
+    def establish(self, a: Agent, season: int, trip: dict, said: float, est: float | None, clues: list[dict], flagged: list[dict] | None = None):
         """L'ancien tient pour établi que `a` a menti (ou est sorti en cachette) : il le dit à tous, et chacun s'en souvient. La
         vallée retient l'estimation des indices, pas la vérité."""
         kinds = {c["kind"] for c in clues}
@@ -861,24 +882,25 @@ class World:
         witnesses = sorted({c["observer"] for c in clues if c["observer"] and c["kind"] != "patrouille"})
         value = None if est is None else round(est, 1)
         breach = list(trip.get("breach") or [])
+        flagged, trip = flagged or [], {"outs": [], **trip}
+        outs = [{"day": f["day"], "declared": f["said"], "estimated": f["est"], "landed": f["landed"]} for f in flagged]
         self.established[(a.id, season)] = {"value": value, "t": self.clock.now(), "how": how, "secret": trip["secret"],
-                                            "breach": breach}
-        rep = self.reports.get((a.id, season))
+                                            "breach": breach, "outs": outs, "n_outs": len(trip["outs"])}
         ev = self.events.emit("lie_discovered", {
             "agent": a.id, "lie_season": season, "declared": said, "landed": trip["landed"], "how": how,
             "secret": trip["secret"], "wrongful": not self.cheated(a.id, season), "estimated": value,
-            "witnesses": witnesses, "report_event_id": rep["event_id"] if rep else None,
-            **({"breach": breach} if breach else {})}, actor=a.id)
+            "witnesses": witnesses, "report_event_id": flagged[0]["report_id"] if flagged else None,
+            **({"outings": outs} if outs else {}), **({"breach": breach} if breach else {})}, actor=a.id)
         about = f"environ {value:g} t" if value is not None else "une quantité inconnue"
         broke = " et ".join(BREACH_WORD[k] for k in breach)
         deed = ("est sorti pêcher en cachette alors qu'il était interdit de pêche" if trip["secret"] else
-                (f"a enfreint la règle ({broke})" if breach else f"a menti à l'ancien en déclarant {said:g} t"))
+                (f"a enfreint la règle ({broke})" if breach else f"a menti à l'ancien en déclarant {said:g} t ({self.lie_words(outs, len(trip['outs']))})"))
         self.add_lore(a.id, f"La vallée a établi que {a.profile.name} {deed} à la saison {season} ({HOW[how]}) : {about}.",
                       ev["event_id"], "all", 0.9)
         for o in self.agents.values():
             if o.id == a.id:
                 fault = "suis sorti pêcher en cachette" if trip["secret"] else \
-                    (f"ai enfreint la règle ({broke})" if breach else f"avais menti en déclarant {said:g} t")
+                    (f"ai enfreint la règle ({broke})" if breach else f"avais menti en déclarant {said:g} t ({self.lie_words(outs, len(trip['outs']))})")
                 text = (f"La vallée a établi que je {fault} à la saison {season} ({HOW[how]}) : "
                         f"elle croit que j'ai pris {about}.")
             elif breach and not trip["secret"]:
@@ -889,8 +911,25 @@ class World:
                         f"({HOW[how]}) : {about}.")
             else:
                 text = (f"{a.profile.name} a menti à l'ancien à la saison {season} : il a déclaré {said:g} t, les indices "
-                        f"disent {about} ({HOW[how]}).")
+                        f"disent {about} ({HOW[how]}) ; {self.lie_words(outs, len(trip['outs']))}.")
             self.remember(o, text, "mensonge", 0.9, source_event_id=ev["event_id"])
+
+    @staticmethod
+    def lie_words(outs: list[dict], n: int) -> str:
+        """Les mensonges établis d'une saison, en mots : combien de sorties, de quand, de combien."""
+        return f"{len(outs)} sortie{'s' if len(outs) > 1 else ''} sur {n} : " + " ; ".join(
+            f"jour {int(o['day'])}, déclaré {o['declared']:g} t pour environ {o['estimated']:g} t" for o in outs)
+
+    def lie_lines(self, agent: Agent, horizon: float, season: int) -> list[str]:
+        """Les mensonges que la vallée tient pour établis (dits par l'ancien devant tous), pêcheur par pêcheur : combien, de quelle taille et
+        de quand. De quoi peser un menteur d'une fois et un menteur répété : le moteur n'en tire aucune sanction."""
+        by_agent: dict[str, list[tuple[int, dict]]] = {}
+        for (aid, s), f in sorted(self.established.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+            if aid == agent.id or f["secret"] or not f.get("outs") or f["t"] > horizon or s < season - 2:
+                continue
+            by_agent.setdefault(aid, []).append((s, f))
+        return [f"{self.first_name(aid)} : {sum(len(f['outs']) for _, f in v)} mensonge(s) établi(s) ("
+                + " ; ".join(f"saison {s} : {self.lie_words(f['outs'], f['n_outs'])}" for s, f in v) + ")" for aid, v in by_agent.items()]
 
     def upkeep(self, agent: Agent, season: int | None = None) -> float:
         """Ce que coûte une saison à ce pêcheur, hors dette : la vie, l'entretien de son bateau, et la patrouille du lac si le
@@ -1212,7 +1251,11 @@ class World:
                 out.append(f"saison {s} : tu as pêché {landed:g} t contre la règle ({' ; '.join(BREACH_WORD[k] for k in broke)}) ; "
                            + ("la vallée l'a établi." if known else "personne ne le sait, pour l'instant."))
             elif landed - said >= MIN_LIE_T:
-                out.append(f"saison {s} : tu as pêché {landed:g} t et déclaré {said:g} t à l'ancien ; "
+                gaps = next((t["outs"] for t in self.trips.get(s, []) if t["agent"] == agent.id), [])
+                gaps = [o for o in gaps if o["said"] is not None and o["landed"] - o["said"] >= MIN_LIE_T]
+                out.append(f"saison {s} : tu as pêché {landed:g} t et déclaré {said:g} t à l'ancien, en cachant une part de {len(gaps)} sortie"
+                           + ("s" if len(gaps) > 1 else "") + " (" + " ; ".join(
+                               f"jour {int(o['day'])} : pêché {o['landed']:g} t, déclaré {o['said']:g} t" for o in gaps) + ") ; "
                            + ("la vallée a établi ce mensonge." if known else "personne ne le sait, pour l'instant."))
             elif known:
                 out.append(f"saison {s} : tu as pêché {landed:g} t, déclarées telles quelles, mais la vallée croit que tu as "
@@ -1398,6 +1441,13 @@ class World:
             at = {"today": wk[max(0, min(int(horizon - t0), len(wk) - 1))], "taken": taken, "done": len(trip.outs) if trip else 0,
                   "plan": plan, "days_left": round(max(0.0, t0 + self.T["fishing_close_day"] - horizon), 2), "cale": round(cale, 3),
                   "quota_left": round(norm.quota - taken, 3) if norm else None, "outing": trip is not None}
+            last = trip.outs[-1] if trip and trip.outs and "tonnes" in trip.outs[-1] else None
+            # la sortie qu'il vient de faire (à déclarer), ce qu'il a déjà déclaré cette saison, et un tirage pour une règle d'archétype
+            at.update({"last_landed": last["tonnes"] if last else None,
+                       "my_outings": [f"jour {int(o['day'])} : pêché {o['tonnes']:g} t, déclaré {o['said']:g} t" for o in (trip.outs if trip else [])
+                                      if "tonnes" in o and "said" in o],
+                       "hide_roll": random.Random(f"{self.cfg['run']['seed']}|hide|{agent.id}|{season}|{len(trip.outs) if trip else 0}").random(),
+                       "lie_book": self.lie_lines(agent, horizon, season)})
             obs.update(at)
             state.update(at)
         if self.multi and purpose == "catch" and agent.id in self.boat_cap and not banned:
@@ -1477,7 +1527,7 @@ class World:
             if c["season"] != season or c["t"] > horizon or c["subject"] == agent.id or \
                     not (c["public"] or c["observer"] == agent.id):
                 continue
-            if c["declared"] is not None and not self.beyond_declared(c["estimate"] or 0.0, c["declared"]):
+            if c["declared"] is not None and not self.beyond_declared(c["estimate"] or 0.0, c["declared"], bool(c.get("outing_event_id"))):
                 continue
             excess = 5.0 if c["declared"] is None else c["estimate"] - c["declared"]
             if excess > worst:
@@ -1609,13 +1659,33 @@ class World:
         self.lake_update("catch", -got, lake)
         agent.wealth -= self.leg_cost(out["route"])
         # la sortie se voit à son retour (la carte y fait rentrer la barque) ; le bilan `catch` ne vient qu'au dernier
-        self.events.emit("outing", {
+        ev = self.events.emit("outing", {
             "agent": agent.id, "hamlet": agent.profile.hamlet, "zone": out["zone"],
             "cell": [lake.parcels[out["cell"]]["i"], lake.parcels[out["cell"]]["j"]], "day": out["day"], "weather": out["weather"],
             "tonnes": round(got, 3), "secret": trip.secret, "hours": out["hours"],
             **({"lake": lake.name} if self.multi else {}), **({"away": True} if lake is not home else {}),
         }, actor=agent.id)
+        out["event_id"] = ev["event_id"]
         return got
+
+    def report_outing(self, trip: Trip, out: dict, declared: float | None = None) -> dict | None:
+        """Au retour d'une sortie, le pêcheur déclare CETTE sortie à l'ancien (événement `report`, une fois par sortie). `declared` : ce qu'il
+        dit avoir pris (None : la vérité) ; jamais plus que la prise. Cacher une part est sa décision, sortie par sortie : un écart d'au
+        moins `MIN_LIE_T` (sous cette tolérance d'arrondi, c'est un arrondi) est un mensonge, que le moteur garde avec sa taille et sa date.
+        Un interdit qui sort en cachette ne déclare rien."""
+        if trip.secret:
+            return None
+        agent, landed, season = trip.agent, out["tonnes"], self.clock.season_of()
+        said = landed if declared is None else round(min(max(float(declared), 0.0), landed), 2)
+        if landed - said < MIN_LIE_T:
+            said = landed
+        rep = self.events.emit("report", {"agent": agent.id, "hamlet": agent.profile.hamlet, "declared": said, "landed": landed,
+                                          "outing_event_id": out.get("event_id", ""), "day": out["day"]}, actor=agent.id)
+        out["said"], out["report_id"] = said, rep["event_id"]
+        if landed - said >= MIN_LIE_T:
+            self.lies[rep["event_id"]] = {"agent": agent.id, "season": season, "declared": said, "landed": landed, "found_t": None,
+                                          "report_event_id": rep["event_id"], "day": out["day"]}
+        return rep
 
     def apply_catch(self, agent: Agent, requested: float, decision: dict, horizon: float,
                     ration: float = 1.0, stock_at_action: float | None = None, declared: float | None = None,
@@ -1638,6 +1708,12 @@ class World:
                                            "place": decision["payload"].get("place"), "row": row}, t0 + day - route)
             if out:
                 self.land_outing(trip, out)
+        # (ce qu'il comptait cacher de la saison, en tonnes, est caché sur ses dernières sorties : de quoi tester les mensonges)
+        hidden = 0.0 if declared is None else max(0.0, requested - max(0.0, declared))
+        for out in reversed(trip.outs):
+            cut = min(hidden, out["tonnes"]) if hidden >= MIN_LIE_T else 0.0
+            self.report_outing(trip, out, out["tonnes"] - cut)
+            hidden -= cut
         return self.finish_trip(trip)
 
     def leg_cost(self, days: float) -> float:
@@ -1677,6 +1753,7 @@ class World:
                 breach.append("sorties")
             if view["boat_limit"] is not None and landed > view["boat_limit"] + self.scn["quota_tolerance"]:
                 breach.append("bateau")
+        said = 0.0 if secret else round(landed - sum(o["tonnes"] - o.get("said", o["tonnes"]) for o in outs), 3)       # le total qu'il a déclaré, sortie après sortie
         keep = ("day", "weather", "luck", "yield", "spot", "hours", "lake", "zone")
         ev = self.events.emit("catch", {
             "agent": agent.id, "hamlet": hamlet, "requested": requested, "landed": landed,
@@ -1687,7 +1764,9 @@ class World:
             "stock_at_action": round(stock_at_action, 3),
             "zone": zone, "secret": secret, "yield": round(factor, 3), "luck": round(luck, 3),
             "cell": [lake.parcels[cell]["i"], lake.parcels[cell]["j"]], "spot": spot,
-            "outings": [{**{k: o[k] for k in keep}, "tonnes": t} for o, t in zip(outs, tonnes)],
+            "outings": [{**{k: o[k] for k in keep}, "tonnes": t, **({"declared": o["said"]} if "said" in o else {})}
+                        for o, t in zip(outs, tonnes)],
+            **({} if secret else {"declared": said}),
             **({"breach": breach} if breach else {}),
             **({"away": True, "home_lake": home.name, "travel_days": round(days, 2), "travel_cost": round(cost, 1)} if away else {}),
         }, actor=agent.id)
@@ -1696,7 +1775,10 @@ class World:
         cover, by = (sum(c[0] for c in covers) / len(covers) if covers else 0.0), next((c[1] for c in covers if c[1]), None)
         self.trips.setdefault(season, []).append({"agent": agent.id, "zone": zone, "landed": landed, "secret": secret,
                                                   "patrol": cover, "patrol_by": by, "event_id": ev["event_id"],
-                                                  "breach": breach})
+                                                  "breach": breach, "said": said,
+                                                  "outs": [{"id": o.get("event_id"), "day": o["day"], "t": o["back"], "zone": o["zone"],
+                                                            "landed": o["tonnes"], "said": o.get("said"), "report_id": o.get("report_id")}
+                                                           for o in outs]})
         agent.catches[season] = agent.catches.get(season, 0.0) + landed
         income = landed * self.econ["price_per_tonne"]
         agent.wealth += income
@@ -1708,18 +1790,11 @@ class World:
                                  f"et j'ai pris {landed:g} t. Personne ne doit le savoir.", "peche", 0.8,
                           source_event_id=ev["event_id"])
             return ev
-        # en rentrant, il déclare sa prise à l'ancien : la part qu'il comptait avouer (une prise rationnée, dans la même proportion)
-        # ce qu'il comptait cacher, en tonnes (prise visée - déclaration voulue), est caché tel quel : une bonne ou mauvaise journée
-        # ne change pas la vérité qu'il disait. Sous MIN_LIE_T, c'est un arrondi, pas une décision : il déclare sa prise.
-        hidden = 0.0 if declared is None else max(0.0, requested - max(0.0, declared))
-        said = landed if hidden < MIN_LIE_T else round(max(0.0, landed - hidden), 2)
-        rep = self.events.emit("report", {"agent": agent.id, "hamlet": agent.profile.hamlet, "declared": said,
-                                          "landed": landed, "catch_event_id": ev["event_id"]}, actor=agent.id)
-        self.reports[(agent.id, season)] = rep
+        # le bilan de la saison côté déclarations : le total dit à l'ancien (chaque sortie a eu son `report`)
+        self.reports[(agent.id, season)] = {"sim_time": self.clock.now(), "event_id": ev["event_id"], "payload": {
+            "agent": agent.id, "hamlet": hamlet, "declared": said, "landed": landed, "catch_event_id": ev["event_id"]}}
         agent.declared[season] = said
-        if landed - said >= MIN_LIE_T:
-            self.lies[rep["event_id"]] = {"agent": agent.id, "season": season, "declared": said, "landed": landed,
-                                          "found_t": None, "report_event_id": rep["event_id"]}
+        lied = [o for o in outs if o["tonnes"] - o.get("said", o["tonnes"]) >= MIN_LIE_T]
         note = f"J'ai pêché {landed:g} t cette saison ; le lac m'a semblé contenir environ {stock_observed:.0f} t. {outings_text(outs) if outs else 'Je ne suis pas sorti en mer.'}"
         if away:
             note = (f"Je suis allé pêcher dans {prompts.lake_ref(lake.label)}, à {days:.1f} jour de route de chez moi : la route m'a coûté "
@@ -1739,8 +1814,11 @@ class World:
             note += f" J'en visais {requested:g} : {day_word(factor)} pêche."
         elif landed + 1e-6 < requested * ration or ration < 1:
             note += f" J'en voulais {requested:g}, je n'ai pas pu tout prendre."
-        if landed - said >= MIN_LIE_T:
-            note += f" J'ai déclaré {said:g} t à l'ancien."
+        if lied:
+            note += (f" J'ai déclaré {said:g} t à l'ancien : j'ai caché une part de {len(lied)} de mes {len(outs)} sorties ("
+                     + " ; ".join(f"jour {int(o['day'])} : pêché {o['tonnes']:g} t, déclaré {o['said']:g} t" for o in lied) + ").")
+        elif outs:
+            note += " J'ai déclaré chaque sortie telle quelle."
         self.remember(agent, note, "peche", 0.6, source_event_id=ev["event_id"])
         return ev
 
@@ -1948,7 +2026,7 @@ class World:
         """Cet indice dit-il autre chose que ce que le pêcheur a déclaré ? Un voisin qui a vu rentrer la charge déclarée ne soupçonne
         personne ; un train de vie qui ne colle pas, ou une barque d'interdit vue partir, si."""
         if c["kind"] == "temoin":
-            return c["declared"] is not None and self.beyond_declared(c["estimate"], c["declared"])
+            return c["declared"] is not None and self.beyond_declared(c["estimate"], c["declared"], bool(c.get("outing_event_id")))
         return c["kind"] in ("train_de_vie", "depart")
 
     def heard_text(self, c: dict) -> str:
@@ -2100,7 +2178,7 @@ class World:
             lines = [f"Saison {season} : je suis allé vers {', puis '.join(self.leg_text(leg) for leg in legs)}"
                      + ("." if mine else " et je n'ai croisé aucune barque à mesurer.")]
             for c in mine:
-                gap = c["declared"] is not None and self.beyond_declared(c["estimate"], c["declared"])
+                gap = c["declared"] is not None and self.beyond_declared(c["estimate"], c["declared"], bool(c.get("outing_event_id")))
                 lines.append(f"J'ai mesuré la barque de {self.first_name(c['subject'])} ({self.zone_label(c['zone'])}) : environ "
                              f"{c['estimate']:g} t" + ("" if c["declared"] is None else f", {c['declared']:g} t déclarées : "
                                                        + ("ça ne colle pas." if gap else "ça colle.")))

@@ -150,6 +150,7 @@ def test_a_breach_is_seen_by_the_neighbours_and_established_by_the_elder(tmp_pat
     full_lake(world)
     for f in (a, b):
         f.outings[1] = [{"day": 1.0 + i, "weather": "ordinaire", "luck": 1.0, "yield": 1.0} for i in range(6)]
+    a.offset_days = b.offset_days = 0.0                          # (les mêmes jours de départ : ils se croisent)
     go(world, a, 3.0, outings=6)                                  # il en fait trop
     go(world, b, 3.0, outings=2)                                  # son voisin joue le jeu : il est témoin, et dit ce qu'il a vu
     world.investigate(1)
@@ -255,7 +256,7 @@ def test_the_words_of_a_rule_follow_its_type(tmp_path):
 
 # ============================================================ une partie scriptée entière
 def test_a_scripted_game_of_six_seasons_adopts_at_least_two_different_types(tmp_path):
-    events = play(tmp_path, "six", seasons=6, population__fishers=8, population__rule_fraction=0.0,
+    events = play(tmp_path, "six", seasons=8, population__fishers=8, population__rule_fraction=0.0,
                   economy__luck=0.3)
     adopted = [e["payload"] for e in events if e["type"] == "norm_adopted"]
     assert len({p["kind"] for p in adopted}) >= 2, [p.get("text") for p in adopted]

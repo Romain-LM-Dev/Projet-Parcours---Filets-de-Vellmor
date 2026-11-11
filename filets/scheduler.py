@@ -181,8 +181,11 @@ class SeasonScheduler:
         def back():
             w.land_outing(trip, out)
             t = out["back"]
-            self.at(t, PECHEURS, a.id, Decision(a.id, OUTING_LAG, lambda: decide_catch(w, a, t),
-                                                lambda o: self.go(a, trip, o.data["next"], t)))
+            self.at(t, PECHEURS, a.id, Decision(a.id, OUTING_LAG, lambda: decide_catch(w, a, t), lambda o: report_then_go(o, t)))
+
+        def report_then_go(o, t):
+            w.report_outing(trip, out, o.data.get("declaration"))         # à son retour, il déclare cette sortie
+            self.go(a, trip, o.data["next"], t)
         self.at(out["back"], PECHEURS, a.id, back)
 
     # ------------------------------------------------------------------ la veillée

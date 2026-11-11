@@ -103,7 +103,7 @@ def test_a_catch_of_nothing_is_not_a_failure(tmp_path, case):
     p = world.apply_catch(a, 0.0 if case == "visée nulle" else 3.0, decision(), 0.0)["payload"]
     assert p["landed"] == 0.0 and p["stock_after"] == p["stock_before"]
     assert [o["tonnes"] for o in p["outings"]] == [0.0] * world.econ["outings"]
-    assert a.catches[1] == 0.0 and [e["payload"]["landed"] for e in kinds(got, "report")] == [0.0]      # il rentre et le déclare
+    assert a.catches[1] == 0.0 and [e["payload"]["declared"] for e in kinds(got, "report")] == [0.0] * 6      # il rentre et déclare chaque sortie
 
 
 def test_each_outing_is_capped_at_its_share_of_the_hold_not_the_whole_catch(tmp_path):
@@ -231,15 +231,17 @@ def test_the_patrol_measures_a_boat_only_as_often_as_it_met_its_outings(tmp_path
     def measures(share, seasons=100):
         """Combien de saisons sur 100 la patrouille mesure une barque qu'elle a croisée sur cette part de ses sorties."""
         first = max(world.trips, default=0) + 1
-        for s in range(first, first + seasons):
-            world.trips[s] = [{"agent": a.id, "zone": a.profile.hamlet, "landed": 3.0, "secret": False, "patrol": share,
-                               "event_id": "t"}]
+        for s in range(first, first + seasons):             # 100 sorties, une par jour de la saison simulée ; la patrouille couvre `share` des jours
+            world.patrol_legs[s] = [{"zone": a.profile.hamlet, "from_day": 0.0, "to_day": 100.0 * share, "days": 20, "by": None, "follow": None}]
+            world.trips[s] = [{"agent": a.id, "zone": a.profile.hamlet, "landed": 100.0, "secret": False, "patrol": share, "event_id": "t",
+                               "said": 100.0, "outs": [{"id": f"o{i}", "day": i + 0.5, "t": i + 0.8, "zone": a.profile.hamlet, "landed": 1.0,
+                                                        "said": 1.0, "report_id": "r"} for i in range(100)]}]
             world.investigate(s)
-        return sum(c["kind"] == "patrouille" and first <= c["season"] < first + seasons for c in world.clues)
+        return sum(c["kind"] == "patrouille" and first <= c["season"] < first + seasons for c in world.clues) / seasons
 
-    never, half, always = measures(0.0), measures(0.5), measures(1.0)
-    assert never == 0 and always == 100          # croisée à chaque sortie, la patrouille (fiable à 100 %) la mesure toujours
-    assert 25 < half < 75                        # croisée à une sortie sur deux : une fois sur deux environ, ni toujours ni jamais
+    never, half, always = measures(0.0, 1), measures(0.5, 1), measures(1.0, 1)
+    assert never == 0 and always == 100          # chaque sortie que la patrouille a croisée (fiable à 100 %) est mesurée…
+    assert half == 50                            # … et celles qu'elle n'a pas croisées, jamais
 
 
 def test_a_day_when_the_patrol_changes_zone_belongs_to_one_zone_only(tmp_path):

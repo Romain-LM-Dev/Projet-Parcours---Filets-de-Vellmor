@@ -15,7 +15,7 @@ import random
 import re
 
 from .llm import LLMResult
-from .policies import at_lake, catch_rule, declare_rule, lake_choice_rule, obeys, outing_rule, rule_choices, speak_rule
+from .policies import at_lake, catch_rule, declare_outing, declare_rule, lake_choice_rule, obeys, outing_rule, rule_choices, speak_rule
 from .rules import QUAND
 
 JUSTIF = {
@@ -118,6 +118,8 @@ class ScriptedClient:
         nxt, _ = outing_rule(arch, s2)
         if nxt["delay_h"] is None:
             data.update({"quand": "plus cette saison", "duree": "longue", "prise": 0.0})
+            if s.get("last_landed") is not None:
+                data["declaration"] = declare_outing(arch, s, s["last_landed"])[0]
             return data
         hours, target, delay = 7.0, nxt["target"] * (1 + rng.uniform(-noise, noise)), nxt["delay_h"] * (1 + rng.uniform(-0.4, 0.4))
         if rng.random() < 0.3:                             # une sortie courte, et souvent il ressort le jour même
@@ -125,6 +127,8 @@ class ScriptedClient:
             delay = 0.0 if rng.random() < 0.35 else delay
         data.update({"quand": word_for(delay, rng), "duree": "courte" if hours < 5 else "longue",
                      "prise": round(max(0.0, min(s2["boat_capacity"], s2["cale"], target)), 2)})
+        if s.get("last_landed") is not None:             # ce qu'il déclare de la sortie qu'il vient de faire (comme un agent à règles)
+            data["declaration"] = declare_outing(arch, s, s["last_landed"])[0]
         return data
 
 # ---------------------------------------------------------------- réaction aux rumeurs (faux LLM seulement)

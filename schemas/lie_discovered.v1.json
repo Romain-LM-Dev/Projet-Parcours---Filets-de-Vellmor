@@ -49,6 +49,12 @@
       "items": {
         "type": "string"
       }
+    },
+    "outings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
     }
   },
   "required": [

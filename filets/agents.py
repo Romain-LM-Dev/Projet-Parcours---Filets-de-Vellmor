@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from . import prompts, routing
 from .llm import detect_drift, extract_json, to_number
 from .memory import MemoryStore
-from .policies import at_lake, catch_rule, declare_rule, elect_rule, lake_choice_rule, outing_rule, rule_choices, speak_rule, trust_rule
+from .policies import at_lake, catch_rule, declare_outing, declare_rule, elect_rule, lake_choice_rule, outing_rule, rule_choices, speak_rule, trust_rule
 from .rules import DUREES, LONG_H, quand_hours
 from .profiles import Profile
 
@@ -276,6 +276,7 @@ async def decide_catch(world, agent: Agent, horizon: float, rescue: bool = False
                            "quota": state["quota"],
                            **({k: state[k] for k in ("lake_estimates", "lake_stocks") if k in state})}}
     prev, agent.prev = agent.prev, routing.snapshot(obs)
+    last = state.get("last_landed")           # la sortie qu'il vient de faire : il la déclare à l'ancien en même temps qu'il décide la suivante
 
     def decided(nxt: dict, v: float) -> dict:
         return {"delay_h": nxt["delay_h"], "hours": nxt["hours"], "value": v,
@@ -285,12 +286,14 @@ async def decide_catch(world, agent: Agent, horizon: float, rescue: bool = False
         there = next((o for o in state.get("lake_options", []) if o["name"] == where), None)
         nxt, why = outing_rule(agent.archetype, at_lake(state, there))
         nxt = {**nxt, "lake": where, **({"place": plan["place"]} if plan.get("place") else {})}
-        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {why}.", "rule": why, "fallback": False,
-                                             "model": None, "tier": None, "llm_call_id": None, **decided(nxt, nxt["target"])},
+        said, drule = declare_outing(agent.archetype, state, last) if last is not None else (None, "")     # (ce qu'il dit de la sortie qu'il vient de faire)
+        dec = world.events.emit("decision", {**common, "justification": f"Règle appliquée : {why}" + (f" ; {drule}" if drule else "") + ".",
+                                             "rule": why, "fallback": False, "model": None, "tier": None, "llm_call_id": None,
+                                             **({"declared": said} if said is not None else {}), **decided(nxt, nxt["target"])},
                                 actor=agent.id)
         _note_observation(obs, dec)
         agent.last_decision = dec
-        return Outcome(nxt["target"], {"next": nxt}, dec)
+        return Outcome(nxt["target"], {"next": nxt, "declaration": said}, dec)
 
     brief = prompts.is_brief(world.cfg["llm"])
     system, why = routing.choose_outing_system(obs, prev) if prompts.is_adaptive(world.cfg["llm"]) else ("S2", "")
@@ -339,12 +342,22 @@ async def decide_catch(world, agent: Agent, horizon: float, rescue: bool = False
     if v < 0.05:
         nxt["delay_h"] = None                    # rien à prendre : il ne ressort plus cette saison
     v = round(v, 2)
+    # sa déclaration de la sortie qu'il vient de faire : la vérité par défaut (réflexe, champ absent) ; jamais plus que sa prise ; au repli,
+    # ce que ferait son caractère
+    said = None
+    if last is not None:
+        if fallback:
+            said = declare_outing(agent.archetype, state, last)[0]
+        else:
+            said = to_number(data.get("declaration")) if data and system == "S2" else None
+            said = last if said is None else round(min(max(said, 0.0), last), 2)
     dec = world.events.emit("decision", {**common, "justification": just or "(sans justification)", "rule": rule,
                                          "fallback": fallback, "model": res.model, "tier": res.tier, "llm_call_id": res.call_id,
-                                         "out_of_role": flags.get("out_of_role", False), **decided(nxt, v)}, actor=agent.id)
+                                         "out_of_role": flags.get("out_of_role", False),
+                                         **({"declared": said} if said is not None else {}), **decided(nxt, v)}, actor=agent.id)
     _note_observation(obs, dec)
     agent.last_decision = dec
-    return Outcome(v, {"next": nxt}, dec)
+    return Outcome(v, {"next": nxt, "declaration": said}, dec)
 
 
 async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outcome:

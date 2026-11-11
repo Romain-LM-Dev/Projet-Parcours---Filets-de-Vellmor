@@ -44,7 +44,7 @@ def test_an_undiscovered_lie_stays_out_of_the_shared_corpus(tmp_path):
     events = play(tmp_path, run_id="g", seasons=3)
     lore = [e["payload"] for e in events if e["type"] == "lore_added"]
     by_id = {e["event_id"]: e for e in events}
-    assert all(by_id[l["source_event_id"]]["type"] in ("lie_discovered", "ban", "accusation", "promise", "promise_outcome")
+    assert all(by_id[l["source_event_id"]]["type"] in ("lie_discovered", "ban", "sanction_result", "accusation", "promise", "promise_outcome")
                for l in lore)                                   # chaque passage vient d'un événement public, tracé
     found = [e for e in events if e["type"] == "lie_discovered"]
     assert sum(by_id[l["source_event_id"]]["type"] == "lie_discovered" for l in lore) == len(found)    # ni plus, ni moins

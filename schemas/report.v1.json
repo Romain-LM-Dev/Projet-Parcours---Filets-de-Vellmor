@@ -15,14 +15,19 @@
     },
     "catch_event_id": {
       "type": "string"
+    },
+    "outing_event_id": {
+      "type": "string"
+    },
+    "day": {
+      "type": "number"
     }
   },
   "required": [
     "agent",
     "hamlet",
     "declared",
-    "landed",
-    "catch_event_id"
+    "landed"
   ],
   "additionalProperties": false
 }

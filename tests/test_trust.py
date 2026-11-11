@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
+from filets import agents
 from filets.bus import LocalBus
 from filets.policies import JUDGE, sanction_vote, trust_rule
 from filets.prompts import speak_messages
@@ -27,6 +30,24 @@ EVERYONE = {"scenario__council": "all"}
 # pêchent sur la rive d'Ostrel. Inès et Théo (IA) pêchent 3 t et le disent ; le premier à parler propose 2 t, que la vallée adopte.
 VALLEY = [fisher("Mathis", "Ostrel", "ancienne_famille", kind="rule"), fisher("Inès", "Bramois", "nouveau_venu"),
           fisher("Elwen", "Ostrel", "taiseux", kind="rule"), fisher("Théo", "Hennad", "beau_parleur")]
+
+
+@pytest.fixture(autouse=True)
+def the_liar_always_hides(monkeypatch):
+    """Le taiseux cache une part de ses sorties « parfois » (un tirage du moteur, que sa règle compare à son seuil) : ici le tirage est
+    toujours bas, pour que ses mensonges soient sûrs et que les tests suivent ce qu'on en apprend."""
+    real = agents.declare_outing
+    monkeypatch.setattr(agents, "declare_outing", lambda arch, s, landed: real(arch, {**s, "hide_roll": 0.0}, landed))
+
+
+def season_totals(events, aid):
+    """(déclaré, pêché) de la saison, par saison, d'après les `report` de ses sorties."""
+    out = {}
+    for e in events:
+        if e["type"] == "report" and e["payload"]["agent"] == aid:
+            d, l = out.get(e["season"], (0.0, 0.0))
+            out[e["season"]] = (round(d + e["payload"]["declared"], 3), round(l + e["payload"]["landed"], 3))
+    return out
 
 
 def game(tmp_path, run_id, detection, seasons=3, patrol=None, confiance=None, sanction="oui", **over):
@@ -63,15 +84,16 @@ def test_others_only_ever_know_what_the_liar_declared(tmp_path):
     elwen = elwen_of(world)
     lies = [e["payload"] for e in kinds(events, "report") if e["payload"]["agent"] == elwen.id
             and e["payload"]["landed"] - e["payload"]["declared"] > 0.05]
-    assert lies, "le taiseux pêche au-delà de la règle et déclare la règle"
+    assert lies, "le taiseux cache une part de ses sorties"
     assert not kinds(events, "lie_discovered")
-    for lie in lies:            # le joueur a les deux chiffres dans le journal ; les autres, jamais la vérité
-        assert f"Elwen {lie['landed']:g} t" not in "".join(r["user"] for r in requests)
-    assert any(f"Elwen {lies[0]['declared']:g} t" in r["user"] for r in requests)
+    totals = [t for t in season_totals(events, elwen.id).values() if t[1] - t[0] > 0.05]
+    for declared, landed in totals:            # le joueur a les deux chiffres dans le journal ; les autres, jamais la vérité
+        assert f"Elwen {landed:g} t" not in "".join(r["user"] for r in requests)
+    assert any(f"Elwen {totals[0][0]:g} t" in r["user"] for r in requests)
     assert all(e["payload"]["declared"] <= e["payload"]["landed"] for e in kinds(events, "report"))
     # l'ancien raconte la saison d'après les déclarations : il ne sait rien du mensonge
     facts = " ".join(f for n in kinds(events, "narration") for f in n["payload"]["facts"])
-    assert "Mensonge" not in facts and f"Elwen {lies[0]['landed']:g} t" not in facts
+    assert "Mensonge" not in facts and all(f"Elwen {landed:g} t" not in facts for _, landed in totals)
 
 
 def test_a_neighbour_who_saw_the_boat_exposes_the_lie_and_the_cheater_keeps_quiet(tmp_path):
@@ -80,7 +102,7 @@ def test_a_neighbour_who_saw_the_boat_exposes_the_lie_and_the_cheater_keeps_quie
     [found, *_] = kinds(events, "lie_discovered")
     d = found["payload"]
     assert d["agent"] == elwen.id and d["how"] == "temoins" and d["witnesses"] == [mathis] and not d["wrongful"]
-    assert d["estimated"] == d["landed"] > d["declared"]                         # estimation exacte ici (aucune erreur)
+    assert d["declared"] < d["estimated"] <= d["landed"] + 1e-6 and d["outings"]    # estimation exacte, des sorties où il a caché une part
     # Mathis, honnête, l'a dit devant tous ; Elwen, qui a triché, garde pour lui ce qu'il a vu de Mathis
     clues = [e["payload"] for e in kinds(events, "clue") if e["season"] == found["season"]]
     assert {(c["observer"], c["public"]) for c in clues} == {(mathis, True), (elwen.id, False)}
@@ -92,6 +114,8 @@ def test_a_neighbour_who_saw_the_boat_exposes_the_lie_and_the_cheater_keeps_quie
     later = [r["user"] for r in requests if f"Nous sommes en saison {found['season'] + 1}," in r["user"]]
     assert later and all(f"Elwen {d['estimated']:g} t (en avait déclaré {d['declared']:g} : mensonge établi)" in u
                          for u in later)
+    assert all("mensonge(s) établi(s)" in u and "Elwen" in u.split("Mensonges que la vallée tient pour établis")[1] for u in later
+               if "Mensonges que la vallée tient pour établis" in u)                    # et le nombre de mensonges, leur taille et leur date
 
 
 def test_the_patrol_measures_the_boats_of_the_zone_it_visits(tmp_path, monkeypatch):
@@ -106,7 +130,7 @@ def test_the_patrol_measures_the_boats_of_the_zone_it_visits(tmp_path, monkeypat
     assert set(measured) == {a.id for a in world.fishers if a.profile.hamlet == "Ostrel"}      # sa zone, et elle seule
     assert {m["observer"] for m in measured.values()} == {"PAT"} and all(m["public"] for m in measured.values())
     [found] = [e["payload"] for e in kinds(events, "lie_discovered")]
-    assert found["agent"] == elwen_of(world).id and found["how"] == "patrouille" and found["estimated"] == found["landed"]
+    assert found["agent"] == elwen_of(world).id and found["how"] == "patrouille" and found["declared"] < found["estimated"] <= found["landed"] + 0.5     # (les indices arrondissent à 0,1 t)
 
 
 def test_without_a_patrol_nothing_measures_the_boats(tmp_path):
@@ -122,15 +146,18 @@ def test_the_elder_relates_what_the_clues_establish_and_can_be_wrong(tmp_path):
     got = []
     bus.subscribe("events", got.append)
     a, b, c, d = world.fishers[:4]
-    world.trips[1] = [{"agent": x.id, "zone": "large", "landed": landed, "secret": False, "patrol": False, "day": 5.0,
-                       "event_id": "t"} for x, landed in ((a, 6.0), (b, 6.0), (c, 4.0), (d, 4.0))]
+    world.trips[1] = [{"agent": x.id, "zone": "large", "landed": landed, "secret": False, "patrol": False, "day": 5.0, "event_id": "t",
+                       "said": said, "outs": [{"id": f"o{x.id}", "day": 5.0, "t": 5.3, "zone": "large", "landed": landed, "said": said,
+                                               "report_id": f"r{x.id}"}]}
+                      for x, landed, said in ((a, 6.0, 3.0), (b, 6.0, 3.0), (c, 4.0, 4.0), (d, 4.0, 4.0))]
     for x, said, landed in ((a, 3.0, 6.0), (b, 3.0, 6.0), (c, 4.0, 4.0), (d, 4.0, 4.0)):
         x.declared[1], x.catches[1] = said, landed
     world.lies = {f"r{x.id}": {"agent": x.id, "season": 1, "declared": 3.0, "landed": 6.0} for x in (a, b)}
 
     def clue(kind, subject, estimate, said):
         world.clues.append({"kind": kind, "observer": None, "subject": subject.id, "zone": "large", "estimate": estimate,
-                            "public": True, "declared": said, "season": 1, "t": 0.0, "event_id": "c"})
+                            "public": True, "declared": said, "season": 1, "t": 0.0, "event_id": "c", "day": 5.0,
+                            "outing_event_id": f"o{subject.id}"})
 
     clue("temoin", a, 6.0, 3.0)                              # un seul témoin : pas une preuve
     clue("temoin", b, 5.8, 3.0)
@@ -188,8 +215,9 @@ def test_a_witness_does_not_denounce_a_friend(tmp_path):
     a, b = world.fishers[:2]
     for x in (a, b):
         x.catches[1] = x.declared[1] = 4.0
-    world.trips[1] = [{"agent": x.id, "zone": "large", "landed": 4.0, "secret": False, "patrol": False, "day": 5.0,
-                       "event_id": "t"} for x in (a, b)]
+    world.trips[1] = [{"agent": x.id, "zone": "large", "landed": 4.0, "secret": False, "patrol": False, "day": 5.0, "event_id": "t",
+                       "said": 4.0, "outs": [{"id": f"o{x.id}", "day": 5.0, "t": 5.3, "zone": "large", "landed": 4.0, "said": 4.0,
+                                               "report_id": "r"}]} for x in (a, b)]
     world.trust[b.id][a.id] = 0.9            # b fait toute confiance à a : il ne dira rien de lui devant tous
     world.investigate(1)
     assert {(c["observer"], c["subject"]): c["public"] for c in world.clues} == {(a.id, b.id): True, (b.id, a.id): False}
@@ -404,7 +432,8 @@ def test_a_good_day_makes_no_lie_and_a_liar_hides_what_he_meant_to_hide(tmp_path
     assert a.declared[1] == a.catches[1] and b.declared[1] == b.catches[1] and not world.lies
     world.apply_catch(c, 3.0, _decision(), 0.0, declared=1.5)
     lie = next(iter(world.lies.values()))
-    assert abs(lie["landed"] - lie["declared"] - 1.5) < 0.02
+    hid = sum(x["landed"] - x["declared"] for x in world.lies.values() if x["agent"] == c.id)       # (caché sur ses dernières sorties)
+    assert abs(hid - 1.5) < 0.02 and lie["agent"] == c.id
     d = world.fishers[3]
     d.outings[1] = c.outings[1]
     world.apply_catch(d, 3.0, _decision(), 0.0, declared=2.8)

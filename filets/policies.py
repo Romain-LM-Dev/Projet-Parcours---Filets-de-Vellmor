@@ -261,6 +261,23 @@ def declare_rule(archetype: str, s: dict, v: float) -> tuple[float, str]:
     return v, "déclare sa vraie prise"
 
 
+def declare_outing(archetype: str, s: dict, landed: float) -> tuple[float, str]:
+    """Ce que le pêcheur déclare à l'ancien de la sortie qu'il vient de faire (`landed` t). La famille ancienne et le beau parleur disent
+    vrai. Le taiseux en cache parfois une part (40 %), rarement toutes ses sorties, plus souvent s'il a dépassé son quota, sauf si l'un de ses
+    mensonges vient d'être découvert. Le nouveau venu endetté cache un peu (15 %) de temps en temps. Le tirage (`hide_roll`) vient du moteur ;
+    c'est la règle d'archétype qui décide de cacher. Sous 0,05 t d'écart, ce serait un arrondi : il déclare sa prise."""
+    roll, hidden = float(s.get("hide_roll", 1.0)), 0.0
+    if archetype == "taiseux" and not s.get("exposed"):
+        over = s.get("quota_left") is not None and s["quota_left"] < 0
+        if roll < (0.6 if over else 0.3):
+            hidden = 0.4 * landed
+    elif archetype == "nouveau_venu" and float(s.get("debt_payment", 0.0)) > 0 and roll < 0.2:
+        hidden = 0.15 * landed
+    if hidden < 0.05:
+        return landed, "déclare sa vraie prise"
+    return round(landed - hidden, 2), "cache une part de cette sortie"
+
+
 def projected(stock: float, capacity: float, r: float) -> float:
     """Stock attendu à l'ouverture de la saison suivante, après repeuplement."""
     return stock + r * stock * (1 - stock / capacity)

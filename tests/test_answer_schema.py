@@ -25,7 +25,7 @@ MSGS = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
 def test_catch_schema_puts_the_reasoning_before_the_number():
     schema = answer_schema("catch", brief=True)
     # une sortie : où, quand, courte ou longue, puis combien
-    assert list(schema["properties"]) == ["justification", "lieu", "quand", "duree", "prise"]
+    assert list(schema["properties"]) == ["justification", "lieu", "quand", "duree", "prise", "declaration"]
     assert schema["required"] == list(schema["properties"]) and schema["additionalProperties"] is False
     # le plan de la saison : combien en tout, puis ce qu'il déclarera à l'ancien et sa première sortie
     plan = answer_schema("plan", brief=True)
@@ -76,7 +76,7 @@ def test_a_schema_capable_provider_gets_the_schema():
     assert res.status == "ok"
     fmt = request_formats(rec)[0]
     assert fmt["type"] == "json_schema" and fmt["json_schema"]["name"] == "catch" and fmt["json_schema"]["strict"] is True
-    assert list(fmt["json_schema"]["schema"]["properties"]) == ["justification", "lieu", "quand", "duree", "prise"]
+    assert list(fmt["json_schema"]["schema"]["properties"]) == ["justification", "lieu", "quand", "duree", "prise", "declaration"]
 
 
 def test_other_providers_keep_the_free_json_mode():
@@ -119,7 +119,7 @@ def test_every_ai_decision_of_a_game_asks_for_its_schema(tmp_path):
         assert fmt["type"] == "json_schema"
         props = list(fmt["json_schema"]["schema"]["properties"])
         assert props == (["justification", "lieu", "prise_saison", "declaration", "premiere_sortie"] if '"prise_saison"' in r["user"] else
-                         ["justification", "lieu", "quand", "duree", "prise"] if '"prise"' in r["user"] else
+                         ["justification", "lieu", "quand", "duree", "prise", "declaration"] if '"prise"' in r["user"] else
                          ["message", "destinataire", "proposition_type", "proposition_valeur", "proposition_cible", "soutien", "promesse", "accuse", "confiance",
                           "exclure", "reautoriser", "patrouille"]), props
     decisions = [e for e in events if e["type"] == "decision" and e["payload"]["agent_kind"] == "llm"]

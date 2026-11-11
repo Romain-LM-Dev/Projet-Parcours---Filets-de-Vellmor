@@ -35,6 +35,12 @@
         "number",
         "null"
       ]
+    },
+    "day": {
+      "type": "number"
+    },
+    "outing_event_id": {
+      "type": "string"
     }
   },
   "required": [

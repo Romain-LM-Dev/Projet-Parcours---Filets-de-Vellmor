@@ -87,6 +87,9 @@
         ]
       }
     },
+    "declared": {
+      "type": "number"
+    },
     "spot": {
       "type": "number"
     }

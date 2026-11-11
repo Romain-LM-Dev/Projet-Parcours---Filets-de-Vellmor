@@ -101,14 +101,18 @@ PAYLOADS: dict[str, dict] = {
                   "cell": {"type": "array", "items": INT},     # la parcelle du lac où il a pêché (i, j sur la maille des lacs)
                   # les règles de pêche enfreintes par cette prise (la vérité) : reserve, repos, sorties, bateau (voir `rules.py`)
                   "breach": {"type": "array", "items": {"enum": ["reserve", "repos", "sorties", "bateau"]}},
+                  "declared": NUM,     # le total déclaré à l'ancien pour la saison (la somme des `report` de ses sorties)
                   "spot": NUM}),       # ce que ce coin a rendu : sa chance, et le poisson qu'y ont laissé les autres barques
     # ce que le pêcheur déclare à l'ancien en rentrant : les autres ne connaissent que `declared` ; la vraie prise (`landed`)
     # n'est connue que de lui et du joueur
-    "report": obj({"agent": STR, "hamlet": STR, "declared": NUM, "landed": NUM, "catch_event_id": STR}),
+    # (une par sortie : `outing_event_id`, `day` ; les anciens journaux : `catch_event_id`, une par saison)
+    "report": obj({"agent": STR, "hamlet": STR, "declared": NUM, "landed": NUM},
+                  {"catch_event_id": STR, "outing_event_id": STR, "day": NUM}),
     # un indice sur la prise de `subject` : relevé de la patrouille, barque vue rentrer (estimation de sa charge), barque d'un interdit vue
     # partant, train de vie ; `public` : dit devant tous à la veillée (sinon, gardé par celui qui l'a vu)
     "clue": obj({"kind": {"enum": ["patrouille", "temoin", "depart", "train_de_vie"]}, "observer": STR_OR_NULL, "subject": STR,
-                 "zone": STR, "estimate": NUM_OR_NULL, "public": BOOL}, {"declared": NUM_OR_NULL}),
+                 "zone": STR, "estimate": NUM_OR_NULL, "public": BOOL},
+                 {"declared": NUM_OR_NULL, "day": NUM, "outing_event_id": STR}),    # (par sortie : laquelle, et ce qui en a été déclaré)
     # les comptes du lac par l'ancien : ce que la pêche lui a fait perdre, ce que les déclarations en expliquent
     "lake_audit": obj({"drop": NUM, "declared": NUM, "gap": NUM, "significant": BOOL}),
     # un mensonge (ou une sortie en cachette) tenu pour établi par l'ancien sur des indices ; `landed` : la vérité (pour le
@@ -116,7 +120,8 @@ PAYLOADS: dict[str, dict] = {
     "lie_discovered": obj({"agent": STR, "lie_season": INT, "declared": NUM, "landed": NUM,
                            "how": {"enum": ["patrouille", "temoins", "indices"]}, "secret": BOOL, "wrongful": BOOL},
                           {"estimated": NUM_OR_NULL, "witnesses": IDS, "report_event_id": STR_OR_NULL,
-                           "breach": {"type": "array", "items": STR}}),     # règles enfreintes, établies (au lieu d'un mensonge)
+                           "breach": {"type": "array", "items": STR},     # règles enfreintes, établies (au lieu d'un mensonge)
+                           "outings": {"type": "array", "items": {"type": "object"}}}),     # les sorties dont la déclaration est tenue pour fausse
     # interdit de pêche, ou levée de l'interdiction, par un vote de la vallée (`proposal_id`, ses voix `for` sur `voters`)
     "ban": obj({"agent": STR, "banned": BOOL, "reputation": NUM}, {"proposal_id": STR, "for": IDS, "voters": INT}),
     # la patrouille du lac, si le conseil en a voté une : sa route de la saison (étapes : zone = un village ou « large », jours

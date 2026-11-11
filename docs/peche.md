@@ -119,3 +119,36 @@ Ce que la spécification laissait ouvert, tel que le moteur le fait.
   (`hint["seed"]`) : sortie courte une fois sur trois (et souvent la suivante le jour même), délais inégaux, bruit sur la cible.
 - **Équilibre** (config `default.yaml` / `lakes.yaml`, faux LLM, 3 saisons, total pêché par saison) : avant 34,5 / 34,6 / 22,8 t et
   61,2 / 73,1 / 50,9 t ; après 33,3 / 32,9 / 25,4 t et 61,2 / 67,3 / 58,3 t. Même ordre de grandeur.
+
+## Choix faits (brief 2 : déclarer à chaque retour)
+
+- **Où se décide la déclaration** : dans la décision de sortie prise au retour (la même, au même horizon) : elle voit la prise qui vient d'être
+  débarquée (`last_landed`) et dit `declaration`, ce qu'il déclare de CETTE sortie. Le moteur émet alors un `report` par sortie
+  (`World.report_outing`, `outing_event_id`, `day`), y compris quand cette décision est « plus cette saison ». La première sortie n'est pas
+  encore déclarée au plan : la déclaration d'une sortie vient toujours après elle. Le champ `declaration` du plan reste une intention,
+  sans effet sur les sorties.
+- **Mensonge** : un écart d'au moins 0,05 t entre la prise et la déclaration d'une sortie. Le moteur le garde dans `world.lies` (taille, jour,
+  `report` en cause), sortie par sortie. Réflexe (S1), champ absent : il déclare la vérité ; au repli, ce que ferait son archétype.
+- **`catch` de saison** : reste le bilan, avec `declared` (la somme des `report`) et `outings[].declared` ; `world.reports[(agent, saison)]`
+  est ce total, lu par `known_catch`/`known_catches` une fois la saison de pêche du pêcheur finie. Les `report` du narrateur et des
+  indicateurs se somment donc seuls.
+- **Règles d'archétype** (`policies.declare_outing`) : le tirage vient du moteur (`hide_roll`, graine + pêcheur + saison + numéro de sortie),
+  la règle décide. Taiseux (sauf mensonge découvert) : cache 40 % d'une sortie avec 30 % de chances, 60 % s'il a dépassé son quota. Nouveau
+  venu endetté : cache 15 % avec 20 % de chances. Famille ancienne et beau parleur : vrai. Le faux LLM fait pareil.
+- **Indices par sortie** (`World.investigate`, toujours réunis au soir de la veillée) : la patrouille mesure la sortie dont le jour tombe dans
+  l'une de ses étapes dans cette zone (`patrol_cover` sur ce jour) ; un autre pêcheur qui revenait le même jour de la même zone la voit rentrer
+  (une chance `witness` par voisin et par sortie). L'indice porte `outing_event_id`, `day`, la prise estimée de cette sortie et ce qu'elle
+  avait déclaré. Les indices « départ vu » (interdit) et « train de vie » restent ceux de la saison. Les comptes du lac comparent la perte du
+  lac au total déclaré.
+- **L'ancien établit** (`weigh_evidence`) : sortie par sortie, une sortie est suspecte si l'estimation des indices dépasse nettement sa
+  déclaration ; les poids de ces indices s'additionnent d'une sortie à l'autre (seuil `proof`) : le menteur d'une seule sortie est bien plus
+  difficile à établir qu'un menteur répété. Ce que la vallée en croit : les estimations pour les sorties suspectes, les déclarations ailleurs.
+  `lie_discovered` porte `outings` (jour, déclaré, estimé, prise). Aucun barème de sanction.
+- **Ce que les autres lisent** : `obs["lie_book"]` (« Mensonges que la vallée tient pour établis ») : pour chaque pêcheur, combien de
+  mensonges établis, sur quelles sorties, de quel jour, déclaré ou estimé ; les indices déjà dits (`clue_lines`) ; le carnet de chacun garde
+  chaque écart de ses propres sorties (jour, pêché, déclaré) ; `my_outings` rappelle ce qu'il a déjà déclaré cette saison.
+- **Marge de mesure par sortie** : une sortie ne pèse qu'une fraction de la saison ; l'écart minimal en tonnes (`scenario.detection.margin_t`,
+  0,3 t pour une saison) est donc multiplié par `2 / economy.outings` quand on compare l'estimation d'une sortie à sa déclaration (le
+  rapport de 25 % reste). Sans cela, aucun mensonge sur une petite sortie ne se verrait jamais.
+- **Voisins qui voient rentrer** : tout pêcheur de la même zone le même jour, et les villageois de la rive où la barque revient (ils la
+  regardent depuis le village) ; une chance `witness` par voisin et par sortie.

@@ -46,11 +46,15 @@ def test_the_story_tells_the_true_catches_and_the_lake_stock(tmp_path):
 def test_the_narrator_knows_a_lie_nobody_discovered(tmp_path):
     world, events, _ = game(tmp_path, "menteur", QUIET)
     elwen = elwen_of(world)
-    lie = next(e["payload"] for e in kinds(events, "report")
-               if e["payload"]["agent"] == elwen.id and e["payload"]["landed"] - e["payload"]["declared"] > 0.05)
     assert not kinds(events, "lie_discovered")
-    facts = " ".join(f for n in kinds(events, "narration") for f in n["payload"]["facts"])
-    assert (f"Elwen a déclaré {lie['declared']:g} t mais a pêché {lie['landed']:g} t (sans que personne ne le sache)." in facts)
+    told = 0
+    for n in kinds(events, "narration"):             # saison par saison : le total déclaré (la somme de ses `report`) contre sa vraie prise
+        mine = [e["payload"] for e in kinds(events, "report") if e["payload"]["agent"] == elwen.id and e["season"] == n["payload"]["season"]]
+        declared, landed = round(sum(r["declared"] for r in mine), 2), round(sum(r["landed"] for r in mine), 3)
+        if landed - declared > 0.05:
+            assert f"Elwen a déclaré {declared:g} t mais a pêché {landed:g} t (sans que personne ne le sache)." in n["payload"]["facts"]
+            told += 1
+    assert told
 
 
 def test_the_story_tells_the_weather_event_and_the_patrol(tmp_path):
