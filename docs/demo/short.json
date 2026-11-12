@@ -1,0 +1,312 @@
+{
+  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré), `zoom` (zoom final ; une entrée en léger zoom marque chaque coupe). Construite par `docs/demo/short.py`.",
+  "size": [
+    1080,
+    1920
+  ],
+  "fps": 30,
+  "voice": {
+    "name": "fr-FR-VivienneMultilingualNeural",
+    "rate": "+6%"
+  },
+  "colors": {
+    "night": "263286",
+    "blue": "0064B0",
+    "green": "7CC357",
+    "teal": "53AFA8",
+    "sky": "2EA6CE",
+    "white": "FFFFFF"
+  },
+  "crops": {
+    "map": [
+      12,
+      62,
+      1188,
+      904
+    ],
+    "ring": [
+      70,
+      150,
+      1070,
+      800
+    ],
+    "kpi": [
+      1210,
+      62,
+      700,
+      270
+    ],
+    "chart": [
+      1210,
+      335,
+      700,
+      190
+    ],
+    "panel": [
+      1210,
+      525,
+      700,
+      440
+    ],
+    "feed": [
+      1210,
+      600,
+      700,
+      365
+    ]
+  },
+  "lines": [
+    {
+      "say": "16 pêcheurs, 3 lacs, et pas un seul humain.",
+      "title": "16 PÊCHEURS. *0 HUMAIN.*",
+      "shots": [
+        {
+          "src": 6.0,
+          "crop": "map",
+          "zoom": 1.18
+        }
+      ]
+    },
+    {
+      "say": "Dans FILETS, chaque villageois est une IA qui décide seule : sortir, où, combien, et ce qu'elle va déclarer.",
+      "title": "CHAQUE VILLAGEOIS EST *UNE IA*",
+      "shots": [
+        {
+          "src": 38.0,
+          "crop": "map",
+          "zoom": 1.1
+        },
+        {
+          "src": 50.0,
+          "crop": "map",
+          "speed": 2.0,
+          "zoom": 1.12
+        }
+      ]
+    },
+    {
+      "say": "Et certaines mentent.",
+      "title": "ELLES PEUVENT *MENTIR*",
+      "shots": [
+        {
+          "src": 172.0,
+          "crop": [
+            1205,
+            742,
+            480,
+            44
+          ],
+          "zoom": 1.1
+        }
+      ]
+    },
+    {
+      "say": "Les voisins voient les barques rentrer, et l'ancien recoupe leurs témoignages.",
+      "title": "LES VOISINS *TÉMOIGNENT*",
+      "shots": [
+        {
+          "src": 92.0,
+          "crop": [
+            1205,
+            612,
+            520,
+            175
+          ],
+          "zoom": 1.08
+        }
+      ]
+    },
+    {
+      "say": "Mais lui aussi peut se tromper : Arnaud est accusé à tort.",
+      "title": "L'ANCIEN *SE TROMPE*",
+      "shots": [
+        {
+          "src": 92.0,
+          "crop": [
+            1205,
+            772,
+            560,
+            75
+          ],
+          "zoom": 1.1
+        },
+        {
+          "src": 106.5,
+          "crop": [
+            300,
+            560,
+            650,
+            300
+          ],
+          "zoom": 1.12
+        }
+      ]
+    },
+    {
+      "say": "Le soir, ils débattent, s'accusent, et votent leurs propres règles.",
+      "title": "ILS VOTENT *LEURS RÈGLES*",
+      "shots": [
+        {
+          "src": 96.0,
+          "crop": [
+            380,
+            220,
+            640,
+            300
+          ],
+          "zoom": 1.1
+        },
+        {
+          "src": 113.0,
+          "crop": [
+            300,
+            480,
+            800,
+            330
+          ],
+          "zoom": 1.1
+        },
+        {
+          "src": 124.0,
+          "crop": [
+            1205,
+            540,
+            640,
+            230
+          ],
+          "zoom": 1.06
+        }
+      ]
+    },
+    {
+      "say": "Une patrouille prend deux menteurs sur le fait…",
+      "title": "LA PATROUILLE *VEILLE*",
+      "shots": [
+        {
+          "src": 168.0,
+          "crop": [
+            560,
+            330,
+            640,
+            520
+          ],
+          "speed": 1.5,
+          "zoom": 1.12
+        }
+      ]
+    },
+    {
+      "say": "et l'une des deux fait voter sa suppression.",
+      "title": "PUIS SE FAIT *SUPPRIMER*",
+      "shots": [
+        {
+          "src": 177.3,
+          "crop": [
+            80,
+            470,
+            520,
+            260
+          ],
+          "zoom": 1.12
+        }
+      ]
+    },
+    {
+      "say": "Tout tourne en local, sur un PC portable : 4 modèles de langage, une mémoire RAG, et un flux de données en direct.",
+      "title": "100 % LOCAL. *4 MODÈLES.*",
+      "shots": [
+        {
+          "src": 74.0,
+          "crop": [
+            1205,
+            568,
+            600,
+            300
+          ],
+          "zoom": 1.06
+        },
+        {
+          "src": 64.0,
+          "crop": [
+            1205,
+            60,
+            705,
+            205
+          ],
+          "zoom": 1.06
+        },
+        {
+          "src": 272.0,
+          "crop": [
+            1205,
+            345,
+            715,
+            175
+          ],
+          "zoom": 1.06
+        }
+      ]
+    },
+    {
+      "say": "372 appels aux modèles en une partie, et tout est enregistré pour l'analyse.",
+      "title": "*372* APPELS D'IA",
+      "shots": [
+        {
+          "src": 281.0,
+          "crop": [
+            1442,
+            199,
+            225,
+            63
+          ],
+          "zoom": 1.15
+        },
+        {
+          "src": 282.0,
+          "crop": [
+            1683,
+            199,
+            225,
+            63
+          ],
+          "zoom": 1.15
+        }
+      ]
+    },
+    {
+      "say": "Résultat : un vrai labo pour comprendre comment des IA coopèrent… ou pas.",
+      "title": "UN *LABO* À IA",
+      "shots": [
+        {
+          "src": 212.0,
+          "crop": "map",
+          "speed": 2.0,
+          "zoom": 1.1
+        },
+        {
+          "src": 278.0,
+          "crop": [
+            1205,
+            640,
+            600,
+            270
+          ],
+          "zoom": 1.06
+        }
+      ]
+    },
+    {
+      "say": "Ça, c'est la dominante IABD, à l'EIGSI Casablanca.",
+      "end": true
+    }
+  ],
+  "end": {
+    "hold": 1.6,
+    "lines": [
+      "DOMINANTE",
+      "IABD",
+      "Intelligence artificielle & big data",
+      "EIGSI Casablanca"
+    ]
+  }
+}

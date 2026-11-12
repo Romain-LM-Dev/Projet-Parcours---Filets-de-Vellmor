@@ -6,3 +6,14 @@
 4. Capture en 1920x1080 : créer le temps de la capture `godot/override.cfg` ([display] window/size/viewport_width=1920, viewport_height=1080), puis le supprimer (~15 min, AVI de 1 à 2 Go à garder hors du dépôt) : `Godot --path godot --write-movie <dossier>/demo.avi --fixed-fps 30 -- --demo=<chemin absolu de scenario.json>`.
 5. Conversion : `npm i ffmpeg-static@5.2.0` dans un dossier temporaire, puis `ffmpeg -i demo.avi -c:v libx264 -crf 23 -preset medium -pix_fmt yuv420p -c:a aac -movflags +faststart docs/demo/FILETS-demo.mp4`.
 6. Le lecteur est `godot/scripts/demo.gd` (activé par `--demo=` dans `main.gd`, sans moteur ni menu).
+
+## Vidéo courte (réseaux sociaux)
+
+`docs/demo/FILETS-short.mp4` : moins d'une minute, verticale 1080x1920, aux couleurs de l'EIGSI Casablanca (relevées sur le logo et le site
+eigsica.ma : bleu `#0064B0`, vert `#7CC357`, turquoise `#53AFA8`, bleu clair `#2EA6CE`, bleu nuit `#263286`).
+
+1. Capture sans sous-titre, même minutage que la démo : l'étape 4 ci-dessus avec `--no-captions` après `--demo=…` (vers `clean.avi`).
+2. `python docs/demo/short.py <ffmpeg> <clean.avi>` (python avec edge-tts) : voix et mots minutés (edge-tts), plans recadrés et zoomés sur un fond
+   flouté de la partie, titres et sous-titres mot à mot en ASS (libass, police Segoe UI Black de Windows), souffle à chaque coupe, son à -14 LUFS.
+   Texte, titres et plans (`src` en secondes de la capture, `crop` dans l'image 1920x1080) : `docs/demo/short.json`. Le script refuse une vidéo
+   de plus de 60 s.

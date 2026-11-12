@@ -246,7 +246,7 @@ func _begin(b: Dictionary) -> void:
 	chunks = _split(str(b["say"]))
 	narr_len = maxf(narr_left, 0.1)
 	_show_chunk(0.0)
-	band.visible = true
+	band.visible = not OS.get_cmdline_user_args().has("--no-captions")   # sans sous-titre : images pour un autre montage
 
 
 func _step_cam(delta: float) -> void:
