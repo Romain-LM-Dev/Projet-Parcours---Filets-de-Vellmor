@@ -15,114 +15,155 @@
   },
   "pace": {
     "utterance": 3.0,
-    "proposal": 1.5,
-    "norm_adopted": 2.5,
-    "lie_discovered": 2.0,
-    "ban": 2.5,
+    "proposal": 0.5,
+    "norm_adopted": 1.0,
+    "lie_discovered": 1.0,
+    "ban": 1.0,
     "outing": 0.4,
     "catch": 0.4,
-    "injection": 2.0,
-    "narration": 1.5,
+    "injection": 1.0,
+    "narration": 1.0,
     "per_day": 0.25
   },
-  "about": "Scénario de la vidéo de démonstration. Un temps couvre la partie de son `t` (jours simulés) au `t` du temps suivant, et dure à l'écran le temps de sa voix (`say`) plus `hold` secondes de silence. Ce temps d'écran se partage entre les événements visibles de la portion selon `pace` : les moments chargés vont lentement, les creux vite. Deux temps au même `t` figent la partie. `camera` : overview (toute la vallée), fit (zoom 1 centré), village:<Nom> (zoom 2,2 sur ce village) ; `mesh` : les mailles ; `tab` : onglet de droite ; `inspect` : agent montré dans l'inspecteur. `title`, `subtitle` : la carte du début ; `end` : la carte de fin (deux lignes).",
+  "about": "Scénario de la vidéo de démonstration. Un temps couvre la partie de son `t` (jours simulés) au `t` du temps suivant, et dure à l'écran le temps de sa voix (`say`) plus `hold` secondes de silence. Ce temps d'écran se partage entre les événements visibles de la portion selon `pace` : les moments chargés vont lentement, les creux vite ; une réplique reste au moins 2,5 s à l'écran, donc une veillée se découpe en plusieurs temps dont la voix couvre ses répliques (sinon : des blancs). Deux temps au même `t` figent la partie. `camera` : overview (toute la vallée), fit (zoom 1 centré), village:<Nom> (zoom 2,2 sur ce village) ; `mesh` : les mailles ; `tab` : onglet de droite ; `inspect` : agent montré dans l'inspecteur. `title`, `subtitle` : la carte du début ; `end` : la carte de fin (deux lignes).",
   "beats": [
     {
       "t": 0,
-      "hold": 1,
+      "hold": 0.4,
       "camera": "overview",
-      "say": "Dix-sept personnages, trois lacs, et personne n'a écrit ce qu'ils vont faire. Les décisions que tu vas voir, ce sont des IA qui les prennent."
+      "say": "Voici FILETS : une vallée, trois lacs, six villages, seize pêcheurs et un ancien. Personne n'a écrit ce qu'ils vont faire : chaque personnage est une IA qui décide seule."
     },
     {
-      "t": 0,
-      "hold": 0.5,
+      "t": 0.8,
+      "hold": 0.4,
       "camera": "fit",
-      "say": "La plupart des pêcheurs sont pilotés par un modèle de langage qui tourne en local, sur la carte graphique d'un PC portable. Pas de serveur, pas d'abonnement."
+      "say": "Ces IA tournent en local, sur la carte graphique d'un PC portable. Quatre modèles de tailles différentes, chacun choisi pour sa tâche : un tout petit pour la routine, de plus gros quand il faut vraiment réfléchir."
     },
     {
-      "t": 0,
-      "hold": 1,
-      "camera": "fit",
+      "t": 1.6,
+      "hold": 0.4,
       "mesh": true,
-      "say": "La carte aussi est calculée. Le monde est découpé en cases : du poisson et de la chance dans chaque case de lac, des maisons qui bloquent le passage, des chemins recalculés à chaque déplacement."
+      "say": "Le monde est découpé en cases : du poisson et de la chance dans chaque case de lac, des maisons qui bloquent le passage, des chemins recalculés à chaque trajet. Et on peut tirer une nouvelle vallée au hasard à chaque partie."
     },
     {
-      "t": 0.5,
-      "hold": 4,
+      "t": 2.4,
+      "hold": 0.4,
       "camera": "village:Ostrel",
       "mesh": false,
       "tab": "Interactions",
-      "say": "Le matin, chacun décide s'il sort, où, combien de temps, et ce qu'il déclarera en rentrant. Pour la routine, un petit modèle répond très vite. Quand quelque chose change, c'est le grand modèle qui réfléchit."
+      "say": "Chaque matin, un pêcheur décide s'il sort, sur quel lac, pour combien de temps et pour combien de poisson. En rentrant, il déclare sa pêche à l'ancien. Il peut dire vrai, ou mentir."
     },
     {
       "t": 6,
-      "hold": 2,
+      "hold": 0.4,
       "camera": "fit",
-      "tab": "Interactions",
-      "say": "Chaque action devient un événement. Dans la version complète, ils passent par Kafka, comme dans les systèmes de données des grandes plateformes, et les indicateurs se calculent en direct."
+      "say": "Réfléchir ne prend pas de temps dans le jeu ; agir, si. Une sortie dure trois ou sept heures, et personne ne pêche la nuit. Les décisions partent en même temps, mais leurs effets s'appliquent dans l'ordre du temps du jeu."
     },
     {
-      "t": 14,
-      "hold": 2,
-      "camera": "fit",
+      "t": 11,
+      "hold": 0.4,
+      "say": "Chaque geste devient un événement. Dans la version complète, ils passent par Kafka, comme dans les grandes plateformes de données, et les indicateurs se recalculent en direct."
+    },
+    {
+      "t": 16,
+      "hold": 0.4,
       "tab": "Agent",
       "inspect": "F05",
-      "say": "On peut ouvrir la tête d'un agent. Sa mémoire est une base de vecteurs : il retrouve ses souvenirs par le sens, pas par les mots. C'est le RAG, la technique des assistants qui répondent à partir de documents."
+      "say": "On peut ouvrir la tête d'un agent. Ses souvenirs sont des vecteurs : il les retrouve par le sens, pas par les mots. C'est le RAG, la technique des assistants qui répondent à partir de documents."
     },
     {
-      "t": 25.75,
-      "hold": 10,
+      "t": 19,
+      "hold": 0.4,
       "tab": "Interactions",
-      "say": "Le soir, les élus des villages se réunissent. Personne ne leur dit quoi répondre : trois tonnes ou quatre, ils argumentent et se soutiennent. Et ce soir, l'ancien se trompe : Lucien est accusé d'avoir menti, alors qu'il avait tout déclaré."
+      "say": "Les voisins voient les barques rentrer, et estiment ce qu'elles ramènent. L'ancien recoupe ces témoignages avec les déclarations, un peu comme on croise des sources de données."
+    },
+    {
+      "t": 25.749,
+      "hold": 0.4,
+      "say": "Fin de saison : les élus des villages se retrouvent chez l'ancien. Et ce soir, il se trompe. Il accuse Arnaud d'avoir menti, alors qu'Arnaud avait tout déclaré : les témoins avaient mal estimé sa barque. Chaque bulle est une réplique écrite par une IA, pour ce moment-là."
+    },
+    {
+      "t": 25.815,
+      "hold": 0.4,
+      "say": "Personne ne leur souffle leurs répliques. On propose deux, trois, cinq tonnes et demie. Isaure s'en prend à Arnaud et demande qu'on l'interdise de pêche ; il lui retourne aussitôt la demande. Les répliques se préparent en même temps, mais une seule personne parle à la fois, et chacun peut répondre à un autre."
     },
     {
       "t": 29,
-      "hold": 2,
+      "hold": 0.4,
       "tab": "Règles",
-      "say": "La vallée tranche : trois tonnes maximum par pêcheur. La patrouille, elle, est rejetée."
+      "say": "Le vote tombe : trois tonnes par pêcheur pour toute la vallée, et une patrouille sur les lacs. Personne n'est interdit. Une règle peut être un quota, une zone réservée, un repos du lac, un nombre de sorties ou une taille de bateau, et viser la vallée, un village ou un seul lac."
     },
     {
       "t": 29.9,
-      "hold": 1.5,
+      "hold": 0.4,
       "tab": "Récit du narrateur",
-      "say": "À la fin de chaque saison, un narrateur, lui aussi joué par un modèle, raconte ce qui s'est passé."
+      "say": "À la fin de chaque saison, un narrateur raconte ce qui s'est vraiment passé. Le texte vient d'un modèle de langage ; les chiffres, eux, sont calculés par le programme, pour qu'ils soient justes."
     },
     {
       "t": 30,
-      "hold": 2,
+      "hold": 0.4,
       "camera": "overview",
       "tab": "Interactions",
-      "say": "Saison deux. On tente une expérience : on lance une rumeur. Un marchand paierait le poisson le double. Est-ce que ça change les décisions ? Les données le diront."
+      "say": "Saison deux. Le joueur peut intervenir : une sécheresse, couper la parole entre les villages, ou lancer une rumeur. On en lance une : un marchand paierait le poisson le double, cette saison seulement."
     },
     {
       "t": 40,
-      "hold": 2,
+      "hold": 0.4,
       "camera": "fit",
-      "say": "Chaque retour de pêche laisse des traces. Les voisins voient les barques rentrer, et l'ancien recoupe les indices, un peu comme on croise des sources de données."
+      "tab": "Confiance",
+      "say": "Chacun tient ses propres comptes de confiance : qui croire, de qui se méfier, d'après ce qu'il a vu sur l'eau et entendu à la veillée."
     },
     {
-      "t": 55.75,
-      "hold": 8,
-      "say": "À la veillée, Inès et Maëlle sont prises à mentir, grâce aux témoins. Et Gildas dit tout haut qu'il a entendu la rumeur, mais qu'il respectera la règle."
+      "t": 46,
+      "hold": 0.4,
+      "tab": "Interactions",
+      "say": "Le lac de Vellmor attire du monde de toute la vallée. Et la patrouille votée la saison dernière fait son travail : elle surprend Maëlle et Sylvain, qui avaient déclaré moins que leur pêche."
+    },
+    {
+      "t": 55.749,
+      "hold": 0.4,
+      "say": "À la veillée, les avis se croisent. Gildas propose une règle pour le seul lac de Vellmor, Elwen une zone réservée au large, l'ancien rappelle les trois tonnes. Et cette saison, huit pêcheurs les ont dépassées. Quand une IA redit ce qui a déjà été dit, on le lui fait remarquer ; si elle n'a rien de neuf, elle se tait."
+    },
+    {
+      "t": 55.835,
+      "hold": 0.4,
+      "say": "Au vote, la règle de Gildas passe, pour le lac de Vellmor. Et Maëlle, prise par la patrouille, propose de la supprimer : la suppression passe, à trois voix sur six. Une IA peut défendre ses intérêts plutôt que ceux du lac, comme un vrai villageois."
     },
     {
       "t": 60,
-      "hold": 1.5,
+      "hold": 0.4,
       "camera": "overview",
-      "say": "Troisième saison. Le lac de Vellmor attire tout le monde : on vient de toute la vallée y pêcher, et c'est lui qui baisse le plus."
+      "say": "Troisième saison. La règle de Gildas vaut maintenant à Vellmor : un peu plus de deux tonnes par pêcheur. Mais on y vient toujours plus nombreux, et le lac continue de baisser, pendant que Brémol reste plein."
     },
     {
-      "t": 85.75,
-      "hold": 6,
+      "t": 69,
+      "hold": 0.4,
+      "say": "Tout est enregistré : chaque décision, chaque appel aux modèles, chaque indicateur. On peut rejouer la partie, la mesurer, et comparer ce que les IA ont dit avec ce qu'elles ont fait."
+    },
+    {
+      "t": 77,
+      "hold": 0.4,
+      "camera": "fit",
+      "say": "Ce qu'un pêcheur promet à la veillée, ce qu'il déclare et ce qu'il pêche vraiment sont trois données différentes. Les écarts entre elles, c'est ce qui rend la vallée intéressante à analyser."
+    },
+    {
+      "t": 85.749,
+      "hold": 0.4,
+      "camera": "fit",
+      "say": "Dernière veillée. Les témoins ont encore parlé : Sylvain et Lucien sont pris à mentir. Capucine propose de laisser reposer le lac de Vellmor une saison, l'ancien un quota plus strict pour tous. Albane, elle, accuse Capucine d'avoir trop pêché, à tort. Chacun parle selon son caractère : l'ancienne famille, le nouveau venu, le beau parleur et le taiseux n'ont pas les mêmes priorités."
+    },
+    {
+      "t": 85.835,
+      "hold": 0.4,
       "tab": "Règles",
-      "say": "Dernière veillée. Gildas, qui avait promis, est pris à son tour. La patrouille est enfin votée. Et oui, les IA se répètent parfois, et l'ancien s'est trompé : c'est aussi ce qu'on étudie."
+      "say": "Mais les voix se dispersent : quatre propositions sur la table, et aucune n'est adoptée. Les IA ne sont pas toujours d'accord, ni toujours logiques : c'est justement ce qu'on cherche à mesurer et à comprendre."
     },
     {
       "t": 89.9,
-      "hold": 3,
+      "hold": 1.5,
+      "say": "Des modèles de langage, du RAG, un flux de données en continu, et de l'analyse : c'est ce qu'on fait en dominante IABD. Des IA qui tournent pour de vrai, et les données pour comprendre ce qu'elles font.",
       "camera": "overview",
-      "tab": "Récit du narrateur",
-      "say": "Des modèles de langage, du RAG, un flux de données en continu, et de l'analyse. C'est ce qu'on fait en dominante IABD : des IA qui tournent pour de vrai, et les données pour comprendre ce qu'elles font."
+      "tab": "Récit du narrateur"
     }
   ]
 }
