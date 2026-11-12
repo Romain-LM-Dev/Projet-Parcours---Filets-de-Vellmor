@@ -276,7 +276,7 @@ def test_a_reply_nobody_answers_is_not_prepared_again(tmp_path):
 
 
 def test_someone_who_is_spoken_to_speaks_next_on_the_new_account(tmp_path):
-    rec = Recorder(speech={"destinataire": "F02"})
+    rec = Recorder(speech={"destinataire": "F02"}, vary=True)
     world, events, _ = fake_game(tmp_path, "adresse2", rec, population=THREE_VILLAGES, seasons=1, scenario__council="all")
     order = [u["payload"]["speaker"] for u in kinds(events, "utterance")]
     first_other = next(i for i, who in enumerate(order) if who != "F02")

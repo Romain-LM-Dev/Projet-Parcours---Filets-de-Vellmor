@@ -352,7 +352,14 @@ classDiagram
         +end_season(season)
         +season_facts(season) list
         +narrator_facts(season, limit) list
+        +narrator_figures(season) str
         +narrate(season) None?
+        +repeated_line(text) dict?
+        +real_model(tier) bool
+        -_line_tokens(text) list
+        -_sentences(text) list
+        -_whole_sentences(text, width) str
+        -_invented_numbers(text, facts, season) set
         +start()
         +finish()
         +open_storage() None?
@@ -852,6 +859,7 @@ classDiagram
         +redo(aid)
         +speak(aid) bool
     }
+    note for Village "stale : une réplique prête qui redit ce qui vient d'être dit (World.repeated_line) est périmée ; elle est préparée de nouveau"
     class World
     class Assembly
     class SimClock

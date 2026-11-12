@@ -738,7 +738,7 @@ La veillée d'un village ou du conseil, vue par l'ordonnanceur : qui a préparé
 | `duration` | `any` | jours simulés | Durée d'une réplique : `time.speech_minutes` (20 min) converti en jours. |
 | `close_t` | `any` | jours simulés | L'heure de clôture de la veillée, reprise de `Assembly.close_t`. |
 | `spoken` | `dict` | `{id d'agent: nombre de répliques}` | Combien de fois chaque participant a parlé. |
-| `prepared` | `dict` | `{id d'agent: (réponse, horizon, tour, nombre de répliques connues, ids des propositions connues)}` | Les répliques déjà préparées et pas encore dites. Une réplique est refaite si, depuis, on s'est adressé à son auteur ou on a concurrencé sa règle. |
+| `prepared` | `dict` | `{id d'agent: (réponse, horizon, tour, nombre de répliques connues, ids des propositions connues)}` | Les répliques déjà préparées et pas encore dites. Une réplique est refaite si, depuis, on s'est adressé à son auteur, on a concurrencé sa règle, ou elle redit ce qui vient d'être dit. Une **redite** : réplique dont au moins 85 % des mots, sur au moins 4, se retrouvent dans l'ordre dans une réplique déjà dite de la partie (`World.repeated_line`). |
 | `done` | `bool` | `True` / `False` | Vrai quand plus personne n'a rien à dire, ou quand la salle n'a plus le temps. |
 
 ### Décisions : agents, règles d'archétype, routage, invites
@@ -786,8 +786,9 @@ Module des textes d'invite (prompts) envoyés aux modèles de langage et des sch
 | `WORLD_LAKES` | `str` | texte à trou `{lakes}` | Variante de `WORLD` pour une vallée à plusieurs lacs ; `{lakes}` est remplacé par la liste des lacs. |
 | `RULE_KINDS` | `list` | `quota`, `reserve`, `repos`, `sorties`, `bateau` | Types de règle qu'un pêcheur peut proposer à la veillée. Ils forment les valeurs permises du champ `proposition_type` du schéma de parole (avec `None`). |
 | `BALLOT_MAX_TOKENS` | `int` | tokens (10) | Longueur de réponse permise pour un bulletin de vote : un identifiant de proposition ou « aucune ». |
-| `NARRATION_SCHEMA` | `dict` | schéma JSON `{"recit": texte ≤ 600 caractères}` | Forme imposée à la réponse du narrateur, qui raconte la saison au joueur. |
+| `NARRATION_SCHEMA` | `dict` | schéma JSON `{"recit": texte ≤ NARRATION_WIDTH caractères}` | Forme imposée à la réponse du narrateur, qui raconte la saison au joueur. |
 | `NARRATION_MAX_TOKENS` | `int` | tokens (260) | Longueur de réponse permise au narrateur. |
+| `NARRATION_WIDTH` | `int` | caractères (800) | Longueur maximale du récit : 4 phrases courtes y tiennent ; au-delà, le récit est coupé à la dernière phrase complète (jamais au milieu d'un mot). |
 | `NARRATION_TEMPERATURE` | `float` | température du modèle (0,3) | Température demandée pour le récit de la saison. Elle est basse pour que le récit reste fidèle aux faits, car un petit modèle enjolive à 0,7. |
 | `SANCTION_MAX_TOKENS` | `int` | tokens (40) | Longueur de réponse permise pour le vote sur une exclusion ou une réautorisation (« oui » ou « non » par proposition). |
 | `ELECTION_MAX_TOKENS` | `int` | tokens (10) | Longueur de réponse permise pour le vote qui élit l'élu d'un village. |
@@ -1483,7 +1484,7 @@ Scène principale : construit toute l'interface, reconstruit l'état du monde à
 | `lbl_status` | `Label` | texte | Le cadre arrondi tout à droite de l'en-tête. Il affiche l'état de la connexion au moteur (« ● connecté », « ○ déconnecté »), vert ou rouge. |
 | `ind_labels` | `Dictionary` | `{clé de carte KPI: Label}` | La grosse valeur de chaque carte d'indicateur du tableau de bord (stock, norme, promesses, accord, conformité, incidents…). |
 | `feed` | `RichTextLabel` | texte BBCode | Le fil de l'onglet « Interactions » du panneau de droite. Il montre les événements de la partie, saison après saison. |
-| `narration` | `RichTextLabel` | texte BBCode | L'onglet « Récit du narrateur ». Le narrateur y raconte chaque saison. |
+| `narration` | `RichTextLabel` | texte BBCode | L'onglet « Récit du narrateur ». Le narrateur y raconte chaque saison, suivi de la ligne « En chiffres » : chiffres exacts ajoutés au récit par le code (`World.narrator_figures`), jamais écrits par le modèle. |
 | `trust_view` | `RichTextLabel` | texte BBCode | Le contenu de l'onglet « Confiance » : jauges de confiance, vraies prises et déclarations. |
 | `trust_dirty` | `bool` | `true` / `false` | Indique que l'onglet Confiance doit être redessiné. Le test est refait toutes les 0,2 s, sauf pendant un rattrapage. |
 | `trust_mode` | `String` | `"avg"` \| `"from"` | `"avg"` donne la confiance moyenne que les autres accordent à chacun. `"from"` donne la confiance qu'un personnage accorde aux autres. |

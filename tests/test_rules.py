@@ -356,3 +356,16 @@ def test_a_scripted_game_on_three_lakes_adopts_a_lake_rule(tmp_path):
     events = play(tmp_path, "trois", cfg=normalize(cfg))
     adopted = [e["payload"] for e in events if e["type"] == "norm_adopted"]
     assert any(p["scope"].startswith("lake:") for p in adopted), [(p["scope"], p.get("text")) for p in adopted]
+
+
+def test_a_lake_proposal_says_its_lake_and_a_rule_already_in_force_is_not_proposed_again(tmp_path):
+    world, _ = room(tmp_path, **TWO_LAKES)
+    n = lake_rule(world, "quota", 3, "Orsane")
+    props = [e["payload"] for e in world.events.index.values() if e["type"] == "proposal"]
+    assert props and props[-1]["text"].endswith("(pour le lac Orsane)")
+    asm = Assembly("valley", [a.id for a in world.agents.values()], 1, 59.0)       # saison 1 : la règle du lac vaut déjà à la saison 2
+    before = len(props)
+    say(world, asm, world.fishers[0], proposition_type="quota", proposition_valeur=3, proposition_cible="Orsane")
+    assert not asm.proposals and len([e for e in world.events.index.values() if e["type"] == "proposal"]) == before
+    say(world, asm, world.fishers[0], proposition_type="quota", proposition_valeur=2, proposition_cible="Orsane")
+    assert len(asm.proposals) == 1                                                  # une autre valeur : une vraie proposition

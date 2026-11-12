@@ -482,7 +482,7 @@ flowchart LR
     M["main : Main"]
 
     S -->|"1: narrate(season) dans une tâche"| W
-    W -->|"2: narrator_facts(season, 14)"| W
+    W -->|"2: narrator_facts(season, 10)"| W
     W -->|"3: complete(narrateur, grand, narration, messages, S2) [grand modèle, non scripté]"| RT
     RT -->|"3.1: acquire(model)"| GATE
     RT -->|"3.2: POST v1/chat/completions"| OL
@@ -490,15 +490,20 @@ flowchart LR
     RT -->|"3.4: release"| GATE
     RT -->|"3.5: emit(llm_call)"| EF
     RT -->|"4: LLMResult"| W
+    W -->|"4.1: _invented_numbers(text, facts, season) : nombres absents des faits ?"| W
+    W -->|"4.2: si oui, complete(... messages + réponse + narration_numbers_message) [seconde demande]"| RT
+    RT -->|"4.3: LLMResult"| W
+    W -->|"4.4: nombres encore absents : phrases fautives retirées, emit(incident)"| EF
     W -->|"5: emit(incident) [réponse manquante ou illisible]"| EF
     W -->|"6: le récit reprend les faits [pas de texte]"| W
+    W -->|"6.1: narrator_figures(season) ajouté au texte"| W
     W -->|"7: emit(narration, source)"| EF
     EF -->|"7.1: publish(events)"| K
     K -->|"8: via bridge et API"| M
     M -->|"8.1: _on_event, cas narration, onglet Récit du narrateur"| M
 ```
 
-Dans le code : `filets/world.py:2747`, `:2847-2872` ; `filets/llm.py:365-420`, `:109` ; `filets/scheduler.py:227-230`.
+Dans le code : `filets/world.py:2943` (`narrator_facts`), `:3061-3099` (`narrate`, vérification `:3077`, seconde demande `:3082`, `narrator_figures` `:3098`), `:3102-3125` (`_sentences`, `_whole_sentences`, `_invented_numbers`) ; `filets/llm.py:365-420`, `:109` ; `filets/scheduler.py:247-250`.
 
 ## (g) Le tirage d'une vallée depuis le menu
 

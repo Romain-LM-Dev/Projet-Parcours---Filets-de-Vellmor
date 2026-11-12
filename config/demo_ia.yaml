@@ -9,3 +9,6 @@ llm:
     grand: {provider: ollama, model: "qwen2.5:3b"}
     petit: {provider: ollama, model: "qwen2.5:1.5b"}
     reflexe: {provider: ollama_s1, model: "tev1:0.8b"}
+    # le récit de fin de saison par le 7B : trois appels par partie (~30 s de chargement chacun), mais un récit fidèle aux faits,
+    # que le 3B déformait (« 3 poissons par pêcheur », une règle de la saison 4 dite en vigueur)
+    narrateur: {provider: ollama, model: "qwen2.5:7b"}

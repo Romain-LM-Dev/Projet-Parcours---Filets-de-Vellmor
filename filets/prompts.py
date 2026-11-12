@@ -697,7 +697,9 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     ask = (
         f"Veillée chez l'ancien ({obs['scope_label']}){turn}. Présents : {people}.\n\n"
         f"{room}{who_line}{acts}"
-        + f", ou simplement donner ton avis. {rumor_hint}Rien ne t'oblige à tenir parole.\n"
+        + f", ou simplement donner ton avis. {rumor_hint}Rien ne t'oblige à tenir parole. "
+        "Ne reprends pas ce qu'un autre a déjà dit : réponds-lui ou apporte du neuf. Dans \"message\", parle comme à la veillée, "
+        "avec tes mots : ne recopie pas les noms des champs (pas de « quota, valeur 3 »).\n"
         "Tout ce que tu dis à la veillée est entendu de tous. Ce que tu as vraiment pêché, ce que tu déclares à l'ancien et "
         "tes intentions cachées restent privés : ton carnet n'est pas fait pour être récité. Ne les révèle (un aveu) que si tu "
         "choisis de le faire.\n"
@@ -708,6 +710,13 @@ def speak_messages(p, obs: dict, capacity: float, brief: bool = False) -> list[d
     ctx = veillee_block(obs) if brief else context_block(obs, brief)
     return [{"role": "system", "content": persona(p, capacity, brief, obs.get("villages", ()), obs.get("world"))},
             {"role": "user", "content": ctx + "\n\n" + ask}]
+
+
+def repeated_line_message(text: str, who: str, season: int) -> str:
+    """Le reproche fait à un agent qui vient de redire une réplique de la partie (`World.repeated_line`) : une seconde chance."""
+    return (f"« {text} » a déjà été dit (par {who}, saison {season}). Ne le répète pas : réponds à quelqu'un, apporte un argument "
+            "nouveau, ou dis-le avec tes propres mots. Si tu n'as rien de neuf, réponds avec \"message\": \"\" : tu te tais. "
+            "Même format JSON.")
 
 
 # Le bulletin de vote : un identifiant de proposition (ou « aucune »), rien d'autre.
@@ -730,9 +739,10 @@ def ballot_messages(p, table: list[str], est: float, capacity: float, collapse_r
 # Un modèle comme `tev1` ne génère pas de texte : il choisit une option, ou un niveau dans une échelle, et donne les probabilités.
 # Ces fonctions décrivent la même décision que `reflex_messages` / `ballot_messages`, sous cette forme.
 
-NARRATION_SCHEMA = {"type": "object", "properties": {"recit": {"type": "string", "maxLength": 600}},
+NARRATION_WIDTH = 800        # caractères du récit : 4 phrases courtes y tiennent ; au-delà, on coupe à la dernière phrase complète
+NARRATION_SCHEMA = {"type": "object", "properties": {"recit": {"type": "string", "maxLength": NARRATION_WIDTH}},
                     "required": ["recit"], "additionalProperties": False}
-NARRATION_MAX_TOKENS = 260
+NARRATION_MAX_TOKENS = 400
 NARRATION_TEMPERATURE = 0.3      # un récit fidèle plutôt qu'inventif : à 0,7, un petit modèle enjolive (« le lac à son apogée »)
 
 
@@ -743,13 +753,21 @@ def narration_messages(facts: list[str]) -> list[dict]:
            "tu sais tout, y compris ce que les villageois ignorent. Réponds uniquement par un objet JSON.")
     ask = ("La saison vient de finir. Voici ce qui s'est vraiment passé :\n"
            + "\n".join(f"- {f}" for f in facts)
-           + "\n\nRésume cette saison en 3 à 5 phrases, à la troisième personne, comme un narrateur. Reste fidèle aux chiffres "
-             "de la liste et n'invente rien : ne parle que de ce qui y est. Tu peux dire ce que les personnages ignorent "
+           + "\n\nRésume cette saison en 3 à 4 phrases courtes, à la troisième personne, comme un narrateur. Reste fidèle à la "
+             "liste et n'invente rien : ne parle que de ce qui y est. N'écris aucun chiffre, sauf ceux de la liste (les chiffres "
+             "exacts de la saison sont ajoutés après ton récit). Tu peux dire ce que les personnages ignorent "
              "(« sans que personne ne le sache, … »). S'il n'y est question ni de règle, ni d'accusation, n'en parle pas. "
              "Pour un lac, reprends le mot de la liste, sans l'exagérer. Quand tu cites quelqu'un, reprends son nom et ce que la "
              "liste dit de lui, sans le confondre avec un autre. Des phrases simples et complètes, en bon français. "
              "Réponds en JSON : {\"recit\": \"<le récit>\"}")
     return [{"role": "system", "content": who}, {"role": "user", "content": ask}]
+
+
+def narration_numbers_message(extra: list[str]) -> str:
+    """Le reproche fait au narrateur dont le récit contient des nombres absents des faits : une seconde chance, sans eux."""
+    return (f"Ton récit contient des nombres qui ne sont pas dans la liste : {', '.join(extra)}. N'écris aucun chiffre qui n'y est "
+            "pas ; sans chiffre, c'est très bien. Recommence le récit, en 3 à 4 phrases courtes. "
+            "Réponds en JSON : {\"recit\": \"<le récit>\"}")
 
 
 def catch_levels(boat_capacity: float, n: int = 10, lo: float = 0.0) -> list[float]:

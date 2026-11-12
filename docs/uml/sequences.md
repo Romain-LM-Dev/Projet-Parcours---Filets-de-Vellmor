@@ -431,6 +431,12 @@ sequenceDiagram
             A->>W: observe(agent, h, speak, asm, tour)
             A->>RT: complete via _ask_llm (système 2)
             RT->>OL: POST v1/chat/completions
+            A->>W: repeated_line(réplique) si le niveau est un vrai modèle (real_model)
+            opt réplique redite
+                A->>RT: seconde demande au même modèle, avec repeated_line_message
+                RT->>OL: POST v1/chat/completions
+                A->>W: repeated_line(réplique) encore redite : silence
+            end
         and
             S->>A: speak(w, autre agent, asm, tour, h)
             A->>RT: complete via _ask_llm (système 2)
@@ -443,7 +449,7 @@ sequenceDiagram
         S->>V2: pick()
         S->>V1: redo(agent choisi) puis stale()
         S->>V2: redo(agent choisi) puis stale()
-        opt réplique périmée : on s'est adressé à lui, nommé, accusé, ou une proposition concurrente est apparue
+        opt réplique périmée : on s'est adressé à lui, nommé, accusé, une proposition concurrente est apparue, ou elle redit ce qui vient d'être dit
             S->>S: prepare(redo) seconde passe
             par
                 S->>A: speak(w, agent, asm, tour, v.t)
@@ -463,10 +469,10 @@ sequenceDiagram
 ```
 
 Dans le code :
-- Boucle : `filets/scheduler.py:173-211` (`evening`) ; boucle `while True` `:187-202` ; première passe `:190`, `pick` `:191`, `redo` `:193-197`, seconde passe `:198`, `speak` `:199-201`, sortie `:202`.
-- `prepare` : `filets/scheduler.py:213-220`.
-- Village : `filets/scheduler.py:233-241` (`Village`), `:245-256` (`prep_jobs`), `:258-266` (`pick`), `:268-278` (`stale`), `:280-287` (`redo`), `:289-302` (`speak`, `SimClock.local(end)` `:298`).
-- Agent et monde : `filets/agents.py:232` (`speak`, système 2 `:250`), `filets/world.py:2039` (`open_assemblies`, `investigate` appelée `:2042`), `:2162` (`has_reason_to_speak`), `:2066` (`post_utterance`, `utterance` `:2073`).
+- Boucle : `filets/scheduler.py:192-232` (`evening`) ; boucle `while True` `:205` ; première passe `prep_jobs`/`prepare`, `pick` `:279`, `redo` `:309`, seconde passe, `speak` `:318`.
+- `prepare` : `filets/scheduler.py:233-241`.
+- Village : `filets/scheduler.py:253` (`Village`), `:265` (`prep_jobs`), `:279` (`pick`), `:292` (`stale`, redite `:300`), `:309` (`redo`), `:318` (`speak`).
+- Agent et monde : `filets/agents.py:363` (`speak`, réplique redite `:392-410`, `_ask_llm` `:83`), `filets/world.py:2203` (`open_assemblies`), `:767` (`investigate`), `:2358` (`has_reason_to_speak`), `:2256` (`post_utterance`), `:2236` (`repeated_line`), `:2250` (`real_model`).
 
 ### c2. Les bulletins, les propositions et la clôture
 
@@ -767,7 +773,7 @@ sequenceDiagram
     participant M as Main main.gd
 
     S->>W: narrate(season) dans une tâche, SimClock.local(fin de saison)
-    W->>W: narrator_facts(season, limite 14)
+    W->>W: narrator_facts(season, limite 10)
     alt grand modèle disponible et fournisseur non scripté
         W->>RT: complete(narrateur, grand, narration, messages, hint S2, schéma, seed)
         RT->>GATE: acquire(model)
@@ -776,6 +782,17 @@ sequenceDiagram
         RT->>GATE: release
         RT->>EF: emit(llm_call)
         RT-->>W: LLMResult
+        W->>W: _invented_numbers(text, faits, season) nombres absents des faits ?
+        opt un nombre n'est pas dans les faits
+            W->>RT: seconde demande, messages + réponse + narration_numbers_message
+            RT->>OL: POST v1/chat/completions
+            OL-->>RT: texte JSON (recit)
+            RT-->>W: LLMResult
+            opt nombre encore absent
+                W->>W: phrases fautives retirées
+                W->>EF: emit(incident, invalid_value)
+            end
+        end
         opt réponse manquante ou illisible
             W->>EF: emit(incident, no_response ou unparseable)
         end
@@ -783,6 +800,7 @@ sequenceDiagram
     opt pas de texte
         W->>W: le récit reprend les faits
     end
+    W->>W: narrator_figures(season) ajouté au texte, en « En chiffres »
     W->>EF: emit(narration, source narrateur ou faits)
     EF->>K: publish(events, narration)
     K-->>M: via bridge et API
@@ -793,7 +811,7 @@ Dans le code :
 - Ordonnancement : `filets/scheduler.py:222-231` (`regrowth`, tâche `narrate` `:227-230`), `filets/world.py:2968-2974` (`prepare_season`), `:1809` (`debrief`), `:1771` (`elect`), `:1819` (`plan_patrol`).
 - Fin de saison : `filets/world.py:2563` (`end_season`), `:772` (`investigate`), `:836` (`weigh_evidence`), `filets/lake.py:87` (`regrow`), `filets/world.py:544` (`lake_update`), `:2573` (`promise_outcome`), `:2577-2580` (`add_lore`), `:409-418` (`add_lore`, événement `lore_added`), `:2582-2585` (`remember`), `:2587` (bilan), `:2591` (`season_end`).
 - RAG : `filets/rag.py:167` (`Retriever.add_lore`), `:225` (`VectorRetriever.add_lore`, écrit en base par `_flush_lore` `:231`).
-- Narrateur : `filets/world.py:2747` (`narrator_facts`), `:2847-2872` (`narrate`, appel `:2859`, repli sur les faits `:2865`, événement `narration` `:2870`).
+- Narrateur : `filets/world.py:2943` (`narrator_facts`), `:3061-3099` (`narrate`, appel `:3074`, vérification des nombres `:3077`, seconde demande `:3082`, repli sur les faits `:3096`, `narrator_figures` `:3098`, événement `narration` `:3098`), `:3045` (`narrator_figures`), `:3102-3125` (`_sentences`, `_whole_sentences`, `_invented_numbers`).
 - Indicateurs : `filets/services/indicators.py:30-38`, `filets/pipeline.py:28`.
 - Godot : `godot/scripts/main.gd:1122` (`_on_indicator`), `:1158` (`chart.set_season`), `:757` (`_on_event`).
 - Partie suivante si l'ancien rapporte et élit : `filets/world.py:2968-2974`.

@@ -92,3 +92,9 @@ Une simulation à événements discrets.
   `assembly_rounds` répliques. Plus de parole après `assembly_close_day`.
 - **Villages** : les veillées avancent de front (leurs décisions partent ensemble) mais leurs effets s'appliquent village par village, dans
   l'ordre des assemblées. Puis les bulletins de ceux qui n'ont rien soutenu, en parallèle, et le vote de clôture à `assembly_close_day`.
+- **Redites** : une réplique qui en répète une déjà dite dans la partie (`World.repeated_line` : 85 % des mots de la plus courte, au moins 4) est
+  redemandée UNE fois au même modèle ; si elle se répète encore, il se tait. Une proposition de règle identique à celle qui vaudra déjà à la saison
+  suivante pour sa portée n'ouvre ni proposition ni soutien. Deux répliques préparées en même temps ne se voient pas : si, à son tour, une réplique
+  prête redit ce qui vient d'être dit, elle est préparée de nouveau (elle voit alors l'autre). Le contrôle des redites ne vaut que pour les vrais
+  modèles (le faux LLM redit ses phrases toutes faites par construction). Un silence passe le tour sans clore la veillée : les autres répliques prêtes
+  restent à dire.

@@ -379,12 +379,32 @@ async def speak(world, agent: Agent, assembly, rnd: int, horizon: float) -> Outc
 
     brief = prompts.is_brief(world.cfg["llm"])
     common = {**common, "system": "S2"}                          # la parole est toujours de la réflexion (voir `routing.py`)
-    data, res, flags = await _ask_llm(world, agent, "speak", prompts.speak_messages(p, obs, world.capacity, brief), state)
+    msgs = prompts.speak_messages(p, obs, world.capacity, brief)
+    data, res, flags = await _ask_llm(world, agent, "speak", msgs, state)
+
+    def vet(data, res, again: bool):
+        """Un gabarit n'est pas une réplique (réponse illisible) ; une réplique déjà dite non plus : (données, réplique répétée)."""
+        said = str((data or {}).get("message", "")).strip().strip("«»\"' ").lower()
+        if data is not None and (said in ("message", "ta réplique", "réplique") or (said.startswith("<") and said.endswith(">"))):
+            world.incident(agent.id, "invalid_value", "message : nom de champ ou gabarit recopié",
+                           "silence" if again else "règle de repli", res.call_id)
+            return None, None
+        return data, (world.repeated_line(said) if data is not None and said and world.real_model(res.tier) else None)
+    data, old = vet(data, res, False)
+    if old is not None:
+        # il redit ce qui a déjà été dit : UNE seconde demande, avec sa réponse et ce qu'on lui reproche ; sinon il se tait
+        world.incident(agent.id, "invalid_value", f"réplique déjà dite : « {old['text'][:150]} »", "nouvelle réplique demandée", res.call_id)
+        who, season = world.first_name(old["speaker"]), old["season"]
+        # dans le même message : la demande garde tout son contexte (un petit modèle suit mieux un seul message)
+        again = msgs[:-1] + [{"role": "user", "content": msgs[-1]["content"] + "\n\n"
+                              + prompts.repeated_line_message(old["text"], who, season)}]
+        data, res, flags = await _ask_llm(world, agent, "speak", again, state, handled="silence")
+        data, old = vet(data, res, True)
+        if old is not None:
+            world.incident(agent.id, "invalid_value", f"réplique encore déjà dite : « {old['text'][:150]} »", "silence", res.call_id)
+        if data is None or old is not None:
+            data = {"message": ""}
     fallback, rule = False, None
-    said = str((data or {}).get("message", "")).strip().strip("«»\"' ").lower()
-    if data is not None and (said in ("message", "ta réplique", "réplique") or (said.startswith("<") and said.endswith(">"))):
-        world.incident(agent.id, "invalid_value", "message : nom de champ ou gabarit recopié", "règle de repli", res.call_id)
-        data = None                                # un gabarit n'est pas une réplique : réponse illisible
     silent = data is not None and not str(data.get("message", "")).strip()      # message vide : il se tait (rien de neuf à dire)
     if data is None:
         data, rule = speak_rule(arch, state)

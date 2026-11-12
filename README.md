@@ -700,6 +700,10 @@ Vue de dessus de la vallée, dessinée entièrement en code (aucune image extern
   quelques phrases ce que la vallée a vécu, vérité comprise (vraies prises, mensonges même non découverts, stock de chaque lac, règles et qui les dépasse, vote, accusations).
   Le grand modèle le rédige à partir des seuls faits relevés dans le journal (hors agent, sans voix de l'ancien) ; sans IA, le récit reprend ces faits (événement
   `narration`, rejoué comme les autres).
+  Le narrateur ne reçoit ni tonnage ni pourcentage (10 faits au plus) : les lacs en mots, mensonges, sorties en cachette, dépassements ; le code vérifie que le récit n'invente aucun
+  nombre (une seconde demande, sinon les phrases fautives sont retirées), le coupe à la dernière phrase complète et ajoute les chiffres exacts sur une ligne « En chiffres : … ».
+  Un niveau `llm.tiers.narrateur` facultatif lui donne son propre modèle (sinon le grand) : `config/demo_ia.yaml` y met Qwen 2.5 7B, plus fidèle aux faits
+  que le 3B, pour trois appels par partie.
 
 Les pions et les liens gardent partout le même code : couleur = archétype, rond = agent LLM (anneau
 épais doré = grand modèle), carré = agent à règles ; bleu = parole, vert = soutien, rouge =

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import difflib
 import hashlib
 import itertools
 import json
@@ -2226,6 +2227,32 @@ class World:
         self.assemblies = out
         return out
 
+    @staticmethod
+    def _line_tokens(text: str) -> list[str]:
+        """Une réplique réduite à ses mots : minuscules, sans accents ; un nombre (« 1.8 ») est un seul jeton."""
+        plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+        return re.findall(r"\d+(?:[.,]\d+)?|[a-z]+", plain)
+
+    def repeated_line(self, text: str) -> dict | None:
+        """La réplique déjà dite dans la partie (par n'importe qui, à n'importe quelle saison) que `text` répète : {text, speaker,
+        season}, ou None. Répétition : la plus courte des deux a au moins 4 mots, et au moins 85 % de ses mots se retrouvent, dans
+        l'ordre, dans l'autre (« 1.8 t » et « 2.1 t » sont deux paroles différentes)."""
+        mine = self._line_tokens(text)
+        for e in self.events.index.values():
+            if e["type"] != "utterance":
+                continue
+            old = self._line_tokens(e["payload"]["text"])
+            short = min(len(mine), len(old))
+            if short >= 4 and sum(b.size for b in difflib.SequenceMatcher(None, mine, old, autojunk=False).get_matching_blocks()) / short >= 0.85:
+                return {"text": e["payload"]["text"], "speaker": e["payload"]["speaker"], "season": e["season"]}
+        return None
+
+    def real_model(self, tier: str | None) -> bool:
+        """Ce niveau passe-t-il par un vrai modèle ? Le faux LLM redit ses phrases toutes faites par construction : on ne lui
+        reproche pas ses redites, comme on ne lui fait pas écrire le récit du narrateur."""
+        t = self.cfg["llm"]["tiers"].get(tier or "")
+        return bool(t) and t["provider"] != "scripted"
+
     def post_utterance(self, agent: Agent, asm: Assembly, outcome, rnd: int, horizon: float):
         d = outcome.data
         text = str(d.get("message", "")).strip()[:400]
@@ -2247,7 +2274,11 @@ class World:
             scope = self.proposal_scope(d, kind, asm)
             asm.stated[agent.id] = (kind, target, q, scope if scope.startswith("lake:") else "")
             twin = self._similar_proposal(asm, kind, target, q, scope)
-            if twin is not None:
+            # déjà la règle de la saison prochaine pour cette portée (la sienne, sinon celle de la vallée) : rien à voter
+            held = next(filter(None, (self.norm_for_scope(s, season + 1, now, kind, target) for s in dict.fromkeys((scope, "valley")))), None)
+            if held is not None and abs(held.value - q) <= 0.05:
+                pass
+            elif twin is not None:
                 # huit pêcheurs qui proposent 7,0 ; 7,3 ; 7,4 ; 7,5 ne font pas huit règles : une seule, soutenue par tous. Sans
                 # cela les voix se dispersaient sur des dizaines de propositions et aucune règle n'était jamais adoptée. (Deux
                 # règles ne se rejoignent que du même type et de la même cible.)
@@ -2257,7 +2288,9 @@ class World:
                 pe = self.events.emit("proposal", {"proposal_id": pid, "author": agent.id, "quota": q,
                                                    "scope": scope, "utterance_id": u["event_id"], "kind": kind,
                                                    "assembly_scope": asm.scope,
-                                                   "value": q, "target": target, "text": self.rule_words(kind, q, target)},
+                                                   "value": q, "target": target,
+                                                   "text": self.rule_words(kind, q, target)
+                                                   + (f" (pour {self.scope_words(scope)})" if scope.startswith("lake:") else "")},
                                       actor=agent.id)
                 asm.proposals[pid] = Proposal(pid, agent.id, q, now, pe["event_id"], scope, kind, target)
                 self._support(agent, asm, pid, u)
@@ -2907,10 +2940,11 @@ class World:
             facts.append(f"{self.first_name(acc['accuser'])} a accusé {self.first_name(acc['accused'])} de trop pêcher.")
         return facts
 
-    def narrator_facts(self, season: int, limit: int = 14) -> list[str]:
-        """Ce que sait le narrateur externe et omniscient : la VÉRITÉ de la saison (vraies prises, mensonges et pêches en
-        cachette, découverts ou non, stock réel de chaque lac), à côté de ce que la vallée a décidé. Faits courts et chiffrés,
-        par ordre d'importance, plafonnés pour ne pas noyer un petit modèle. (`season_facts` reste le point de vue de l'ancien.)"""
+    def narrator_facts(self, season: int, limit: int = 10) -> list[str]:
+        """Ce que sait le narrateur externe et omniscient : la VÉRITÉ de la saison (mensonges et pêches en cachette, découverts ou
+        non, état réel de chaque lac), à côté de ce que la vallée a décidé. Faits courts, SANS tonnage ni pourcentage (un petit
+        modèle les mélange : les chiffres exacts viennent de `narrator_figures`), par ordre d'importance, plafonnés pour ne pas
+        noyer un petit modèle. Restent les nombres des règles, des saisons et des voix. (`season_facts` : le point de vue de l'ancien.)"""
         evs = [e for e in self.events.index.values() if e["season"] == season]
         of = lambda t: [e["payload"] for e in evs if e["type"] == t]       # noqa: E731
         both = lambda names: names[0] if len(names) == 1 else ", ".join(names[:-1]) + " et " + names[-1]   # noqa: E731
@@ -2925,39 +2959,41 @@ class World:
             said[r["agent"]] = round(said.get(r["agent"], 0.0) + r["declared"], 2)
         found = {d["agent"] for d in of("lie_discovered")}
         starts = next((p for p in of("season_start")), {})
-        facts: list[str] = []
-        for lake in self.lakes.values():                                   # 1. chaque lac : stock réel et son évolution
+        lakes_f, hall, lies, secret, away, over_f, events = [], [], [], [], [], [], []
+        for lake in self.lakes.values():                                   # 1. chaque lac, en mots, et son évolution
             start = starts.get("lakes", {}).get(lake.name) if self.multi else starts.get("stock")
-            taken = sum(c["landed"] for c in catches if lake_of(c) == lake.name)
             villages = [h for h, n in self.lake_of_hamlet.items() if n == lake.name]
             level = prompts.lake_level(lake.stock, lake.capacity, lake.collapse_ratio)
-            facts.append((f"{lake.label} (villages : {', '.join(villages)}) : " if self.multi else "Le lac : ")
-                         + (f"{start:.0f} t au début, " if start is not None else "")
-                         + f"{taken:g} t pêchées, {lake.stock:.0f} t après le repeuplement sur {lake.capacity:.0f} t "
-                           f"({100 * lake.stock / lake.capacity:.0f} % : {level}).")
-        if said:                                                           # 2. déclaré contre réel
-            facts.append(f"Prises réelles : {sum(real.values()):g} t ; prises déclarées : {sum(said.values()):g} t.")
+            moved = "" if start is None else (
+                " ; il n'a pas bougé depuis le début de la saison" if abs(lake.stock - start) <= 0.01 * lake.capacity else
+                " ; il a baissé depuis le début de la saison" if lake.stock < start else " ; il est remonté depuis le début de la saison")
+            lakes_f.append((f"{lake.label} (villages : {', '.join(villages)}) : " if self.multi else "Le lac : ") + f"{level}{moved}.")
         for aid, got in real.items():                                      # 3. les mensonges, découverts ou non
             if aid in said and got > said[aid] + 0.05:
-                facts.append(f"{fn(aid)} a déclaré {said[aid]:g} t mais a pêché {got:g} t "
-                             + ("(mensonge découvert)." if aid in found else "(sans que personne ne le sache)."))
+                lies.append(f"{fn(aid)} a déclaré moins que sa vraie pêche "
+                            + ("(mensonge découvert)." if aid in found else "(sans que personne ne le sache)."))
         for c in catches:                                                  # 4. pêches en cachette (interdit de pêche)
             if c["secret"]:
-                facts.append(f"{fn(c['agent'])}, interdit de pêche, a pêché en cachette {c['landed']:g} t "
-                             + ("(pris sur le fait)." if c["agent"] in found else "(sans que personne ne le sache)."))
-        for c in catches:                                                  # 5. partis pêcher dans un autre lac
+                secret.append(f"{fn(c['agent'])} a pêché en cachette malgré l'interdiction "
+                              + ("(pris sur le fait)." if c["agent"] in found else "(sans que personne ne le sache)."))
+        outside: dict[str, list[str]] = {}
+        for c in catches:                                                  # 5. pêché dans un autre lac : un fait par lac
             if c.get("away"):
-                facts.append(f"{fn(c['agent'])} est parti pêcher dans {self.lakes[lake_of(c)].label} ({c['landed']:g} t).")
+                outside.setdefault(lake_of(c), [])
+                if fn(c["agent"]) not in outside[lake_of(c)]:
+                    outside[lake_of(c)].append(fn(c["agent"]))
+        for name, who in outside.items():
+            away.append(f"Ont pêché dans {prompts.lake_ref(self.lakes[name].label)} sans en être : {both(who)}.")
         tol, quotas = self.scn["quota_tolerance"], {}
         for a in self.fishers:                                             # 6. règles en vigueur et qui les a dépassées
             norm = self.applicable_norm(a, season, self.clock.now())
             if norm is not None:
                 over = quotas.setdefault((norm.scope, norm.quota), [])
                 if real.get(a.id, 0.0) > norm.quota + tol:
-                    over.append(f"{fn(a.id)} ({real[a.id]:g} t)")
+                    over.append(fn(a.id))
         for (scope, quota), over in quotas.items():
             whose = self.scope_of(scope)
-            facts.append(f"Règle {whose} : pas plus de {quota:g} t par pêcheur ; "
+            over_f.append(f"Règle {whose} : pas plus de {quota:g} t par pêcheur ; "
                          + ("tous l'ont tenue." if not over else f"dépassée par {both(over)}."))
         for kind in ("reserve", "repos", "sorties", "bateau"):              # les autres types : qui les a enfreints (la vérité)
             live = {(n.scope, n.target): n for a in self.fishers
@@ -2966,46 +3002,60 @@ class World:
                 broke = [c for c in catches if kind in (c.get("breach") or []) and
                          (kind not in rules.TARGETED or n.target in (c.get("zone"), lake_of(c))) and
                          (not n.scope.startswith("lake:") or n.scope[5:] == lake_of(c))]      # (une règle de lac : les prises de ce lac)
-                facts.append(f"Règle en vigueur : {self.norm_words(n)} ; "
-                             + (f"enfreinte par {both([fn(c['agent']) for c in broke])}." if broke else "respectée par tous."))
+                over_f.append(f"Règle en vigueur : {self.norm_words(n)} ; "
+                              + (f"enfreinte par {both([fn(c['agent']) for c in broke])}." if broke else "respectée par tous."))
         adopted = of("norm_adopted")                                       # 7. la veillée
         for n in adopted:
             whose = "" if n["scope"] == "valley" else " pour " + self.scope_words(n["scope"])
-            facts.append(f"À la veillée, règle adoptée{whose} : {n.get('text') or 'pas plus de %g t par pêcheur' % n['quota']} "
-                         f"dès la saison {n['effective_season']} ({len(n['supporters'])} soutiens).")
+            hall.append(f"À la veillée, règle adoptée{whose} : {n.get('text') or 'pas plus de %g t par pêcheur' % n['quota']} "
+                        f"dès la saison {n['effective_season']}.")
         if of("assembly_start") and not adopted:
-            facts.append(f"À la veillée, {len(of('proposal'))} proposition(s), aucune adoptée.")
+            hall.append(f"À la veillée, {len(of('proposal'))} proposition(s), aucune adoptée.")
         for acc in of("accusation"):                                       # 8. accusations justes ou injustes
             just = self.cheated(acc["accused"], season)
-            facts.append(f"{fn(acc['accuser'])} a accusé {fn(acc['accused'])} de trop pêcher : "
+            hall.append(f"{fn(acc['accuser'])} a accusé {fn(acc['accused'])} de trop pêcher : "
                          + ("accusation juste." if just else "accusation injuste."))
         for r in of("sanction_result"):                                    # 9. exclusions, patrouille votée
             verdict = "voté" if r["adopted"] else "refusé"
-            votes = f"({len(r['for'])} voix sur {r['voters']})"
             if r["action"] in PATROL_ACTIONS:
                 what = "d'installer" if r["action"] == "patrouille" else "de retirer"
-                facts.append(f"Le conseil a {verdict} {what} la patrouille {votes}.")
+                hall.append(f"Le conseil a {verdict} {what} la patrouille.")
             else:
                 what = "d'interdire de pêche" if r["action"] == "exclure" else "de laisser pêcher à nouveau"
-                facts.append(f"La vallée a {verdict} {what} {fn(r['target'])} {votes}.")
+                hall.append(f"La vallée a {verdict} {what} {fn(r['target'])}.")
         if self.banned:
-            facts.append("Interdits de pêche : " + both([fn(b) for b in self.banned]) + ".")
+            hall.append("Interdits de pêche : " + both([fn(b) for b in self.banned]) + ".")
         route = next((p["legs"] for p in of("patrol_route")), None)        # 10. patrouille, climat, événements
         if route:
-            facts.append("La patrouille a fait route vers " + ", puis ".join(self.leg_text(leg) for leg in route) + ".")
+            events.append("La patrouille a fait route vers " + ", puis ".join(self.leg_text(leg) for leg in route) + ".")
         for ev in of("world_event"):
-            facts.append(f"Événement : {ev['label']} ({ev['text']}).")
+            events.append(f"Événement : {ev['label']} ({ev['text']}).")
         cond = next((p.get("conditions") for p in of("season_start")), None) or {}
         if cond.get("climate"):
-            facts.append(f"Saison de l'année : {cond['climate']}.")
+            events.append(f"Saison de l'année : {cond['climate']}.")
         for inj in of("injection"):
             if inj["injection_type"] == "drought":
-                facts.append("Une sécheresse a frappé le lac : son stock a baissé d'un coup.")
+                events.append("Une sécheresse a frappé le lac : son stock a baissé d'un coup.")
         low = [c for c in catches if c.get("spot", 1.0) < 0.6]             # 11. coins de pêche trop pêchés
         if low:
-            facts.append(f"{len(low)} pêcheur(s) sont revenus d'un coin de pêche trop pêché : "
-                         + both(sorted({fn(c['agent']) for c in low})) + ".")
-        return facts[:limit]
+            events.append("Rentrés d'un coin de pêche trop pêché : " + both(sorted({fn(c["agent"]) for c in low})) + ".")
+        return [*lakes_f, *hall, *lies, *secret, *over_f, *away, *events][:limit]
+
+    def narrator_figures(self, season: int) -> str:
+        """La ligne « En chiffres » du récit : stocks des lacs (début -> après repeuplement, en tonnes entières), puis prises réelles
+        et déclarées (une décimale). Calculée par le code, jamais par le modèle."""
+        evs = [e for e in self.events.index.values() if e["season"] == season]
+        of = lambda t: [e["payload"] for e in evs if e["type"] == t]       # noqa: E731
+        starts = next((p for p in of("season_start")), {})
+        parts = []
+        for lake in self.lakes.values():
+            start = starts.get("lakes", {}).get(lake.name) if self.multi else starts.get("stock")
+            name = prompts.lake_ref(lake.label)[3:] if self.multi else "le lac"
+            parts.append(f"{name} " + (f"{start:.0f} → " if start is not None else "") + f"{lake.stock:.0f} t")
+        landed = sum(p["landed"] for p in of("catch"))
+        declared = [p["declared"] for p in of("report")]
+        return ("En chiffres : " + ", ".join(parts) + f" ; pêché {landed:.1f} t"
+                + (f", déclaré {sum(declared):.1f} t" if declared else "") + ".")
 
     async def narrate(self, season: int) -> None:
         """À la fin de la saison, un narrateur externe et omniscient raconte au joueur ce que la vallée a vécu (onglet « Récit
@@ -3013,24 +3063,60 @@ class World:
         ou si elle ne répond pas, le récit reprend les faits."""
         facts = self.narrator_facts(season)
         text, source, call_id = "", "faits", None
-        tier = self.cfg["llm"]["tiers"].get("grand")
+        name = "narrateur" if "narrateur" in self.cfg["llm"]["tiers"] else "grand"     # un niveau à lui, s'il en a un (un modèle plus fidèle)
+        tier = self.cfg["llm"]["tiers"].get(name)
         if tier and tier["provider"] != "scripted":
             hint = {"purpose": "narration", "archetype": "narrateur", "state": {"round": 0}, "system": "S2",
                     "schema": prompts.NARRATION_SCHEMA, "max_tokens": prompts.NARRATION_MAX_TOKENS,
                     "temperature": prompts.NARRATION_TEMPERATURE,
                     "seed": zlib.crc32(f"{self.cfg['run']['seed']}|narrateur|{season}".encode()) & 0x7FFFFFFF}
-            res = await self.router.complete("narrateur", "grand", "narration", prompts.narration_messages(facts), hint)
+            msgs = prompts.narration_messages(facts)
+            res = await self.router.complete("narrateur", name, "narration", msgs, dict(hint))
             data = extract_json(res.text) if res.status == "ok" else None
-            text = str((data or {}).get("recit", "")).strip()[:700]
+            text = self._whole_sentences(str((data or {}).get("recit", "")))
+            extra = self._invented_numbers(text, facts, season)
+            if text and extra:
+                # des nombres qui ne sont pas dans les faits : une seconde demande, sans eux ; sinon on retire les phrases fautives
+                msgs2 = msgs + [{"role": "assistant", "content": res.text},
+                                {"role": "user", "content": prompts.narration_numbers_message(sorted(extra))}]
+                res2 = await self.router.complete("narrateur", name, "narration", msgs2, dict(hint))
+                data2 = extract_json(res2.text) if res2.status == "ok" else None
+                again = self._whole_sentences(str((data2 or {}).get("recit", "")))
+                if again:
+                    text, res, extra = again, res2, self._invented_numbers(again, facts, season)
+                if extra:
+                    self.incident("narrateur", "invalid_value", f"nombres qui ne sont pas dans les faits : {', '.join(sorted(extra))}",
+                                  "phrases retirées", res.call_id)
+                    text = " ".join(s for s in self._sentences(text) if not self._invented_numbers(s, facts, season))
             if text:
                 source, call_id = "narrateur", res.call_id
-            else:
+            elif not (data or {}).get("recit"):
                 self.incident("narrateur", "no_response" if res.status != "ok" else "unparseable",
                               res.detail or (res.text or "")[:200], "récit tiré des faits", res.call_id)
         if not text:
-            text = f"Saison {season}. " + " ".join(facts)
-        self.events.emit("narration", {"season": season, "text": text, "source": source, "facts": facts,
-                                       "llm_call_id": call_id})
+            text, source, call_id = f"Saison {season}. " + " ".join(facts), "faits", None
+        self.events.emit("narration", {"season": season, "text": text + "\n\n" + self.narrator_figures(season), "source": source,
+                                       "facts": facts, "llm_call_id": call_id})
+
+    @staticmethod
+    def _sentences(text: str) -> list[str]:
+        return [s for s in re.split(r"(?<=[.!?…])\s+", text.strip()) if s]
+
+    @classmethod
+    def _whole_sentences(cls, text: str, width: int = prompts.NARRATION_WIDTH) -> str:
+        """Le récit coupé à la dernière phrase complète : jamais au milieu d'un mot (réponse tronquée, ou trop longue)."""
+        out = list(dict.fromkeys(cls._sentences(text)))            # (un petit modèle redit parfois une phrase entière)
+        if len(out) > 1 and not out[-1].endswith((".", "!", "?", "…", "»")):
+            out.pop()
+        while len(out) > 1 and len(" ".join(out)) > width:
+            out.pop()
+        return " ".join(out) if len(out) != 1 or len(out[0]) <= width else out[0][:width].rsplit(" ", 1)[0]
+
+    @staticmethod
+    def _invented_numbers(text: str, facts: list[str], season: int) -> set[str]:
+        """Les nombres du récit qui ne sont ni dans les faits ni le numéro de la saison (un petit modèle en invente)."""
+        nums = lambda s: {f"{float(x.replace(',', '.')):g}" for x in re.findall(r"\d+(?:[.,]\d+)?", s)}      # noqa: E731
+        return nums(text) - nums(" ".join(facts)) - {str(season)}
 
     # ------------------------------------------------------------ démarrage / fin
     def start(self):

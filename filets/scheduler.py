@@ -217,7 +217,8 @@ class SeasonScheduler:
             spoke = False
             for v, aid in picks:
                 spoke = v.speak(aid) or spoke
-            if not spoke and not jobs:
+            # un silence passe le tour sans finir la veillée : les autres répliques prêtes restent à dire
+            if not spoke and not jobs and all(aid is None for _, aid in picks):
                 break
         ballots = [(v.t, a.id, lambda a=a, asm=v.asm: ballot(w, a, asm)) for v in villages for a in w.ballot_candidates(v.asm)]
         if ballots:
@@ -293,6 +294,11 @@ class Village:
         w, asm = self.w, self.asm
         _, h, _, n_utt, props = self.prepared[aid]
         new = [u for u in asm.utterances[n_utt:] if u["payload"]["speaker"] != aid]
+        out = self.prepared[aid][0]
+        said = str(out.data.get("message", "")).strip()
+        # préparées ensemble, deux répliques se répètent : celle-ci se prépare de nouveau (elle verra l'autre)
+        if new and said and w.real_model(out.decision["payload"].get("tier")) and w.repeated_line(said):
+            return True
         if any(u["payload"]["to"] == aid for u in new) or any(t > h and a == aid for t, a in asm.accused):
             return True
         if aid in w.named_fishers([u["payload"]["text"] for u in new]):

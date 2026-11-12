@@ -37,10 +37,13 @@ def test_the_story_tells_the_true_catches_and_the_lake_stock(tmp_path):
         # le narrateur sait la vérité : les vraies prises, à côté des déclarations
         real = round(sum(e["payload"]["landed"] for e in kinds(events, "catch") if e["season"] == season), 3)
         said = round(sum(e["payload"]["declared"] for e in kinds(events, "report") if e["season"] == season), 2)
-        assert f"Prises réelles : {real:g} t ; prises déclarées : {said:g} t." in n["payload"]["facts"]
+        # les chiffres exacts sont calculés par le code, sur une ligne à part ; les faits n'ont ni tonnage ni pourcentage
         stock = next(e for e in kinds(events, "season_end") if e["season"] == season)["payload"]["stock"]
-        assert any(f"{stock:.0f} t après le repeuplement" in f for f in n["payload"]["facts"])
-        assert len(n["payload"]["facts"]) <= 14
+        start = next(e for e in kinds(events, "season_start") if e["season"] == season)["payload"]["stock"]
+        line = f"En chiffres : le lac {start:.0f} → {stock:.0f} t ; pêché {real:.1f} t, déclaré {said:.1f} t."
+        assert n["payload"]["text"].endswith("\n\n" + line)
+        assert not any(" t pêchées" in f or "%" in f or "après le repeuplement" in f for f in n["payload"]["facts"])
+        assert len(n["payload"]["facts"]) <= 10
 
 
 def test_the_narrator_knows_a_lie_nobody_discovered(tmp_path):
@@ -52,7 +55,7 @@ def test_the_narrator_knows_a_lie_nobody_discovered(tmp_path):
         mine = [e["payload"] for e in kinds(events, "report") if e["payload"]["agent"] == elwen.id and e["season"] == n["payload"]["season"]]
         declared, landed = round(sum(r["declared"] for r in mine), 2), round(sum(r["landed"] for r in mine), 3)
         if landed - declared > 0.05:
-            assert f"Elwen a déclaré {declared:g} t mais a pêché {landed:g} t (sans que personne ne le sache)." in n["payload"]["facts"]
+            assert "Elwen a déclaré moins que sa vraie pêche (sans que personne ne le sache)." in n["payload"]["facts"]
             told += 1
     assert told
 
@@ -66,22 +69,33 @@ def test_the_story_tells_the_weather_event_and_the_patrol(tmp_path):
     assert any(f.startswith("À la veillée, ") for f in facts)
 
 
-def elder_game(tmp_path, run_id, recit):
+def elder_game(tmp_path, run_id, recit, narrator_tier: bool = False):
     rec = Recorder(recit=recit)
     cfg = cfg_for(tmp_path, seasons=1, population__custom=FOUR, population__elder=True,
                   population__elder_kind="llm")
     cfg["llm"]["providers"]["fake"] = {"base_url": rec.url, "api_key_env": None, "rpm": 0}
     cfg["llm"]["tiers"] = {"grand": {"provider": "fake", "model": "m"}, "petit": {"provider": "fake", "model": "m"}}
+    if narrator_tier:
+        cfg["llm"]["tiers"]["narrateur"] = {"provider": "fake", "model": "recit"}
     world = World(cfg, LocalBus(), run_id)
     asyncio.run(world.run())
     rec.close()
     return read_events(tmp_path, run_id), rec.requests + rec.narrations
 
 
+def test_the_narrator_uses_its_own_tier_when_there_is_one(tmp_path):
+    events, _ = elder_game(tmp_path, "narrateur-niveau", "Le lac a donné, mais la parole n'a pas tenu.", narrator_tier=True)
+    calls = [e["payload"] for e in kinds(events, "llm_call")]
+    assert {(c["tier"], c["model"]) for c in calls if c["purpose"] == "narration"} == {("narrateur", "recit")}
+    assert all(c["tier"] != "narrateur" for c in calls if c["purpose"] != "narration")
+
+
 def test_an_external_narrator_tells_the_season_from_the_facts(tmp_path):
     events, requests = elder_game(tmp_path, "narrateur-ia", "Le lac a donné, mais la parole n'a pas tenu.")
     [n] = kinds(events, "narration")
-    assert n["payload"]["source"] == "narrateur" and n["payload"]["text"] == "Le lac a donné, mais la parole n'a pas tenu."
+    assert n["payload"]["source"] == "narrateur"
+    story, figures = n["payload"]["text"].split("\n\n")
+    assert story == "Le lac a donné, mais la parole n'a pas tenu." and figures.startswith("En chiffres : le lac ")
     asked = next(r for r in requests if '"recit"' in r["user"])
     assert all(f in asked["user"] for f in n["payload"]["facts"]) and "n'invente rien" in asked["user"]
     assert asked["temperature"] == 0.3 != next(r for r in requests if '"prise"' in r["user"])["temperature"]

@@ -151,6 +151,7 @@ classDiagram
         +dict NARRATION_SCHEMA
         +int NARRATION_MAX_TOKENS
         +float NARRATION_TEMPERATURE
+        +int NARRATION_WIDTH
         +int SANCTION_MAX_TOKENS
         +int ELECTION_MAX_TOKENS
         +int DEBRIEF_MAX_TOKENS
@@ -194,6 +195,8 @@ classDiagram
         +ballot_schema(ids) dict
         +ballot_messages(p, table, est, capacity, collapse_ratio) list
         +narration_messages(facts) list
+        +narration_numbers_message(extra) str
+        +repeated_line_message(text, who, season) str
         +catch_levels(boat_capacity, n, lo) list
         +reflex_system_one(p, obs) dict
         +sanction_schema(ids) dict
@@ -218,7 +221,7 @@ classDiagram
 ```
 
 **Pour aller plus loin**
-- `filets/prompts.py:733` (`narration_messages`)
+- `filets/prompts.py:748` (`narration_messages`), `:765` (`narration_numbers_message`), `:714` (`repeated_line_message`)
 - `filets/prompts.py:755` (`reflex_system_one`)
 
 ## 3. Modèles : routeur, clients, limiteurs

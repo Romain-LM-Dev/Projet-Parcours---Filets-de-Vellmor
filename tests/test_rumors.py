@@ -40,7 +40,8 @@ class Recorder:
     def __init__(self, prise: float = 3.0, reject: tuple = (), propose_first: float | None = None,
                  recit: str | None = "Le lac a donné, mais la parole n'a pas tenu.", confiance: dict | None = None,
                  sanction: str = "oui", elect: dict | None = None, debrief: dict | None = None, route: list | None = None,
-                 speech: dict | None = None, lake: str | None = None):
+                 speech: dict | None = None, lake: str | None = None, vary: bool = True):
+        self.vary, self.said = vary, 0            # vary : une réplique différente à chaque fois, sauf message imposé (sinon : redite)
         self.recit = recit                        # récit du narrateur ; None : une réponse sans récit
         self.confiance = confiance                # le jugement de confiance renvoyé dans chaque réplique (None : aucun)
         self.sanction = sanction                  # le vote sur chaque proposition d'exclure ou de réautoriser
@@ -109,6 +110,9 @@ class Recorder:
                     if outer.confiance is not None:
                         speech["confiance"] = outer.confiance
                     speech.update(outer.speech)
+                    if outer.vary and "message" not in outer.speech:
+                        outer.said += 1
+                        speech["message"] = f"Réplique {outer.said} pour {7 * outer.said} tonnes de {outer.said + 3} pêcheurs."
                     content = json.dumps(speech)
                 out = json.dumps({"choices": [{"message": {"content": content}}],
                                   "usage": {"prompt_tokens": 100, "completion_tokens": 20}}).encode()
