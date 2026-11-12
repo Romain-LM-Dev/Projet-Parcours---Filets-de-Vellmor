@@ -35,7 +35,7 @@ asynchrones, stockage) : [docs/architecture.md](docs/architecture.md).
 
 ## Démarrage rapide
 
-Sous Windows, deux scripts font tout (voir `install.ps1` et `start.ps1`, ou leurs lanceurs `.cmd`) :
+Sous Windows, deux scripts font tout (voir `install.ps1` et [`start.ps1`](docs/uml/dictionnaire.md#23-startps1-et-startcmd), ou leurs lanceurs `.cmd`) :
 
 ```powershell
 .\install.cmd                 # une fois : Python 3.13, .venv, dépendances, tests, Kafka, modèles Ollama (3B et 1,5B ; -Quality ajoute
@@ -60,6 +60,8 @@ Ouvrez `godot/project.godot` dans **Godot 4.3+** et lancez la scène (F5) : un m
 si le moteur est en salon. Cliquez sur un pêcheur pour l'inspecter ; les boutons du bas injectent des
 événements dans la partie en cours. Sans Godot, la console suffit : chaque prise, parole, règle adoptée
 ou promesse trahie s'y affiche.
+
+Schémas et doc : [cas d'utilisation § 1](docs/uml/cas-utilisation.md#1-préparer-la-partie-menu-de-démarrage), [séquence (a)](docs/uml/sequences.md#a-démarrer-une-partie-depuis-le-menu), [dictionnaire 2.3 (start.ps1)](docs/uml/dictionnaire.md#23-startps1-et-startcmd).
 
 ## Le menu de démarrage
 
@@ -112,6 +114,8 @@ Changer l'archétype d'un pêcheur reprend les valeurs types de cet archétype (
 Tant qu'on n'a pas fixé le stock max à la main, la capacité du lac suit le nombre de pêcheurs (12,5 t chacun). Le moteur valide la
 demande ; en cas de refus (Ollama éteint, clé absente…), le menu reste ouvert avec le message.
 
+Schémas et doc : [cas d'utilisation § 1](docs/uml/cas-utilisation.md#1-préparer-la-partie-menu-de-démarrage), [séquence (a)](docs/uml/sequences.md#a-démarrer-une-partie-depuis-le-menu), [communication (a1)](docs/uml/communication.md#a1-du-clic-jusquà-la-commande-reçue-par-le-moteur), [(a2)](docs/uml/communication.md#a2-le-moteur-prépare-crée-le-monde-et-ouvre-la-partie), [(a3)](docs/uml/communication.md#a3-la-diffusion-de-run_start), [dictionnaire 1.12](docs/uml/dictionnaire.md#112-les-préréglages-configyaml).
+
 ## Piloter la partie
 
 Une barre au-dessus de la carte commande la partie en cours (touche **Espace** pour la pause) :
@@ -128,6 +132,8 @@ Une barre au-dessus de la carte commande la partie en cours (touche **Espace** p
   Chaque `season_start` porte le mode dans lequel la saison est jouée.
 * **Arrêter la partie** (deux clics) : immédiat, même pendant la réflexion d'une IA ; le run est clos avec la raison `stop`.
   Un écran de fin propose alors **Nouvelle partie**.
+
+Schémas et doc : [cas d'utilisation § 2](docs/uml/cas-utilisation.md#2-piloter-la-partie-en-cours), [séquence (h)](docs/uml/sequences.md#h-larrêt-dune-partie), [communication (h)](docs/uml/communication.md#h-larrêt-dune-partie).
 
 ## Avec Kafka (configuration de référence)
 
@@ -154,6 +160,8 @@ Les topics sont `filets.events`, `filets.indicators`, `filets.commands`, `filets
 aux mêmes chiffres. Le moteur n'annonce son salon (`idle`) qu'une fois son consommateur de commandes prêt, si bien
 qu'un « Démarrer » cliqué trop tôt n'est pas perdu.
 
+Schémas et doc : [architecture § 1](docs/architecture.md#1-architecture), [§ 6](docs/architecture.md#6-stockage--postgresql--pgvector-et-stockage-objet), [classes, infrastructure § 1](docs/uml/classes-infrastructure.md#1-le-salon-et-le-bus), [§ 5](docs/uml/classes-infrastructure.md#5-services-du-mode-distribué-services), [séquence (e2)](docs/uml/sequences.md#e2-rejeu-avec-kafka), [communication (e2)](docs/uml/communication.md#e2-rejeu-avec-kafka).
+
 ## Commandes
 
 | Commande | Rôle |
@@ -174,6 +182,8 @@ villages à quatre ou cinq pêcheurs (18, un lac de 225 t, le même stock par t�
 
 Exemples : `--set scenario.communication=hamlet`, `--set scenario.catches_visible=false`,
 `--set population.rule_fraction=0.5`, `--set time.sim_hours_per_second=1`.
+
+Schémas et doc : [dictionnaire 2.2](docs/uml/dictionnaire.md#22-python--m-filets--sous-commandes-et-options), [cas d'utilisation § 4](docs/uml/cas-utilisation.md#4-ligne-de-commande-et-api-rest).
 
 ## Choisir ses modèles (tous gratuits)
 
@@ -233,6 +243,8 @@ Pour une API (Groq, OpenRouter `:free`, Gemini, Mistral, GitHub Models) : copiez
 un seul client gère limite de débit, reprises sur 429 et comptage des tokens. Vérifiez quotas et noms
 de modèles au démarrage du projet : ils changent souvent, et certaines offres gratuites réutilisent
 les données envoyées.
+
+Schémas et doc : [classes, décisions § 3](docs/uml/classes-decisions.md#3-modèles--routeur-clients-limiteurs), [dictionnaire 1.10](docs/uml/dictionnaire.md#110-llm--les-modèles-de-langage).
 
 ## Le monde
 
@@ -371,6 +383,8 @@ pêcheur : prénom, village, archétype, bateau, expérience, avoir, dette, cerv
 le nombre de pêcheurs, la capacité du lac et la part d'agents à règles en sont déduits, et le tout est enregistré dans
 `runs/<id>/config.json` (la partie reste reproductible).
 
+Schémas et doc : [classes, monde § 1](docs/uml/classes-monde.md#1-world--structure-attributs-et-utilitaires), [§ 2](docs/uml/classes-monde.md#2-world--lacs-zones-et-déplacements), [§ 12](docs/uml/classes-monde.md#12-lac-climat-règles-et-géographie), [dictionnaire 1.2](docs/uml/dictionnaire.md#12-population--la-vallée-et-ses-habitants), [1.3](docs/uml/dictionnaire.md#13-lake--les-lacs), [1.4](docs/uml/dictionnaire.md#14-economy--argent-bateaux-sorties), [1.5](docs/uml/dictionnaire.md#15-scenario--communication-conseil-contrôle), [1.6](docs/uml/dictionnaire.md#16-climate--saisons-de-lannée-et-événements).
+
 ## Les IA voient le lac
 
 Constat sur des parties réelles : le lac passait de 100 % à 0 % et les pêcheurs à IA demandaient toujours 5 à 7 t chacun (la prise
@@ -394,6 +408,8 @@ chaque décision (`prompts.py`, `world.observe`) :
   raisonnement. Sans cela, les petits modèles oubliaient souvent le champ « prise » et la décision retombait sur la règle de repli, qui
   tient compte du stock : il faut toujours compter les décisions en repli (`decision.fallback`) quand on mesure l'effet d'un prompt.
 * **Les agents à règles ne demandent jamais plus que le lac qu'ils voient**, mais **une sortie rapporte toujours au moins `economy.min_catch` (1 t)** : on ne revient jamais bredouille. Une IA qui demande moins est ramenée à ce minimum (incident `invalid_value`), et un quota ou une promesse sous ce minimum vaut ce minimum.
+
+Schémas et doc : [classes, décisions § 2 (invites)](docs/uml/classes-decisions.md#2-les-invites-promptspy).
 
 ## Le vote des règles
 
@@ -427,6 +443,8 @@ la famille prudente respecte). Deux propositions ne se rejoignent que du même t
 patrouille et les témoins, et le joueur la lit dans le fil (« règle enfreinte »). Sur la carte, des bouées et des hachures marquent une
 réserve, « au repos » un lac fermé. Événements : `proposal` et `norm_adopted` portent `kind`, `value`, `target`, `text` (+ `duration`,
 `until_season`) ; `catch.breach` signale la violation.
+
+Schémas et doc : [classes, monde § 3](docs/uml/classes-monde.md#3-world--règles-et-normes), [§ 7](docs/uml/classes-monde.md#7-world--veillée-propositions-et-votes), [§ 10](docs/uml/classes-monde.md#10-données-du-conseil-du-voyage-et-du-pêcheur), [séquence (c1)](docs/uml/sequences.md#c1-la-boucle-de-préparation-et-de-parole), [(c2)](docs/uml/sequences.md#c2-les-bulletins-les-propositions-et-la-clôture), [communication (c1)](docs/uml/communication.md#c1-la-boucle-de-préparation-et-de-parole), [(c2)](docs/uml/communication.md#c2-les-bulletins-les-propositions-et-la-clôture).
 
 ## Prises secrètes, déclarations et confiance
 
@@ -525,6 +543,8 @@ interdits et les bateaux ont la taille de leur cale ; le fil écrit `MENSONGE` e
 dit quand la journée n'a pas été ordinaire (« visait 4 t : mauvaise journée ») ; l'onglet *Agent* liste ses prises
 (« S2 5.5 t (déclaré 4.0) ») et qui se méfie de lui.
 
+Schémas et doc : [docs/peche.md (« Déclarer à chaque retour»)](docs/peche.md#déclarer-à-chaque-retour), [classes, monde § 4](docs/uml/classes-monde.md#4-world--pêche-sorties-et-météo), [§ 5](docs/uml/classes-monde.md#5-world--indices-mensonges-confiance-et-sanctions), [séquence (b3)](docs/uml/sequences.md#b3-le-plan-puis-la-boucle-sortie-retour-déclaration-décision-suivante).
+
 ## Le conseil de la vallée
 
 Au conseil de la vallée, **chaque village est représenté par un élu** (`scenario.council: delegates`, par défaut ; `all` rend la
@@ -542,6 +562,8 @@ garde pas le siège de son village.
 et ce que la vallée sait de chaque pêcheur, et dit lui-même ce que cela change pour sa confiance (de −3 à +3, comme à la veillée) : une IA par
 un petit appel, un agent à règles selon son caractère. Un élu est le **porte-parole** de son village : son contexte lui rappelle chacun des
 siens (caractère, bateau, ce qu'il lui faut pour vivre). Il reste lui-même : sa façon d'être colore ce qu'il rapporte, et c'est voulu. Résultat sur les tokens : la veillée ne fait plus parler que 4 à 9 personnes, au lieu de tous.
+
+Schémas et doc : [classes, monde § 3](docs/uml/classes-monde.md#3-world--règles-et-normes), [§ 7](docs/uml/classes-monde.md#7-world--veillée-propositions-et-votes), [§ 10](docs/uml/classes-monde.md#10-données-du-conseil-du-voyage-et-du-pêcheur), [séquence (c1)](docs/uml/sequences.md#c1-la-boucle-de-préparation-et-de-parole), [(c2)](docs/uml/sequences.md#c2-les-bulletins-les-propositions-et-la-clôture), [communication (c1)](docs/uml/communication.md#c1-la-boucle-de-préparation-et-de-parole), [(c2)](docs/uml/communication.md#c2-les-bulletins-les-propositions-et-la-clôture).
 
 ## Lacs, vallée aléatoire
 
@@ -570,6 +592,8 @@ village, 24 au plus), de lacs (1 à 3) et leur richesse en poisson (par pêcheur
 (petits bateaux, mixte, gros ; la taille de chaque bateau se tire ensuite pêcheur par pêcheur, selon son caractère) et le nombre de
 patrouilles (0 à 2) viennent de la graine seule (`lakes.random_valley`). Dans le menu, **Vallée : Aléatoire** fait de même et grise les
 nombres ; on retouche ensuite chaque pêcheur et chaque lac.
+
+Schémas et doc : [classes, monde § 2](docs/uml/classes-monde.md#2-world--lacs-zones-et-déplacements), [§ 12](docs/uml/classes-monde.md#12-lac-climat-règles-et-géographie), [séquence (g)](docs/uml/sequences.md#g-le-tirage-dune-vallée-depuis-le-menu), [communication (g)](docs/uml/communication.md#g-le-tirage-dune-vallée-depuis-le-menu).
 
 ## La patrouille du lac
 
@@ -610,6 +634,8 @@ chance de la mesurer `scenario.detection.patrol` (90 %) fois cette part ; la cha
 note après chaque saison où il est passé, qui il a mesuré et si cela collait avec ce qui était déclaré ; il le relit avant de choisir sa
 route suivante. Un capitaine ne peut être partout : couvrir une zone, c'est en laisser d'autres sans surveillance.
 
+Schémas et doc : [classes, monde § 6](docs/uml/classes-monde.md#6-world--patrouille).
+
 ## Le temps : un seul mode, et les dialogues
 
 Il n'y a plus de choix Synchrone / Asynchrone : un **ordonnanceur à événements** mène chaque saison (spécification : [docs/temps.md](docs/temps.md)).
@@ -625,6 +651,8 @@ décisions qu'aucun événement ne sépare sont demandées **en parallèle**.
 **Proposer une règle.** Quand une règle est en vigueur, la rappeler ne la reconduit pas : `proposition_quota: null` la garde (elle reste
 valable sans nouveau vote), un chiffre en propose une **nouvelle**. L'invite donne aussi le bilan de la règle (combien de pêcheurs l'ont
 dépassée d'après leurs déclarations) : sans cela, un petit modèle recopiait le quota en vigueur d'une veillée à l'autre.
+
+Schémas et doc : [architecture § 2](docs/architecture.md#2-temporalité-et-horloge), [classes, monde § 13](docs/uml/classes-monde.md#13-horloge-et-pilotage), [§ 14](docs/uml/classes-monde.md#14-saison-file-dévénements-et-veillées), [séquence (c1)](docs/uml/sequences.md#c1-la-boucle-de-préparation-et-de-parole).
 
 ## Moins de tokens, des agents plus cohérents
 
@@ -644,6 +672,8 @@ tokens (−31 %) ; une réplique 1 966 → 1 489 tokens, 28 → 20 appels de par
 le faux LLM (5 saisons, tokens estimés) : 165 000 → 86 000 tokens (−48 %). Une décision de pêche réfléchie coûte un peu plus
 (carnet, déclaration, indices).
 
+Schémas et doc : [architecture § 4](docs/architecture.md#4-économie-de-tokens--système-1-et-système-2), [classes, décisions § 1](docs/uml/classes-decisions.md#1-fonctions-de-décision-règles-darchétype-et-routage), [séquence (b2)](docs/uml/sequences.md#b2-le-choix-système-1-ou-système-2-et-lappel-du-modèle).
+
 ## Les annonces du joueur ont un effet
 
 La barre du bas diffuse une **rumeur** (« Diffuser ») dans la vallée. C'est une injection : événement `injection`, souvenir de type
@@ -658,6 +688,8 @@ La barre du bas diffuse une **rumeur** (« Diffuser ») dans la vallée. C'est u
   réduit les prises de 15 % ; une rumeur accusatrice qui nomme un pêcheur (« Inès ment sur ce qu'elle ramène ») fait accuser cette personne
   à la veillée par les caractères combatifs, la fait se défendre, et la rend sobre (−20 %) ; toute autre rumeur est relayée dans les paroles.
 * **Les agents à règles restent sourds** : ils servent de témoin (A6), c'est ce qui permet de mesurer l'effet de la rumeur sur les IA.
+
+Schémas et doc : [séquence (d)](docs/uml/sequences.md#d-une-injection-du-joueur--la-rumeur), [communication (d)](docs/uml/communication.md#d-une-injection-du-joueur--la-rumeur).
 
 ## Ce qu'on observe : les interactions
 
@@ -675,6 +707,8 @@ et ses effets sont des événements séparés : `proposal`, `support`, `promise`
   retrouvé** pour décider (engagements épinglés, souvenirs, archives, rumeurs), puis la mémoire complète ;
 * onglet **Règles** : propositions sur la table et historique des règles adoptées ;
 * onglet **Confiance** : la jauge de confiance de chaque pêcheur, sa vraie prise et sa déclaration, ses mensonges découverts.
+
+Schémas et doc : [classes, Godot § 7.6](docs/uml/classes-godot.md#76-fil-des-interactions-règles-confiance), [§ 7.7](docs/uml/classes-godot.md#77-inspecteur-dagent).
 
 ## La scène Godot
 
@@ -727,6 +761,8 @@ godot --headless --path godot -s res://tests/main_feed_test.gd -- --events=$PWD/
 godot --headless --path godot -s res://tests/menu_test.gd -- --catalog=/chemin/catalog.json   # (pytest le lance et valide la demande)
 ```
 
+Schémas et doc : [classes, Godot § 9 (WorldView)](docs/uml/classes-godot.md#9-worldview-world_viewgd--la-carte-de-la-vallée), [§ 5.2](docs/uml/classes-godot.md#52-legend--la-légende-de-la-carte), [§ 11](docs/uml/classes-godot.md#11-le-shader-valleygdshader), [séquence (f)](docs/uml/sequences.md#f-la-fin-de-saison), [communication (f2)](docs/uml/communication.md#f2-le-récit-du-narrateur), [classes, monde § 8](docs/uml/classes-monde.md#8-world--calendrier-saison-fin-de-saison-et-récit).
+
 ## Indicateurs (contexte commun, B1–B3)
 
 Pour FILETS, le *contexte commun* est une **norme de prélèvement partagée** :
@@ -757,6 +793,8 @@ Les services Kafka reprennent donc au dernier `run_start` du topic, et le pont n
 du run affiché. `tests/test_indicators_audit.py` recalcule chaque indicateur à part, depuis les événements bruts, pour
 des parties synchrones, asynchrones, par hameau, sans communication et à règles, et exige le même résultat.
 
+Schémas et doc : [classes, infrastructure § 3](docs/uml/classes-infrastructure.md#3-événements-et-indicateurs).
+
 ## Le temps (C3–C6)
 
 Chaque événement porte `sim_time` (moment dans le monde) et `processed_at` (moment réel).
@@ -772,6 +810,8 @@ et toute violation est détectée et comptée.
 
 **Plus de changement de mode.** La commande `set_mode` est reçue et ignorée (avertissement dans le journal du moteur). La pause, la
 vitesse et l'arrêt restent tracés par des `injection pause|resume|set_speed|stop`.
+
+Schémas et doc : [architecture § 2](docs/architecture.md#2-temporalité-et-horloge), [classes, monde § 13](docs/uml/classes-monde.md#13-horloge-et-pilotage), [§ 14](docs/uml/classes-monde.md#14-saison-file-dévénements-et-veillées), [séquence (c1)](docs/uml/sequences.md#c1-la-boucle-de-préparation-et-de-parole).
 
 ## Données (F1–F6)
 
@@ -799,9 +839,11 @@ la carte graphique aux LLM). Puis `python -m filets serve --config config/data.y
 cours de partie, la recherche se rabat sur BM25 en mémoire et la partie continue. Tout se fait en asynchrone (asyncpg,
 miniopy-async, aiokafka, httpx). Voir [docs/architecture.md § 6](docs/architecture.md#6-stockage--postgresql--pgvector-et-stockage-objet).
 
+Schémas et doc : [architecture § 3](docs/architecture.md#3-communication-et-mémoire), [classes, décisions § 4](docs/uml/classes-decisions.md#4-mémoire-et-recherche-de-contexte-rag), [§ 5](docs/uml/classes-decisions.md#5-vecteurs-et-base-pgvector-vectorspy), [classes, infrastructure § 4](docs/uml/classes-infrastructure.md#4-stockage--historique-et-objets).
+
 ## Documentation et diagrammes UML
 
-Trois documents décrivent la construction du jeu :
+Ces documents décrivent la construction du jeu :
 
 * [docs/architecture.md](docs/architecture.md) : les blocs et leurs liens, l'horloge, la mémoire, les tokens, le stockage ;
 * [docs/temps.md](docs/temps.md) : le temps, un seul ordonnanceur (réfléchir ne prend pas de temps, agir en prend ; la
@@ -809,7 +851,12 @@ Trois documents décrivent la construction du jeu :
 * [docs/uml/](docs/uml/) : 97 diagrammes UML en Mermaid, que GitHub affiche directement, réunis aussi dans un seul PDF :
   [docs/uml/FILETS-diagrammes-UML.pdf](docs/uml/FILETS-diagrammes-UML.pdf), avec un dictionnaire des variables et des
   paramètres, et une affiche A0 de toutes les classes :
-  [docs/uml/FILETS-classes-A0.pdf](docs/uml/FILETS-classes-A0.pdf).
+  [docs/uml/FILETS-classes-A0.pdf](docs/uml/FILETS-classes-A0.pdf) ;
+* [docs/peche.md](docs/peche.md) : la pêche décidée par le pêcheur (plan de saison, sorties, déclarations) ;
+* Vidéos :
+  * [docs/demo/README.md](docs/demo/README.md) : comment les vidéos sont faites ;
+  * [docs/demo/FILETS-demo.mp4](docs/demo/FILETS-demo.mp4) : la démonstration (4 min 50) ;
+  * [docs/demo/FILETS-short.mp4](docs/demo/FILETS-short.mp4) : la vidéo courte, verticale (47 s).
 
 Chaque diagramme est précédé d'un paragraphe qui dit comment le lire et suivi des emplacements dans le code
 (`fichier:ligne`).
@@ -884,23 +931,15 @@ config/            default (vallée de base : 4 villages, 8 pêcheurs), large (g
                    six villages, deux patrouilles), random (vallée tirée de la graine), baseline (sans LLM),
                    no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
                    ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, stockage objet)
-docs/              architecture.md (architecture, communication, tokens, stockage), temps.md (le temps), uml/ (97 diagrammes UML et leur PDF)
+docs/              architecture.md (architecture, communication, tokens, stockage), temps.md (le temps), peche.md (la pêche décidée par le pêcheur),
+                   demo/ (vidéo de démonstration et vidéo courte), uml/ (97 diagrammes UML et leur PDF)
 schemas/           schémas JSON versionnés des événements
 analysis/          requêtes SQL du rapport (queries.sql pour SQLite, queries_pg.sql pour PostgreSQL)
 runs/              runs enregistrés (un exemple fourni)
 tests/             tests de cohérence
 ```
 
-## Ce qui reste à faire
-
-* Brancher de vrais modèles et calibrer les prompts (sortie de rôle, posture d'« assistant
-  prudent », agents trop conciliants : cf. pistes de la fiche).
-* Évaluer la récupération (`filets retrieval`) : comparer BM25 et pgvector sur les mêmes décisions annotées.
-* Valider le modèle de décision tev1 sur une vraie partie (Ollama 0.40.4) : part des réflexes, confiance, écart aux prises de Qwen.
-* Mesure d'énergie (CodeCarbon pour Ollama, EcoLogits pour les API) à ajouter au bilan de coût.
-* Le protocole expérimental : hypothèses, 5 runs × 2 configurations au moins, baseline (E1, E2).
-* Exploiter les mesures déjà instrumentées pour l'excellence : décalage événement → indicateur sous
-  charge (C7) et comparaison de deux tailles de population (`--agents`, C8).
+Fichiers de `docs/` cités : [architecture.md](docs/architecture.md), [temps.md](docs/temps.md), [peche.md](docs/peche.md), [demo/](docs/demo/README.md), [uml/](docs/uml/).
 
 ## Licence
 

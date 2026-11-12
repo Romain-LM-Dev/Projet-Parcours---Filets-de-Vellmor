@@ -35,7 +35,7 @@ libraries, storage): [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
-On Windows, two scripts do everything (see `install.ps1` and `start.ps1`, or their `.cmd` launchers):
+On Windows, two scripts do everything (see `install.ps1` and [`start.ps1`](docs/uml/dictionnaire.md#23-startps1-et-startcmd), or their `.cmd` launchers):
 
 ```powershell
 .\install.cmd                 # once: Python 3.13, .venv, dependencies, tests, Kafka, Ollama models (3B and 1.5B; -Quality adds
@@ -60,6 +60,8 @@ Open `godot/project.godot` in **Godot 4.3+** and run the scene (F5): a start men
 if the engine is in lobby mode. Click on a fisher to inspect them; the buttons at the bottom inject
 events into the current game. Without Godot, the console is enough: every catch, speech, adopted rule
 or broken promise is printed there.
+
+Diagrams and docs: [use cases § 1](docs/uml/cas-utilisation.md#1-préparer-la-partie-menu-de-démarrage), [sequence (a)](docs/uml/sequences.md#a-démarrer-une-partie-depuis-le-menu), [dictionary 2.3 (start.ps1)](docs/uml/dictionnaire.md#23-startps1-et-startcmd) (in French).
 
 ## The start menu
 
@@ -112,6 +114,8 @@ Changing a fisher's archetype resets the typical values of that archetype (exper
 As long as the max stock has not been set by hand, the lake's capacity follows the number of fishers (12.5 t each). The engine validates the
 request; if it is refused (Ollama off, missing key…), the menu stays open with the message.
 
+Diagrams and docs: [use cases § 1](docs/uml/cas-utilisation.md#1-préparer-la-partie-menu-de-démarrage), [sequence (a)](docs/uml/sequences.md#a-démarrer-une-partie-depuis-le-menu), [communication (a1)](docs/uml/communication.md#a1-du-clic-jusquà-la-commande-reçue-par-le-moteur), [(a2)](docs/uml/communication.md#a2-le-moteur-prépare-crée-le-monde-et-ouvre-la-partie), [(a3)](docs/uml/communication.md#a3-la-diffusion-de-run_start), [dictionary 1.12](docs/uml/dictionnaire.md#112-les-préréglages-configyaml) (in French).
+
 ## Controlling the game
 
 A bar above the map controls the current game (**Space** key to pause):
@@ -128,6 +132,8 @@ A bar above the map controls the current game (**Space** key to pause):
   Each `season_start` carries the mode in which the season is played.
 * **Arrêter la partie** (Stop the game, two clicks): immediate, even while an AI is thinking; the run is closed with the reason `stop`.
   An end screen then offers **Nouvelle partie** (New game).
+
+Diagrams and docs: [use cases § 2](docs/uml/cas-utilisation.md#2-piloter-la-partie-en-cours), [sequence (h)](docs/uml/sequences.md#h-larrêt-dune-partie), [communication (h)](docs/uml/communication.md#h-larrêt-dune-partie) (in French).
 
 ## With Kafka (reference configuration)
 
@@ -154,6 +160,8 @@ The topics are `filets.events`, `filets.indicators`, `filets.commands`, `filets.
 at the same figures. The engine only announces its lobby (`idle`) once its command consumer is ready, so
 a "Start" clicked too early is not lost.
 
+Diagrams and docs: [architecture § 1](docs/architecture.md#1-architecture), [§ 6](docs/architecture.md#6-stockage--postgresql--pgvector-et-stockage-objet), [classes, infrastructure § 1](docs/uml/classes-infrastructure.md#1-le-salon-et-le-bus), [§ 5](docs/uml/classes-infrastructure.md#5-services-du-mode-distribué-services), [sequence (e2)](docs/uml/sequences.md#e2-rejeu-avec-kafka), [communication (e2)](docs/uml/communication.md#e2-rejeu-avec-kafka) (in French).
+
 ## Commands
 
 | Command | Role |
@@ -174,6 +182,8 @@ villages with four or five fishers each (18, a 225 t lake, the same stock per he
 
 Examples: `--set scenario.communication=hamlet`, `--set scenario.catches_visible=false`,
 `--set population.rule_fraction=0.5`, `--set time.sim_hours_per_second=1`.
+
+Diagrams and docs: [dictionary 2.2](docs/uml/dictionnaire.md#22-python--m-filets--sous-commandes-et-options), [use cases § 4](docs/uml/cas-utilisation.md#4-ligne-de-commande-et-api-rest) (in French).
 
 ## Choosing your models (all free)
 
@@ -233,6 +243,8 @@ For an API (Groq, OpenRouter `:free`, Gemini, Mistral, GitHub Models): copy `.en
 a single client handles rate limiting, retries on 429 and token counting. Check quotas and model
 names when the project starts: they change often, and some free offers reuse
 the data sent.
+
+Diagrams and docs: [classes, decisions § 3](docs/uml/classes-decisions.md#3-modèles--routeur-clients-limiteurs), [dictionary 1.10](docs/uml/dictionnaire.md#110-llm--les-modèles-de-langage) (in French).
 
 ## The world
 
@@ -363,6 +375,8 @@ fisher: first name, village, archetype, boat, experience, savings, debt, brain).
 the number of fishers, the lake's capacity and the share of rule-based agents are deduced from it, and everything is saved in
 `runs/<id>/config.json` (the game remains reproducible).
 
+Diagrams and docs: [classes, world § 1](docs/uml/classes-monde.md#1-world--structure-attributs-et-utilitaires), [§ 2](docs/uml/classes-monde.md#2-world--lacs-zones-et-déplacements), [§ 12](docs/uml/classes-monde.md#12-lac-climat-règles-et-géographie), [dictionary 1.2](docs/uml/dictionnaire.md#12-population--la-vallée-et-ses-habitants), [1.3](docs/uml/dictionnaire.md#13-lake--les-lacs), [1.4](docs/uml/dictionnaire.md#14-economy--argent-bateaux-sorties), [1.5](docs/uml/dictionnaire.md#15-scenario--communication-conseil-contrôle), [1.6](docs/uml/dictionnaire.md#16-climate--saisons-de-lannée-et-événements) (in French).
+
 ## The AIs see the lake
 
 Observation from real games: the lake went from 100 % to 0 % and the AI fishers still asked for 5 to 7 t each (the average
@@ -386,6 +400,8 @@ now receives (`prompts.py`, `world.observe`):
   reasoning. Without this, small models often forgot the "catch" field and the decision fell back on the fallback rule, which
   takes the stock into account: fallback decisions (`decision.fallback`) must always be counted when measuring the effect of a prompt.
 * **Rule-based agents never ask for more than the lake they see**, but **an outing always yields at least `economy.min_catch` (1 t)**: you never come back empty-handed. An AI that asks for less is brought back to this minimum (`invalid_value` incident), and a quota or a promise below this minimum is worth this minimum.
+
+Diagrams and docs: [classes, decisions § 2 (prompts)](docs/uml/classes-decisions.md#2-les-invites-promptspy) (in French).
 
 ## Voting on rules
 
@@ -419,6 +435,8 @@ the cautious family respects it). Two proposals only merge if they are of the sa
 patrol and the witnesses, and the player reads it in the feed ("règle enfreinte", rule broken). On the map, buoys and hatching mark a
 reserve, "au repos" (resting) a closed lake. Events: `proposal` and `norm_adopted` carry `kind`, `value`, `target`, `text` (+ `duration`,
 `until_season`); `catch.breach` signals the violation.
+
+Diagrams and docs: [classes, world § 3](docs/uml/classes-monde.md#3-world--règles-et-normes), [§ 7](docs/uml/classes-monde.md#7-world--veillée-propositions-et-votes), [§ 10](docs/uml/classes-monde.md#10-données-du-conseil-du-voyage-et-du-pêcheur), [sequence (c1)](docs/uml/sequences.md#c1-la-boucle-de-préparation-et-de-parole), [(c2)](docs/uml/sequences.md#c2-les-bulletins-les-propositions-et-la-clôture), [communication (c1)](docs/uml/communication.md#c1-la-boucle-de-préparation-et-de-parole), [(c2)](docs/uml/communication.md#c2-les-bulletins-les-propositions-et-la-clôture) (in French).
 
 ## Secret catches, declarations and trust
 
@@ -513,6 +531,8 @@ banned and the boats are the size of their hold; the feed writes `MENSONGE` and 
 says when the day was not ordinary ("visait 4 t : mauvaise journée", was aiming for 4 t: bad day); the *Agent* tab lists their catches
 ("S2 5.5 t (déclaré 4.0)", declared 4.0) and who distrusts them.
 
+Diagrams and docs: [docs/peche.md (“Déclarer à chaque retour”)](docs/peche.md#déclarer-à-chaque-retour), [classes, world § 4](docs/uml/classes-monde.md#4-world--pêche-sorties-et-météo), [§ 5](docs/uml/classes-monde.md#5-world--indices-mensonges-confiance-et-sanctions), [sequence (b3)](docs/uml/sequences.md#b3-le-plan-puis-la-boucle-sortie-retour-déclaration-décision-suivante) (in French).
+
 ## The valley council
 
 At the valley council, **each village is represented by a delegate** (`scenario.council: delegates`, by default; `all` opens the
@@ -530,6 +550,8 @@ keep their village's seat.
 and what the valley knows about each fisher, and says themselves what this changes for their trust (from −3 to +3, as at the gathering): an AI through
 a small call, a rule-based agent according to its character. A delegate is the **spokesperson** of their village: their context reminds them of each of
 their own (character, boat, what they need to live). They remain themselves: their way of being colors what they report, and that is intended. Result on tokens: the gathering now only makes 4 to 9 people speak, instead of everyone.
+
+Diagrams and docs: [classes, world § 3](docs/uml/classes-monde.md#3-world--règles-et-normes), [§ 7](docs/uml/classes-monde.md#7-world--veillée-propositions-et-votes), [§ 10](docs/uml/classes-monde.md#10-données-du-conseil-du-voyage-et-du-pêcheur), [sequence (c1)](docs/uml/sequences.md#c1-la-boucle-de-préparation-et-de-parole), [(c2)](docs/uml/sequences.md#c2-les-bulletins-les-propositions-et-la-clôture), [communication (c1)](docs/uml/communication.md#c1-la-boucle-de-préparation-et-de-parole), [(c2)](docs/uml/communication.md#c2-les-bulletins-les-propositions-et-la-clôture) (in French).
 
 ## Lakes, random valley
 
@@ -559,6 +581,8 @@ village, 24 at most), of lakes (1 to 3) and their richness in fish (per fisher),
 (small boats, mixed, large; the size of each boat is then drawn fisher by fisher, according to their character) and the number of
 patrols (0 to 2) come from the seed alone (`lakes.random_valley`). In the menu, **Vallée : Aléatoire** (Valley: Random) does the same and grays out the
 numbers; each fisher and each lake can then be touched up.
+
+Diagrams and docs: [classes, world § 2](docs/uml/classes-monde.md#2-world--lacs-zones-et-déplacements), [§ 12](docs/uml/classes-monde.md#12-lac-climat-règles-et-géographie), [sequence (g)](docs/uml/sequences.md#g-le-tirage-dune-vallée-depuis-le-menu), [communication (g)](docs/uml/communication.md#g-le-tirage-dune-vallée-depuis-le-menu) (in French).
 
 ## The lake patrol
 
@@ -599,6 +623,8 @@ chance of measuring it `scenario.detection.patrol` (90 %) times this share; the 
 notes after each season where it went, whom it measured and whether it matched what was declared; it rereads this before choosing its
 next route. A captain cannot be everywhere: covering one zone means leaving others unwatched.
 
+Diagrams and docs: [classes, world § 6](docs/uml/classes-monde.md#6-world--patrouille) (in French).
+
 ## Time: a single mode, and the dialogues
 
 There is no longer a choice between Synchronous / Asynchronous: an **event scheduler** runs each season (specification: [docs/temps.md](docs/temps.md)).
@@ -614,6 +640,8 @@ decisions that no event separates are requested **in parallel**.
 **Proposing a rule.** When a rule is in force, recalling it does not renew it: `proposition_quota: null` keeps it (it remains
 valid without a new vote), a figure proposes a **new** one. The prompt also gives the rule's record (how many fishers
 exceeded it according to their declarations): without this, a small model copied the quota in force from one gathering to the next.
+
+Diagrams and docs: [architecture § 2](docs/architecture.md#2-temporalité-et-horloge), [classes, world § 13](docs/uml/classes-monde.md#13-horloge-et-pilotage), [§ 14](docs/uml/classes-monde.md#14-saison-file-dévénements-et-veillées), [sequence (c1)](docs/uml/sequences.md#c1-la-boucle-de-préparation-et-de-parole) (in French).
 
 ## Fewer tokens, more consistent agents
 
@@ -633,6 +661,8 @@ tokens (−31 %); a speech 1,966 → 1,489 tokens, 28 → 20 speech calls; no fa
 the fake LLM (5 seasons, estimated tokens): 165,000 → 86,000 tokens (−48 %). A reflected fishing decision costs a little more
 (notebook, declaration, clues).
 
+Diagrams and docs: [architecture § 4](docs/architecture.md#4-économie-de-tokens--système-1-et-système-2), [classes, decisions § 1](docs/uml/classes-decisions.md#1-fonctions-de-décision-règles-darchétype-et-routage), [sequence (b2)](docs/uml/sequences.md#b2-le-choix-système-1-ou-système-2-et-lappel-du-modèle) (in French).
+
 ## The player's announcements have an effect
 
 The bottom bar spreads a **rumor** ("Diffuser", Spread) in the valley. It is an injection: `injection` event, memory of type
@@ -647,6 +677,8 @@ The bottom bar spreads a **rumor** ("Diffuser", Spread) in the valley. It is an 
   reduces catches by 15 %; an accusing rumor that names a fisher ("Inès ment sur ce qu'elle ramène", Inès lies about what she brings back) makes the combative characters accuse this person
   at the gathering, makes her defend herself, and makes her sober (−20 %); any other rumor is relayed in the speeches.
 * **Rule-based agents stay deaf**: they serve as a control (A6); this is what makes it possible to measure the effect of the rumor on the AIs.
+
+Diagrams and docs: [sequence (d)](docs/uml/sequences.md#d-une-injection-du-joueur--la-rumeur), [communication (d)](docs/uml/communication.md#d-une-injection-du-joueur--la-rumeur) (in French).
 
 ## What we observe: the interactions
 
@@ -663,6 +695,8 @@ and its effects are separate events: `proposal`, `support`, `promise`, `accusati
   retrieved** to decide (pinned commitments, memories, archives, rumors), then the complete memory;
 * **Règles** (Rules) tab: proposals on the table and history of adopted rules;
 * **Confiance** (Trust) tab: each fisher's trust gauge, their real catch and their declaration, their discovered lies.
+
+Diagrams and docs: [classes, Godot § 7.6](docs/uml/classes-godot.md#76-fil-des-interactions-règles-confiance), [§ 7.7](docs/uml/classes-godot.md#77-inspecteur-dagent) (in French).
 
 ## The Godot scene
 
@@ -711,6 +745,8 @@ godot --headless --path godot -s res://tests/main_feed_test.gd -- --events=$PWD/
 godot --headless --path godot -s res://tests/menu_test.gd -- --catalog=/chemin/catalog.json   # (pytest runs it and validates the request)
 ```
 
+Diagrams and docs: [classes, Godot § 9 (WorldView)](docs/uml/classes-godot.md#9-worldview-world_viewgd--la-carte-de-la-vallée), [§ 5.2](docs/uml/classes-godot.md#52-legend--la-légende-de-la-carte), [§ 11](docs/uml/classes-godot.md#11-le-shader-valleygdshader), [sequence (f)](docs/uml/sequences.md#f-la-fin-de-saison), [communication (f2)](docs/uml/communication.md#f2-le-récit-du-narrateur), [classes, world § 8](docs/uml/classes-monde.md#8-world--calendrier-saison-fin-de-saison-et-récit) (in French).
+
 ## Indicators (common context, B1–B3)
 
 For FILETS, the *common context* is a **shared harvesting norm**:
@@ -741,6 +777,8 @@ The Kafka services therefore resume at the last `run_start` of the topic, and th
 of the displayed run. `tests/test_indicators_audit.py` recomputes each indicator separately, from the raw events, for
 synchronous, asynchronous, per-hamlet, no-communication and rule-based games, and requires the same result.
 
+Diagrams and docs: [classes, infrastructure § 3](docs/uml/classes-infrastructure.md#3-événements-et-indicateurs) (in French).
+
 ## Time (C3–C6)
 
 Each event carries `sim_time` (moment in the world) and `processed_at` (real moment).
@@ -756,6 +794,8 @@ and any violation is detected and counted.
 
 **No more mode changes.** The `set_mode` command is received and ignored (warning in the engine log). Pause,
 speed and stop are still traced by `injection pause|resume|set_speed|stop`.
+
+Diagrams and docs: [architecture § 2](docs/architecture.md#2-temporalité-et-horloge), [classes, world § 13](docs/uml/classes-monde.md#13-horloge-et-pilotage), [§ 14](docs/uml/classes-monde.md#14-saison-file-dévénements-et-veillées), [sequence (c1)](docs/uml/sequences.md#c1-la-boucle-de-préparation-et-de-parole) (in French).
 
 ## Data (F1–F6)
 
@@ -783,6 +823,79 @@ the graphics card to the LLMs). Then `python -m filets serve --config config/dat
 during a game, search falls back on in-memory BM25 and the game continues. Everything is done asynchronously (asyncpg,
 miniopy-async, aiokafka, httpx). See [docs/architecture.md § 6](docs/architecture.md#6-stockage--postgresql--pgvector-et-stockage-objet).
 
+Diagrams and docs: [architecture § 3](docs/architecture.md#3-communication-et-mémoire), [classes, decisions § 4](docs/uml/classes-decisions.md#4-mémoire-et-recherche-de-contexte-rag), [§ 5](docs/uml/classes-decisions.md#5-vecteurs-et-base-pgvector-vectorspy), [classes, infrastructure § 4](docs/uml/classes-infrastructure.md#4-stockage--historique-et-objets) (in French).
+
+## Documentation and UML diagrams
+
+All these documents are in French. They describe how the game is built:
+
+* [docs/architecture.md](docs/architecture.md): the blocks and their links, the clock, memory, tokens, storage;
+* [docs/temps.md](docs/temps.md): time, a single scheduler (thinking takes no time, acting does; the evening
+  gathering unfolding as it goes);
+* [docs/uml/](docs/uml/): 97 UML diagrams in Mermaid, which GitHub displays directly, also gathered in a single PDF:
+  [docs/uml/FILETS-diagrammes-UML.pdf](docs/uml/FILETS-diagrammes-UML.pdf), with a dictionary of variables and
+  parameters, and an A0 poster of all the classes:
+  [docs/uml/FILETS-classes-A0.pdf](docs/uml/FILETS-classes-A0.pdf);
+* [docs/peche.md](docs/peche.md): fishing decided by the fisher (season plan, outings, declarations);
+* Videos:
+  * [docs/demo/README.md](docs/demo/README.md): how the videos are made;
+  * [docs/demo/FILETS-demo.mp4](docs/demo/FILETS-demo.mp4): the demonstration (4 min 50);
+  * [docs/demo/FILETS-short.mp4](docs/demo/FILETS-short.mp4): the short vertical video (47 s).
+
+Each diagram is preceded by a paragraph that says how to read it and followed by the locations in the code
+(`file:line`).
+
+**Where to start**
+
+1. [Use cases](docs/uml/cas-utilisation.md) (6 diagrams and a table of about 95 cases): what the player does
+   (menu, control, injections, inspector, command line, API), then what the simulation's actors do
+   (fishers, elder, patrol, narrator, models).
+2. [Sequences](docs/uml/sequences.md) (15 diagrams): eight scenarios in time order.
+3. [Communication](docs/uml/communication.md) (15 diagrams): the same scenarios, seen as numbered messages between
+   objects (1, 1.1, 2…).
+4. The classes, part by part.
+5. [Dictionary of variables and parameters](docs/uml/dictionnaire.md): each configuration key (type, default,
+   values, meaning), the presets, the environment variables, the command line, then each attribute of each
+   class and of each Godot script (type, unit, role).
+
+**The A0 poster** ([FILETS-classes-A0.pdf](docs/uml/FILETS-classes-A0.pdf)) gathers all the classes on one sheet. At the
+top, the relationship diagram: each class by its name, in a frame and a color per zone (world, time, decisions,
+models, memory, lobby and API, events and storage, services and configuration, Godot). Below, each class with
+all its attributes and methods, in the color of its zone.
+
+**Classes**
+
+| Part | File | Diagrams | Content |
+|---|---|---|---|
+| The world, time, rules, lakes | [classes-monde.md](docs/uml/classes-monde.md) | 14 | `World` in nine views by domain (its 137 methods), `Lake`, `Agent`, `Profile`, `Norm`, `Proposal`, `Assembly`, climate, clock, control, `SeasonScheduler` |
+| Decisions, models, memory, RAG | [classes-decisions.md](docs/uml/classes-decisions.md) | 5 | agents, archetype rules, system 1 / 2 routing, prompts, model router and clients, memory, RAG and vectors |
+| Infrastructure | [classes-infrastructure.md](docs/uml/classes-infrastructure.md) | 6 | lobby (`Engine`), API, local bus and Kafka, events, indicators, storage, services, configuration, catalog, command line, bench |
+| The Godot interface | [classes-godot.md](docs/uml/classes-godot.md) | 36 | the 8 scripts (274 functions, `WorldView` in ten views) and the valley shader |
+
+**Scenarios** (one sequence and one communication each)
+
+| | Scenario |
+|---|---|
+| (a) | starting a game from the menu |
+| (b) | the season plan and a fisher's outings (observation, memory and RAG, reflex / large model routing, outing, return, declaration, next decision) |
+| (c) | the evening gathering as it goes (two preparation passes, one speech at a time, vote) |
+| (d) | a player injection: the rumor |
+| (e) | replaying a game, with the local bus then with Kafka |
+| (f) | the end of the season: repopulation, reports, lore, the narrator's story |
+| (g) | drawing a valley from the menu |
+| (h) | stopping a game |
+
+**Conventions.** A Python file made of functions is drawn as a class marked `<<module>>`; the API routes are
+pseudo-methods there (`GET api_health`). A Godot script is a class that inherits from its node (`extends Control`…), the
+shader is marked `<<shader>>`. Since Mermaid has neither use cases nor communication diagrams, the use cases are a graph
+of actors linked to ovals (with `include` and `extend`), the communication a graph whose arrows carry numbered
+messages. When the code does not state the type of an attribute, it is deduced from the assigned value (`any` otherwise);
+asynchronous methods are not marked.
+
+**Updating.** `npx -y @mermaid-js/mermaid-cli@11.4.2 -i docs/uml/<file>.md -o <folder>/out.md` checks the
+diagrams of a file; `python docs/uml/build_pdf.py` rebuilds the PDF (Node.js is required; the PDF's table of contents is this
+section); `python docs/uml/build_poster.py` rebuilds the A0 poster from the class diagrams.
+
 ## Directory tree
 
 ```
@@ -802,23 +915,15 @@ config/            default (base valley: 4 villages, 8 fishers), large (large va
                    six villages, two patrols), random (valley drawn from the seed), baseline (without LLM),
                    no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
                    ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, object storage)
-docs/              architecture.md: architecture, time, communication, tokens, asynchronous, storage
+docs/              architecture.md: architecture, time, communication, tokens, asynchronous, storage; temps.md (time);
+                   peche.md (fishing decided by the fisher); demo/ (demo video and short video); uml/ (97 UML diagrams and their PDF)
 schemas/           versioned JSON schemas of the events
 analysis/          SQL queries for the report (queries.sql for SQLite, queries_pg.sql for PostgreSQL)
 runs/              saved runs (one example provided)
 tests/             consistency tests
 ```
 
-## What remains to be done
-
-* Plug in real models and calibrate the prompts (breaking character, "cautious
-  assistant" posture, overly accommodating agents: see the sheet's leads).
-* Evaluate retrieval (`filets retrieval`): compare BM25 and pgvector on the same annotated decisions.
-* Validate the tev1 decision model on a real game (Ollama 0.40.4): share of reflexes, confidence, gap from Qwen's catches.
-* Energy measurement (CodeCarbon for Ollama, EcoLogits for APIs) to add to the cost report.
-* The experimental protocol: hypotheses, at least 5 runs × 2 configurations, baseline (E1, E2).
-* Exploit the measurements already instrumented for excellence: event → indicator lag under
-  load (C7) and comparison of two population sizes (`--agents`, C8).
+`docs/` files cited (in French): [architecture.md](docs/architecture.md), [temps.md](docs/temps.md), [peche.md](docs/peche.md), [demo/](docs/demo/README.md), [uml/](docs/uml/).
 
 ## License
 
