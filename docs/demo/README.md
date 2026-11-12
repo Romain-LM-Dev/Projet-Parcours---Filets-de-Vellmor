@@ -16,10 +16,10 @@ turquoise `#53AFA8`, bleu clair `#2EA6CE`, bleu nuit `#263286`), en deux formats
 
 1. Capture sans sous-titre, même minutage que la démo : l'étape 4 ci-dessus avec `--no-captions` après `--demo=…` (vers `clean.avi`).
 2. `python docs/demo/short.py <ffmpeg> <clean.avi> portrait` (ou `paysage`), avec un python qui a edge-tts : voix et mots minutés (edge-tts),
-   titres et sous-titres mot à mot en ASS (libass, police Segoe UI Black de Windows), souffle à chaque coupe, son à -14 LUFS. En portrait, les
-   plans sont recadrés et zoomés sur la partie floutée et teintée ; en paysage, l'écran du jeu reste plein cadre et net (zoom de 1,6 au plus vers
-   la zone du plan, entourée de vert), titre et sous-titres sur des bandeaux. Le zoom se calcule sur l'image agrandie (x4 en portrait, x2 en
-   paysage) : sinon `zoompan` arrondit au pixel et l'image tremble. La carte de fin porte le logo de l'école,
+   titres et sous-titres mot à mot en ASS (libass, police Segoe UI Black de Windows), souffle à chaque coupe, son à -14 LUFS. Plans fixes et
+   coupes franches, sans effet de zoom. En portrait, les plans sont recadrés sur la partie floutée et teintée ; en paysage, l'écran du jeu reste
+   plein cadre et net (agrandi de 1,6 au plus vers la zone du plan, entourée de vert), titre et sous-titres sur des bandeaux. La carte de fin
+   porte le logo de l'école,
    [eigsi-casablanca.png](eigsi-casablanca.png) (rendu du logo vectoriel du site eigsica.ma, fond transparent), sur une carte blanche.
    Texte, titres, plans (`src` en secondes de la capture, `crop` dans l'image 1920x1080), mise en page des deux formats (`formats`) et
    prononciation (`pron` : la liaison avant « IA », « RAG » lu comme un mot, « IABD » épelé ; le sous-titre garde le mot) :

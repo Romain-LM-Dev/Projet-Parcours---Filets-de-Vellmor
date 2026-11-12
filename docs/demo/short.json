@@ -1,5 +1,5 @@
 {
-  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré), `zoom` (zoom final ; une entrée en léger zoom marque chaque coupe). `pron` : [motif, ce que dit la voix, ce qu'on entend, ce qu'affiche le sous-titre] : la liaison avant « IA » (« les zi-a »), « une i-a » sans coupure, « RAG » lu comme un mot, « IABD » épelé. `end` : la carte de fin et le logo de l'école (sur une carte blanche ; `formats.*.end.logo` = [centre vertical, largeur de la carte]). `formats` : la vidéo verticale (portrait) et paysage, mêmes plans ; en paysage (`full`), l'écran du jeu plein cadre, zoomé au plus de `zmax` vers la zone `crop` (entourée de vert), titre et sous-titres sur des bandeaux ; en portrait, `fit` la zone où l'image de la partie tient entière, `blur` la zone couverte par son flou, `title` [taille, marge haute], `cap` [taille, marge basse, caractères par groupe]. Construite par `docs/demo/short.py`.",
+  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré). `pron` : [motif, ce que dit la voix, ce qu'on entend, ce qu'affiche le sous-titre] : la liaison avant « IA » (« les zi-a »), « une i-a » sans coupure, « RAG » lu comme un mot, « IABD » épelé. `end` : la carte de fin et le logo de l'école (sur une carte blanche ; `formats.*.end.logo` = [centre vertical, largeur de la carte]). `formats` : la vidéo verticale (portrait) et paysage, mêmes plans ; en paysage (`full`), l'écran du jeu plein cadre, agrandi au plus de `zmax` vers la zone `crop` (entourée de vert), titre et sous-titres sur des bandeaux ; en portrait, `fit` la zone où l'image de la partie tient entière, `blur` la zone couverte par son flou, `title` [taille, marge haute], `cap` [taille, marge basse, caractères par groupe]. Construite par `docs/demo/short.py`.",
   "fps": 30,
   "voice": {
     "name": "fr-FR-VivienneMultilingualNeural",
@@ -58,8 +58,7 @@
       "shots": [
         {
           "src": 6.0,
-          "crop": "map",
-          "zoom": 1.18
+          "crop": "map"
         }
       ]
     },
@@ -69,14 +68,12 @@
       "shots": [
         {
           "src": 38.0,
-          "crop": "map",
-          "zoom": 1.1
+          "crop": "map"
         },
         {
           "src": 50.0,
           "crop": "map",
-          "speed": 2.0,
-          "zoom": 1.12
+          "speed": 2.0
         }
       ]
     },
@@ -91,8 +88,7 @@
             742,
             480,
             44
-          ],
-          "zoom": 1.1
+          ]
         }
       ]
     },
@@ -107,8 +103,7 @@
             612,
             520,
             175
-          ],
-          "zoom": 1.08
+          ]
         }
       ]
     },
@@ -123,8 +118,7 @@
             772,
             560,
             75
-          ],
-          "zoom": 1.1
+          ]
         },
         {
           "src": 106.5,
@@ -133,8 +127,7 @@
             560,
             650,
             300
-          ],
-          "zoom": 1.12
+          ]
         }
       ]
     },
@@ -149,8 +142,7 @@
             220,
             640,
             300
-          ],
-          "zoom": 1.1
+          ]
         },
         {
           "src": 113.0,
@@ -159,8 +151,7 @@
             480,
             800,
             330
-          ],
-          "zoom": 1.1
+          ]
         },
         {
           "src": 124.0,
@@ -169,8 +160,7 @@
             540,
             640,
             230
-          ],
-          "zoom": 1.06
+          ]
         }
       ]
     },
@@ -186,8 +176,7 @@
             640,
             520
           ],
-          "speed": 1.5,
-          "zoom": 1.12
+          "speed": 1.5
         }
       ]
     },
@@ -202,8 +191,7 @@
             470,
             520,
             260
-          ],
-          "zoom": 1.12
+          ]
         }
       ]
     },
@@ -218,8 +206,7 @@
             568,
             600,
             300
-          ],
-          "zoom": 1.06
+          ]
         },
         {
           "src": 64.0,
@@ -228,8 +215,7 @@
             60,
             705,
             205
-          ],
-          "zoom": 1.06
+          ]
         },
         {
           "src": 272.0,
@@ -238,13 +224,12 @@
             345,
             715,
             175
-          ],
-          "zoom": 1.06
+          ]
         }
       ]
     },
     {
-      "say": "372 appels aux modèles en une partie, et tout est enregistré pour l'analyse.",
+      "say": "372 appels aux modèles en 3 saisons, et tout est enregistré pour l'analyse.",
       "title": "*372* APPELS D'IA",
       "shots": [
         {
@@ -254,8 +239,7 @@
             199,
             225,
             63
-          ],
-          "zoom": 1.15
+          ]
         },
         {
           "src": 282.0,
@@ -264,8 +248,7 @@
             199,
             225,
             63
-          ],
-          "zoom": 1.15
+          ]
         }
       ]
     },
@@ -276,8 +259,7 @@
         {
           "src": 212.0,
           "crop": "map",
-          "speed": 2.0,
-          "zoom": 1.1
+          "speed": 2.0
         },
         {
           "src": 278.0,
@@ -286,8 +268,7 @@
             640,
             600,
             270
-          ],
-          "zoom": 1.06
+          ]
         }
       ]
     },

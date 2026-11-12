@@ -1,6 +1,6 @@
 """Vidéo courte (réseaux sociaux), verticale ou paysage, d'après short.json et la capture SANS sous-titre de la démo
 (`--no-captions`, même minutage que FILETS-demo.mp4). Voix edge-tts (seul le texte part chez Microsoft), sous-titres mot à mot et titres
-en ASS (libass), plans recadrés et zoomés par ffmpeg.
+en ASS (libass), plans recadrés par ffmpeg (plans fixes, coupes franches : pas de zoom).
     python short.py <ffmpeg> <capture sans sous-titre .avi> [portrait|paysage]      (python avec le paquet edge-tts)"""
 import asyncio
 import json
@@ -24,7 +24,6 @@ W, H = F["size"]
 FPS = sc["fps"]
 C = sc["colors"]
 GAP = 0.15                               # souffle entre deux phrases
-SUPER = 4                                # le zoom se calcule sur l'image agrandie 4 fois : sans cela, zoompan arrondit au pixel et l'image tremble
 
 
 def run(cmd: list, cwd=None) -> None:
@@ -100,7 +99,7 @@ def background(top: str) -> Path:
 
 def render_shot(k: int, s: dict | None, dur: float) -> Path:
     """Un plan de `dur` s : fond dégradé, la partie floutée et teintée de bleu nuit sur la zone `blur`, l'extrait net tenu dans la
-    zone `fit` (entrée en léger zoom à la coupe, puis poussée lente) ; sans `s` : le fond seul (carte de fin)."""
+    zone `fit` (plan fixe) ; sans `s` : le fond seul (carte de fin)."""
     path = work / f"shot{k:02d}.mp4"
     n = round(dur * FPS)
     bg = background("blue" if s is None else "night")
@@ -120,22 +119,20 @@ def render_shot(k: int, s: dict | None, dur: float) -> Path:
              "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p", path])
         return path
     x, y, w, h = crop_of(s["crop"])
-    sp, z1 = float(s.get("speed", 1.0)), float(s.get("zoom", 1.08))
+    sp = float(s.get("speed", 1.0))
     if F.get("full"):
-        return full_shot(path, n, s, (x, y, w, h), sp, z1)
+        return full_shot(path, n, s, (x, y, w, h), sp)
     fx, fy, fwm, fhm = F["fit"]
     bx, by, bw, bh = F["blur"]
     k_fit = min(fwm / w, fhm / h)                                    # l'extrait entier, le plus grand possible dans la zone
     fw, fh = round(w * k_fit / 2) * 2, round(h * k_fit / 2) * 2
     ox, oy = fx + (fwm - fw) // 2, fy + (fhm - fh) // 2
-    z = f"if(lt(on,6),1.06-0.01*on,1+{z1 - 1:.4f}*(on-6)/{max(n - 6, 1)})"
     graph = (f"[0:v]setpts=(PTS-STARTPTS)/{sp},fps={FPS},split=2[a][b];"
              f"[a]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},gblur=sigma=28,"
              f"eq=brightness=-0.2:saturation=0.7[z0];"
              f"color=c=0x{C['night']}:s={bw}x{bh}:r={FPS},format=rgba,colorchannelmixer=aa=0.45[tint];"
              f"[z0][tint]overlay=shortest=1[z];"
-             f"[b]crop={w}:{h}:{x}:{y},scale={fw * SUPER}:{fh * SUPER}:flags=lanczos,"
-             f"zoompan=z='{z}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={fw}x{fh}:fps={FPS}[f];"
+             f"[b]crop={w}:{h}:{x}:{y},scale={fw}:{fh}:flags=lanczos[f];"
              f"[1:v][z]overlay={bx}:{by}[bz];[bz][f]overlay={ox}:{oy}:shortest=1,"
              f"drawbox=x={ox}:y={oy - 8}:w={fw}:h=8:color=0x{C['green']}:t=fill,"
              f"drawbox=x={ox}:y={oy + fh}:w={fw}:h=8:color=0x{C['sky']}:t=fill[v]")
@@ -145,7 +142,7 @@ def render_shot(k: int, s: dict | None, dur: float) -> Path:
     return path
 
 
-def full_shot(path: Path, n: int, s: dict, c: tuple, sp: float, z1: float) -> Path:
+def full_shot(path: Path, n: int, s: dict, c: tuple, sp: float) -> Path:
     """Plan plein cadre (paysage) : l'écran du jeu à sa résolution, zoomé au plus de `zmax` sur la zone `c` (une image
     nette plutôt qu'un petit bout agrandi), la zone entourée de vert si elle ne remplit pas l'image."""
     x, y, w, h = c
@@ -155,16 +152,13 @@ def full_shot(path: Path, n: int, s: dict, c: tuple, sp: float, z1: float) -> Pa
     vh = round(vw * H / W / 2) * 2
     vx = int(min(max(x + w / 2 - vw / 2, 0), sw - vw))
     vy = int(min(max(y + h / 2 - vh / 2, 0), sh - vh))
-    sup = 2                                                                # (x4 donnerait des images 8K ; x2 suffit à ces zooms lents)
-    k = W * sup / vw
+    k = W / vw
     box = ""
     if w * h < 0.6 * vw * vh:                                              # la zone dont on parle, entourée de vert
-        t = 6 * sup
+        t = 6
         box = (f",drawbox=x={round((x - vx) * k) - t}:y={round((y - vy) * k) - t}:w={round(w * k) + 2 * t}:"
                f"h={round(h * k) + 2 * t}:color=0x{C['green']}:t={t}")
-    z = f"if(lt(on,6),1.06-0.01*on,1+{z1 - 1:.4f}*(on-6)/{max(n - 6, 1)})"
-    graph = (f"[0:v]setpts=(PTS-STARTPTS)/{sp},fps={FPS},crop={vw}:{vh}:{vx}:{vy},scale={W * sup}:{H * sup}:flags=lanczos{box},"
-             f"zoompan=z='{z}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={W}x{H}:fps={FPS}[v]")
+    graph = f"[0:v]setpts=(PTS-STARTPTS)/{sp},fps={FPS},crop={vw}:{vh}:{vx}:{vy},scale={W}:{H}:flags=lanczos{box}[v]"
     run([ffmpeg, "-y", "-loglevel", "error", "-ss", f"{s['src']:.3f}", "-t", f"{n / FPS * sp + 0.5:.3f}", "-i", capture,
          "-filter_complex", graph, "-map", "[v]", "-frames:v", n, "-c:v", "libx264", "-crf", "18", "-preset", "fast",
          "-pix_fmt", "yuv420p", "-r", FPS, path])
