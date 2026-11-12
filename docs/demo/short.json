@@ -1,9 +1,5 @@
 {
-  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré), `zoom` (zoom final ; une entrée en léger zoom marque chaque coupe). Construite par `docs/demo/short.py`.",
-  "size": [
-    1080,
-    1920
-  ],
+  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré), `zoom` (zoom final ; une entrée en léger zoom marque chaque coupe). `pron` : comment la voix doit dire un mot (le sous-titre garde le mot). `formats` : la vidéo verticale (portrait) et paysage, mêmes plans : `fit` la zone où l'image de la partie tient entière, `blur` la zone couverte par son flou, `title` [taille, marge haute], `cap` [taille, marge basse, caractères par groupe]. Construite par `docs/demo/short.py`.",
   "fps": 30,
   "voice": {
     "name": "fr-FR-VivienneMultilingualNeural",
@@ -101,7 +97,7 @@
       ]
     },
     {
-      "say": "Les voisins voient les barques rentrer, et l'ancien recoupe leurs témoignages.",
+      "say": "Les voisins voient les barques rentrer, et l'ancien regroupe leurs témoignages.",
       "title": "LES VOISINS *TÉMOIGNENT*",
       "shots": [
         {
@@ -196,8 +192,8 @@
       ]
     },
     {
-      "say": "et l'une des deux fait voter sa suppression.",
-      "title": "PUIS SE FAIT *SUPPRIMER*",
+      "say": "et l'une des deux fait voter la fin de la patrouille.",
+      "title": "LA PATROUILLE *RETIRÉE*",
       "shots": [
         {
           "src": 177.3,
@@ -308,5 +304,98 @@
       "Intelligence artificielle & big data",
       "EIGSI Casablanca"
     ]
+  },
+  "pron": {
+    "IA": "I A",
+    "RAG": "R A G",
+    "IABD": "I A B D"
+  },
+  "formats": {
+    "portrait": {
+      "size": [
+        1080,
+        1920
+      ],
+      "out": "FILETS-short.mp4",
+      "fit": [
+        0,
+        470,
+        1080,
+        900
+      ],
+      "blur": [
+        0,
+        470,
+        1080,
+        900
+      ],
+      "title": [
+        96,
+        190
+      ],
+      "cap": [
+        74,
+        330,
+        22
+      ],
+      "tag_y": 66,
+      "end": {
+        "y": [
+          700,
+          900,
+          1110,
+          1290
+        ],
+        "big": 250,
+        "bars_y": 1450
+      },
+      "progress": [
+        1900,
+        20
+      ]
+    },
+    "paysage": {
+      "size": [
+        1920,
+        1080
+      ],
+      "out": "FILETS-short-paysage.mp4",
+      "fit": [
+        200,
+        190,
+        1520,
+        700
+      ],
+      "blur": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "title": [
+        72,
+        100
+      ],
+      "cap": [
+        60,
+        52,
+        34
+      ],
+      "tag_y": 40,
+      "end": {
+        "y": [
+          330,
+          500,
+          650,
+          750
+        ],
+        "big": 200,
+        "bars_y": 830
+      },
+      "progress": [
+        1066,
+        14
+      ]
+    }
   }
 }

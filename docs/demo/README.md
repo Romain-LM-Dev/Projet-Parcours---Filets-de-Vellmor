@@ -9,11 +9,14 @@
 
 ## Vidéo courte (réseaux sociaux)
 
-`docs/demo/FILETS-short.mp4` : moins d'une minute, verticale 1080x1920, aux couleurs de l'EIGSI Casablanca (relevées sur le logo et le site
-eigsica.ma : bleu `#0064B0`, vert `#7CC357`, turquoise `#53AFA8`, bleu clair `#2EA6CE`, bleu nuit `#263286`).
+Moins d'une minute, aux couleurs de l'EIGSI Casablanca (relevées sur le logo et le site eigsica.ma : bleu `#0064B0`, vert `#7CC357`,
+turquoise `#53AFA8`, bleu clair `#2EA6CE`, bleu nuit `#263286`), en deux formats, mêmes plans :
+[FILETS-short.mp4](FILETS-short.mp4) (verticale 1080x1920) et [FILETS-short-paysage.mp4](FILETS-short-paysage.mp4) (paysage 1920x1080).
 
 1. Capture sans sous-titre, même minutage que la démo : l'étape 4 ci-dessus avec `--no-captions` après `--demo=…` (vers `clean.avi`).
-2. `python docs/demo/short.py <ffmpeg> <clean.avi>` (python avec edge-tts) : voix et mots minutés (edge-tts), plans recadrés et zoomés sur un fond
-   flouté de la partie, titres et sous-titres mot à mot en ASS (libass, police Segoe UI Black de Windows), souffle à chaque coupe, son à -14 LUFS.
-   Texte, titres et plans (`src` en secondes de la capture, `crop` dans l'image 1920x1080) : `docs/demo/short.json`. Le script refuse une vidéo
-   de plus de 60 s.
+2. `python docs/demo/short.py <ffmpeg> <clean.avi> portrait` (ou `paysage`), avec un python qui a edge-tts : voix et mots minutés (edge-tts),
+   plans recadrés et zoomés sur la partie floutée et teintée, titres et sous-titres mot à mot en ASS (libass, police Segoe UI Black de
+   Windows), souffle à chaque coupe, son à -14 LUFS. Le zoom se calcule sur l'image agrandie 4 fois (`SUPER`) : sinon `zoompan` arrondit
+   au pixel et l'image tremble. Texte, titres, plans (`src` en secondes de la capture, `crop` dans l'image 1920x1080), mise en page des deux
+   formats (`formats`) et prononciation des sigles (`pron` : la voix épelle « I A », « R A G », « I A B D », le sous-titre garde le mot) :
+   [short.json](short.json). Le script refuse une vidéo de plus de 60 s.

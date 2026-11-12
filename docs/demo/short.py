@@ -1,9 +1,10 @@
-"""Vidéo courte verticale (réseaux sociaux) : docs/demo/FILETS-short.mp4, d'après short.json et la capture SANS sous-titre de la
-démo (`--no-captions`, même minutage que FILETS-demo.mp4). Voix edge-tts (seul le texte part chez Microsoft), sous-titres mot à mot
-et titres en ASS (libass), plans recadrés et zoomés par ffmpeg.
-    python short.py <ffmpeg> <capture sans sous-titre .avi> [sortie.mp4]      (python avec le paquet edge-tts)"""
+"""Vidéo courte (réseaux sociaux), verticale ou paysage, d'après short.json et la capture SANS sous-titre de la démo
+(`--no-captions`, même minutage que FILETS-demo.mp4). Voix edge-tts (seul le texte part chez Microsoft), sous-titres mot à mot et titres
+en ASS (libass), plans recadrés et zoomés par ffmpeg.
+    python short.py <ffmpeg> <capture sans sous-titre .avi> [portrait|paysage]      (python avec le paquet edge-tts)"""
 import asyncio
 import json
+import re
 import subprocess
 import sys
 import wave
@@ -14,14 +15,16 @@ import edge_tts
 here = Path(__file__).parent
 sc = json.loads((here / "short.json").read_text(encoding="utf8"))
 ffmpeg, capture = sys.argv[1], str(Path(sys.argv[2]).resolve())
-out = Path(sys.argv[3]).resolve() if len(sys.argv) > 3 else here / "FILETS-short.mp4"
+FMT = sys.argv[3] if len(sys.argv) > 3 else "portrait"
+F = sc["formats"][FMT]
+out = here / F["out"]
 work = here / "voice" / "short"          # (docs/demo/voice/ n'est pas versionné)
 work.mkdir(parents=True, exist_ok=True)
-W, H = sc["size"]
+W, H = F["size"]
 FPS = sc["fps"]
 C = sc["colors"]
 GAP = 0.15                               # souffle entre deux phrases
-ZONE = (470, 900)                        # zone des images de la partie : haut, hauteur
+SUPER = 4                                # le zoom se calcule sur l'image agrandie 4 fois : sans cela, zoompan arrondit au pixel et l'image tremble
 
 
 def run(cmd: list, cwd=None) -> None:
@@ -32,13 +35,37 @@ def ass_color(hex6: str) -> str:
     return f"&H00{hex6[4:6]}{hex6[2:4]}{hex6[0:2]}&"
 
 
+def spoken(text: str) -> str:
+    """Le texte tel que la voix doit le dire : les sigles épelés (`pron`), le reste tel quel."""
+    for word, say in sc.get("pron", {}).items():
+        text = re.sub(rf"\b{re.escape(word)}\b", say, text)
+    return text
+
+
+def regroup(words: list) -> list:
+    """Les mots minutés de la voix, sigles recollés pour le sous-titre (« I » « A » « B » « D » → « IABD »)."""
+    key = lambda s: re.sub(r"\W", "", s).upper()                                   # noqa: E731
+    targets = {key(say): word for word, say in sc.get("pron", {}).items()}
+    out, i = [], 0
+    while i < len(words):
+        for j in range(min(len(words), i + 6), i, -1):                             # le plus long d'abord ; « I A » peut venir d'un bloc
+            if key("".join(w[2] for w in words[i:j])) in targets:
+                out.append((words[i][0], words[j - 1][1], targets[key("".join(w[2] for w in words[i:j]))]))
+                i = j
+                break
+        else:
+            out.append(words[i])
+            i += 1
+    return out
+
+
 async def speak(i: int, text: str):
     """(wav, durée, mots [(début, fin, texte)]) d'une phrase ; le service répond parfois sans audio : on réessaie."""
     mp3, wav = work / f"{i:02d}.mp3", work / f"{i:02d}.wav"
     for _ in range(4):
         words, chunks = [], []
         try:
-            com = edge_tts.Communicate(text, sc["voice"]["name"], rate=sc["voice"]["rate"], boundary="WordBoundary")
+            com = edge_tts.Communicate(spoken(text), sc["voice"]["name"], rate=sc["voice"]["rate"], boundary="WordBoundary")
             async for ch in com.stream():
                 if ch["type"] == "audio":
                     chunks.append(ch["data"])
@@ -52,7 +79,7 @@ async def speak(i: int, text: str):
     mp3.write_bytes(b"".join(chunks))
     run([ffmpeg, "-y", "-loglevel", "error", "-i", mp3, "-ar", "48000", "-ac", "1", wav])
     with wave.open(str(wav)) as w:
-        return wav, w.getnframes() / w.getframerate(), words
+        return wav, w.getnframes() / w.getframerate(), regroup(words)
 
 
 def crop_of(c):
@@ -61,7 +88,7 @@ def crop_of(c):
 
 def background(top: str) -> Path:
     """Un fond fixe en dégradé vertical : la couleur `top` en haut, un bleu nuit très sombre en bas (une image, faite une fois)."""
-    path = work / f"bg_{top}.png"
+    path = work / f"bg_{top}_{W}x{H}.png"
     if not path.exists():
         a, b = C[top], "0A1230"
         ch = lambda h, i: int(h[2 * i:2 * i + 2], 16)                     # noqa: E731
@@ -72,8 +99,8 @@ def background(top: str) -> Path:
 
 
 def render_shot(k: int, s: dict | None, dur: float) -> Path:
-    """Un plan de `dur` s, 1080x1920 : fond dégradé, l'image de la partie recadrée (entrée en léger zoom, puis poussée lente) ;
-    sans `s` : le fond seul (carte de fin)."""
+    """Un plan de `dur` s : fond dégradé, la partie floutée et teintée de bleu nuit sur la zone `blur`, l'extrait net tenu dans la
+    zone `fit` (entrée en léger zoom à la coupe, puis poussée lente) ; sans `s` : le fond seul (carte de fin)."""
     path = work / f"shot{k:02d}.mp4"
     n = round(dur * FPS)
     bg = background("blue" if s is None else "night")
@@ -83,23 +110,25 @@ def render_shot(k: int, s: dict | None, dur: float) -> Path:
         return path
     x, y, w, h = crop_of(s["crop"])
     sp, z1 = float(s.get("speed", 1.0)), float(s.get("zoom", 1.08))
-    fw, fh = W, round(h * W / w / 2) * 2
-    if fh > ZONE[1]:
-        fh, fw = ZONE[1], round(w * ZONE[1] / h / 2) * 2
-    ox, oy = (W - fw) // 2, ZONE[0] + (ZONE[1] - fh) // 2
-    z = f"if(lt(on,5),1.12-0.024*on,1+{z1 - 1:.4f}*(on-5)/{max(n - 5, 1)})"
-    zw, zh = W, ZONE[1]
-    # derrière l'extrait, toute la zone : la même image de jeu, floutée et assombrie (pas de vide autour d'une bande de texte)
+    fx, fy, fwm, fhm = F["fit"]
+    bx, by, bw, bh = F["blur"]
+    k_fit = min(fwm / w, fhm / h)                                    # l'extrait entier, le plus grand possible dans la zone
+    fw, fh = round(w * k_fit / 2) * 2, round(h * k_fit / 2) * 2
+    ox, oy = fx + (fwm - fw) // 2, fy + (fhm - fh) // 2
+    z = f"if(lt(on,6),1.06-0.01*on,1+{z1 - 1:.4f}*(on-6)/{max(n - 6, 1)})"
     graph = (f"[0:v]setpts=(PTS-STARTPTS)/{sp},fps={FPS},split=2[a][b];"
-             f"[a]scale=-2:{zh},crop={zw}:{zh},gblur=sigma=28,eq=brightness=-0.18:saturation=0.75[z];"
-             f"[b]crop={w}:{h}:{x}:{y},scale={fw}:{fh}:flags=lanczos,"
+             f"[a]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},gblur=sigma=28,"
+             f"eq=brightness=-0.2:saturation=0.7[z0];"
+             f"color=c=0x{C['night']}:s={bw}x{bh}:r={FPS},format=rgba,colorchannelmixer=aa=0.45[tint];"
+             f"[z0][tint]overlay=shortest=1[z];"
+             f"[b]crop={w}:{h}:{x}:{y},scale={fw * SUPER}:{fh * SUPER}:flags=lanczos,"
              f"zoompan=z='{z}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={fw}x{fh}:fps={FPS}[f];"
-             f"[1:v][z]overlay=0:{ZONE[0]}[bz];[bz][f]overlay={ox}:{oy}:shortest=1,"
+             f"[1:v][z]overlay={bx}:{by}[bz];[bz][f]overlay={ox}:{oy}:shortest=1,"
              f"drawbox=x={ox}:y={oy - 8}:w={fw}:h=8:color=0x{C['green']}:t=fill,"
              f"drawbox=x={ox}:y={oy + fh}:w={fw}:h=8:color=0x{C['sky']}:t=fill[v]")
     run([ffmpeg, "-y", "-loglevel", "error", "-ss", f"{s['src']:.3f}", "-t", f"{dur * sp + 0.5:.3f}", "-i", capture,
-         "-loop", "1", "-framerate", FPS, "-i", bg, "-filter_complex", graph, "-map", "[v]", "-frames:v", n, "-c:v", "libx264", "-crf", "18",
-         "-preset", "fast", "-pix_fmt", "yuv420p", "-r", FPS, path])
+         "-loop", "1", "-framerate", FPS, "-i", bg, "-filter_complex", graph, "-map", "[v]", "-frames:v", n, "-c:v", "libx264",
+         "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p", "-r", FPS, path])
     return path
 
 
@@ -116,11 +145,11 @@ def title_text(t: str) -> str:
 
 
 def captions(words: list, t0: float, t_end: float) -> list[str]:
-    """Sous-titres mot à mot : des groupes de 4 mots au plus, le mot dit en vert et un peu plus gros."""
+    """Sous-titres mot à mot : des groupes de 4 mots au plus (ou `cap` caractères), le mot dit en vert et un peu plus gros."""
     groups, cur = [], []
     for wd in words:
         cur.append(wd)
-        if len(cur) == 4 or len(" ".join(x[2] for x in cur)) > 22:
+        if len(cur) == 4 or len(" ".join(x[2] for x in cur)) > F["cap"][2]:
             groups.append(cur)
             cur = []
     if cur:
@@ -138,8 +167,7 @@ def captions(words: list, t0: float, t_end: float) -> list[str]:
 
 async def main() -> None:
     voices = [await speak(i, ln["say"]) for i, ln in enumerate(sc["lines"])]
-    t, plan, events = 0.0, [], []                     # plan : (plan, durée) ; events : lignes ASS
-    starts = []
+    t, plan, events, starts = 0.0, [], [], []          # plan : (plan, durée) ; events : lignes ASS
     for ln, (wav, vdur, words) in zip(sc["lines"], voices):
         assert words, f"aucun mot minuté : {ln['say']}"
         dur = vdur + (sc["end"]["hold"] if ln.get("end") else GAP)
@@ -154,36 +182,39 @@ async def main() -> None:
         t += dur
     total = t
     assert total <= 60.0, f"la vidéo dure {total:.1f} s : plus d'une minute"
-    print(f"durée {total:.1f} s, {len(plan)} plans")
+    print(f"{FMT} : durée {total:.1f} s, {len(plan)} plans")
 
     paths = [render_shot(k, s, d) for k, (s, d) in enumerate(plan)]
     (work / "list.txt").write_text("".join(f"file '{p.name}'\n" for p in paths), encoding="utf8")
     run([ffmpeg, "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "full.mp4"], cwd=work)
 
     # la carte de fin, l'en-tête et la barre de progression
-    e0, ed = starts[-1], total - starts[-1]
-    end = sc["end"]["lines"]
+    e0, cx = starts[-1], W // 2
+    end, ey = sc["end"]["lines"], F["end"]["y"]
     pop = "\\fscx125\\fscy125\\t({a},{b},\\fscx100\\fscy100)"
     events += [
-        f"Dialogue: 3,{ts(e0)},{ts(total)},End,,0,0,0,,{{\\an5\\pos(540,700)\\fad(80,0){pop.format(a=0, b=180)}}}{end[0]}",
-        f"Dialogue: 3,{ts(e0 + 0.25)},{ts(total)},End,,0,0,0,,{{\\an5\\pos(540,900)\\fs250\\c{ass_color(C['green'])}\\fad(60,0)"
-        f"{pop.format(a=0, b=200)}}}{end[1]}",
-        f"Dialogue: 3,{ts(e0 + 0.7)},{ts(total)},Small,,0,0,0,,{{\\an5\\pos(540,1110)\\fad(150,0)}}{end[2]}",
-        f"Dialogue: 3,{ts(e0 + 1.1)},{ts(total)},Small,,0,0,0,,{{\\an5\\pos(540,1290)\\fs76\\c{ass_color(C['sky'])}\\fad(150,0)}}{end[3]}",
+        f"Dialogue: 3,{ts(e0)},{ts(total)},End,,0,0,0,,{{\\an5\\pos({cx},{ey[0]})\\fad(80,0){pop.format(a=0, b=180)}}}{end[0]}",
+        f"Dialogue: 3,{ts(e0 + 0.25)},{ts(total)},End,,0,0,0,,{{\\an5\\pos({cx},{ey[1]})\\fs{F['end']['big']}"
+        f"\\c{ass_color(C['green'])}\\fad(60,0){pop.format(a=0, b=200)}}}{end[1]}",
+        f"Dialogue: 3,{ts(e0 + 0.7)},{ts(total)},Small,,0,0,0,,{{\\an5\\pos({cx},{ey[2]})\\fad(150,0)}}{end[2]}",
+        f"Dialogue: 3,{ts(e0 + 1.1)},{ts(total)},Small,,0,0,0,,{{\\an5\\pos({cx},{ey[3]})\\fs76\\c{ass_color(C['sky'])}\\fad(150,0)}}{end[3]}",
     ]
-    for i, col in enumerate((C["green"], C["teal"], C["sky"])):          # trois bandes de couleur, en haut à gauche et à la fin
-        events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Bar,,0,0,0,,{{\\an7\\pos({60 + i * 34},64)\\c{ass_color(col)}\\p1}}"
+    ty = F["tag_y"]
+    for i, col in enumerate((C["green"], C["teal"], C["sky"])):          # trois bandes de couleur : en haut à gauche, puis sur la fin
+        events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Bar,,0,0,0,,{{\\an7\\pos({60 + i * 34},{ty - 2})\\c{ass_color(col)}\\p1}}"
                       f"m 0 60 l 22 0 44 0 22 60{{\\p0}}")
-        events.append(f"Dialogue: 0,{ts(e0)},{ts(total)},Bar,,0,0,0,,{{\\an7\\pos({420 + i * 90},1450)\\c{ass_color(col)}\\fad(200,0)\\p1}}"
-                      f"m 0 120 l 45 0 90 0 45 120{{\\p0}}")
-    events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Tag,,0,0,0,,{{\\an7\\pos(180,66)}}FILETS")
-    events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Tag,,0,0,0,,{{\\an9\\pos(1020,66)\\c{ass_color(C['sky'])}}}#IABD")
-    events.append(f"Dialogue: 4,{ts(0)},{ts(total)},Bar,,0,0,0,,{{\\an7\\pos(0,1900)\\c{ass_color(C['green'])}"
-                  f"\\clip(0,1890,0,1920)\\t(0,{round(total * 1000)},\\clip(0,1890,{W},1920))\\p1}}m 0 0 l {W} 0 {W} 20 0 20{{\\p0}}")
+        events.append(f"Dialogue: 0,{ts(e0)},{ts(total)},Bar,,0,0,0,,{{\\an7\\pos({cx - 120 + i * 90},{F['end']['bars_y']})"
+                      f"\\c{ass_color(col)}\\fad(200,0)\\p1}}m 0 120 l 45 0 90 0 45 120{{\\p0}}")
+    events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Tag,,0,0,0,,{{\\an7\\pos(180,{ty})}}FILETS")
+    events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Tag,,0,0,0,,{{\\an9\\pos({W - 60},{ty})\\c{ass_color(C['sky'])}}}#IABD")
+    py, ph = F["progress"]
+    events.append(f"Dialogue: 4,{ts(0)},{ts(total)},Bar,,0,0,0,,{{\\an7\\pos(0,{py})\\c{ass_color(C['green'])}"
+                  f"\\clip(0,{py - 10},0,{H})\\t(0,{round(total * 1000)},\\clip(0,{py - 10},{W},{H}))\\p1}}m 0 0 l {W} 0 {W} {ph} 0 {ph}{{\\p0}}")
     white, dark = ass_color(C["white"]), "&H00301A0A&"
+    (ts_, tm), (cs_, cm, _) = F["title"], F["cap"]
     styles = [
-        f"Style: Title,Segoe UI Black,96,{white},{white},{dark},&H78000000,0,0,0,0,100,100,0,0,1,0,7,8,60,60,190,1",
-        f"Style: Cap,Segoe UI Black,74,{white},{white},{dark},&H96000000,0,0,0,0,100,100,0,0,1,6,3,2,70,70,330,1",
+        f"Style: Title,Segoe UI Black,{ts_},{white},{white},{dark},&H78000000,0,0,0,0,100,100,0,0,1,0,7,8,60,60,{tm},1",
+        f"Style: Cap,Segoe UI Black,{cs_},{white},{white},{dark},&H96000000,0,0,0,0,100,100,0,0,1,6,3,2,70,70,{cm},1",
         f"Style: End,Segoe UI Black,110,{white},{white},{dark},&H78000000,0,0,0,0,100,100,0,0,1,0,8,5,40,40,0,1",
         f"Style: Small,Segoe UI Semibold,56,{white},{white},{dark},&H78000000,0,0,0,0,100,100,0,0,1,0,4,5,60,60,0,1",
         f"Style: Tag,Segoe UI Black,48,{white},{white},{dark},&H00000000,0,0,0,0,100,100,2,0,1,0,0,7,0,0,0,1",
@@ -217,11 +248,14 @@ async def main() -> None:
     run([ffmpeg, "-y", "-loglevel", "error", *inputs, "-filter_complex", ";".join(graph), "-map", "[a]", "-ar", "48000", "mix.wav"],
         cwd=work)
 
-    run([ffmpeg, "-y", "-loglevel", "error", "-i", "full.mp4", "-i", "mix.wav", "-vf", "ass=short.ass:fontsdir=/Windows/Fonts",   # (le disque courant : « C\: » ne s'échappe pas bien)
-         "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",          # le niveau des réseaux sociaux (-14 LUFS)
+    run([ffmpeg, "-y", "-loglevel", "error", "-i", "full.mp4", "-i", "mix.wav",
+         "-vf", "ass=short.ass:fontsdir=/Windows/Fonts",          # (le disque courant : « C\: » ne s'échappe pas bien)
+         "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",                  # le niveau des réseaux sociaux (-14 LUFS)
          "-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-ar", "48000",
          "-movflags", "+faststart", "-shortest", out], cwd=work)
     print("écrit :", out)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    assert regroup([(0, 1, "I"), (1, 2, "A"), (2, 3, "B"), (3, 4, "D"), (4, 5, "à")]) == [(0, 4, "IABD"), (4, 5, "à")]
+    asyncio.run(main())
