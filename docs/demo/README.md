@@ -1,7 +1,8 @@
 # Vidéo de démonstration
 
 1. Partie (`runs/demo_ia/`, non versionnée) : `.venv/Scripts/python -m filets run --config config/demo_ia.yaml --run-id demo_ia --fast --no-linger` (~20 min de calcul sur une RTX 3060 6 Go, vrais modèles : Qwen 2.5 3B et 1,5B, tev1 0,8B, et le 7B pour le narrateur) ; préchauffer tev1 avant par `/v1/systemone` (son premier chargement dépasse 60 s). `--fast` n'attend pas l'affichage : la partie est la même, la vidéo la rejoue à son rythme. Le scénario lit `runs/demo_ia/events.jsonl` ; ses textes sont calés sur CETTE partie (une autre partie demande de les réécrire).
-2. Voix (voix neuronale en ligne, seul le texte part chez Microsoft) : dans un venv jetable `pip install edge-tts`, puis `python docs/demo/narrate.py <ffmpeg>` (un WAV par temps dans `docs/demo/voice/`, durées affichées ; voix et débit dans `scenario.json`, champ `voice`).
+2. Voix (voix neuronale en ligne, seul le texte part chez Microsoft) : dans un venv jetable `pip install edge-tts`, puis `python docs/demo/narrate.py <ffmpeg>` (un WAV par temps dans `docs/demo/voice/`, durées affichées ; voix et débit dans `scenario.json`, champ `voice` ; ce que la voix doit dire
+   autrement que le sous-titre, champ `pron` : la liaison avant « IA » (« les zi-a »), « RAG » lu comme un mot).
 3. Rythme : `godot --headless --path godot -s res://tests/demo_test.gd` imprime pour chaque temps (`DEMO temps …`) sa durée à l'écran ; elle doit rester à `hold` près celle de sa voix. Une réplique reste au moins 2,5 s à l'écran : si une veillée dure plus que sa voix, la découper en temps ou allonger le texte, sinon la vidéo a des blancs.
 4. Capture en 1920x1080 : créer le temps de la capture `godot/override.cfg` ([display] window/size/viewport_width=1920, viewport_height=1080), puis le supprimer (~15 min, AVI de 1 à 2 Go à garder hors du dépôt) : `Godot --path godot --write-movie <dossier>/demo.avi --fixed-fps 30 -- --demo=<chemin absolu de scenario.json>`.
 5. Conversion : `npm i ffmpeg-static@5.2.0` dans un dossier temporaire, puis `ffmpeg -i demo.avi -c:v libx264 -crf 23 -preset medium -pix_fmt yuv420p -c:a aac -movflags +faststart docs/demo/FILETS-demo.mp4`.
@@ -15,8 +16,11 @@ turquoise `#53AFA8`, bleu clair `#2EA6CE`, bleu nuit `#263286`), en deux formats
 
 1. Capture sans sous-titre, même minutage que la démo : l'étape 4 ci-dessus avec `--no-captions` après `--demo=…` (vers `clean.avi`).
 2. `python docs/demo/short.py <ffmpeg> <clean.avi> portrait` (ou `paysage`), avec un python qui a edge-tts : voix et mots minutés (edge-tts),
-   plans recadrés et zoomés sur la partie floutée et teintée, titres et sous-titres mot à mot en ASS (libass, police Segoe UI Black de
-   Windows), souffle à chaque coupe, son à -14 LUFS. Le zoom se calcule sur l'image agrandie 4 fois (`SUPER`) : sinon `zoompan` arrondit
-   au pixel et l'image tremble. Texte, titres, plans (`src` en secondes de la capture, `crop` dans l'image 1920x1080), mise en page des deux
-   formats (`formats`) et prononciation des sigles (`pron` : la voix épelle « I A », « R A G », « I A B D », le sous-titre garde le mot) :
+   titres et sous-titres mot à mot en ASS (libass, police Segoe UI Black de Windows), souffle à chaque coupe, son à -14 LUFS. En portrait, les
+   plans sont recadrés et zoomés sur la partie floutée et teintée ; en paysage, l'écran du jeu reste plein cadre et net (zoom de 1,6 au plus vers
+   la zone du plan, entourée de vert), titre et sous-titres sur des bandeaux. Le zoom se calcule sur l'image agrandie (x4 en portrait, x2 en
+   paysage) : sinon `zoompan` arrondit au pixel et l'image tremble. La carte de fin porte le logo de l'école,
+   [eigsi-casablanca.png](eigsi-casablanca.png) (rendu du logo vectoriel du site eigsica.ma, fond transparent), sur une carte blanche.
+   Texte, titres, plans (`src` en secondes de la capture, `crop` dans l'image 1920x1080), mise en page des deux formats (`formats`) et
+   prononciation (`pron` : la liaison avant « IA », « RAG » lu comme un mot, « IABD » épelé ; le sous-titre garde le mot) :
    [short.json](short.json). Le script refuse une vidéo de plus de 60 s.

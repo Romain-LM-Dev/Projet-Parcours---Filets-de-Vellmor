@@ -1,5 +1,5 @@
 {
-  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré), `zoom` (zoom final ; une entrée en léger zoom marque chaque coupe). `pron` : comment la voix doit dire un mot (le sous-titre garde le mot). `formats` : la vidéo verticale (portrait) et paysage, mêmes plans : `fit` la zone où l'image de la partie tient entière, `blur` la zone couverte par son flou, `title` [taille, marge haute], `cap` [taille, marge basse, caractères par groupe]. Construite par `docs/demo/short.py`.",
+  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré), `zoom` (zoom final ; une entrée en léger zoom marque chaque coupe). `pron` : [motif, ce que dit la voix, ce qu'on entend, ce qu'affiche le sous-titre] : la liaison avant « IA » (« les zi-a »), « une i-a » sans coupure, « RAG » lu comme un mot, « IABD » épelé. `end` : la carte de fin et le logo de l'école (sur une carte blanche ; `formats.*.end.logo` = [centre vertical, largeur de la carte]). `formats` : la vidéo verticale (portrait) et paysage, mêmes plans ; en paysage (`full`), l'écran du jeu plein cadre, zoomé au plus de `zmax` vers la zone `crop` (entourée de vert), titre et sous-titres sur des bandeaux ; en portrait, `fit` la zone où l'image de la partie tient entière, `blur` la zone couverte par son flou, `title` [taille, marge haute], `cap` [taille, marge basse, caractères par groupe]. Construite par `docs/demo/short.py`.",
   "fps": 30,
   "voice": {
     "name": "fr-FR-VivienneMultilingualNeural",
@@ -297,19 +297,41 @@
     }
   ],
   "end": {
-    "hold": 1.6,
+    "hold": 1.8,
     "lines": [
       "DOMINANTE",
       "IABD",
-      "Intelligence artificielle & big data",
-      "EIGSI Casablanca"
+      "Intelligence artificielle & big data"
+    ],
+    "logo": "eigsi-casablanca.png",
+    "logo_source": "logo vectoriel du site de l'école (eigsica.ma, logo-ecole-ca.svg), rendu en PNG transparent"
+  },
+  "pron": [
+    [
+      "\\b([LlDdCc]es) IA\\b",
+      "\\1 zi-a",
+      "zi-a",
+      "IA"
+    ],
+    [
+      "\\b([Uu]ne) IA\\b",
+      "\\1 i-a",
+      "i-a",
+      "IA"
+    ],
+    [
+      "\\bRAG\\b",
+      "rag",
+      "rag",
+      "RAG"
+    ],
+    [
+      "\\bIABD\\b",
+      "I A B D",
+      "I A B D",
+      "IABD"
     ]
-  },
-  "pron": {
-    "IA": "I A",
-    "RAG": "R A G",
-    "IABD": "I A B D"
-  },
+  ],
   "formats": {
     "portrait": {
       "size": [
@@ -341,13 +363,15 @@
       "tag_y": 66,
       "end": {
         "y": [
-          700,
-          900,
-          1110,
-          1290
+          600,
+          800,
+          1000
         ],
         "big": 250,
-        "bars_y": 1450
+        "logo": [
+          1330,
+          780
+        ]
       },
       "progress": [
         1900,
@@ -360,42 +384,34 @@
         1080
       ],
       "out": "FILETS-short-paysage.mp4",
-      "fit": [
-        200,
-        190,
-        1520,
-        700
-      ],
-      "blur": [
-        0,
-        0,
-        1920,
-        1080
-      ],
       "title": [
-        72,
-        100
+        64,
+        30
       ],
       "cap": [
-        60,
-        52,
-        34
+        56,
+        70,
+        40
       ],
       "tag_y": 40,
       "end": {
         "y": [
-          330,
-          500,
-          650,
-          750
+          210,
+          370,
+          510
         ],
         "big": 200,
-        "bars_y": 830
+        "logo": [
+          790,
+          620
+        ]
       },
       "progress": [
         1066,
         14
-      ]
+      ],
+      "full": true,
+      "zmax": 1.6
     }
   }
 }

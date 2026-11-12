@@ -36,16 +36,16 @@ def ass_color(hex6: str) -> str:
 
 
 def spoken(text: str) -> str:
-    """Le texte tel que la voix doit le dire : les sigles épelés (`pron`), le reste tel quel."""
-    for word, say in sc.get("pron", {}).items():
-        text = re.sub(rf"\b{re.escape(word)}\b", say, text)
+    """Le texte tel que la voix doit le dire (`pron` : liaisons, sigles), le reste tel quel."""
+    for pattern, say, _, _ in sc.get("pron", []):
+        text = re.sub(pattern, say, text)
     return text
 
 
 def regroup(words: list) -> list:
-    """Les mots minutés de la voix, sigles recollés pour le sous-titre (« I » « A » « B » « D » → « IABD »)."""
+    """Les mots minutés de la voix, rendus au sous-titre (« zi-a » → « IA », « I » « A » « B » « D » → « IABD »)."""
     key = lambda s: re.sub(r"\W", "", s).upper()                                   # noqa: E731
-    targets = {key(say): word for word, say in sc.get("pron", {}).items()}
+    targets = {key(heard): show for _, _, heard, show in sc.get("pron", [])}
     out, i = [], 0
     while i < len(words):
         for j in range(min(len(words), i + 6), i, -1):                             # le plus long d'abord ; « I A » peut venir d'un bloc
@@ -104,12 +104,25 @@ def render_shot(k: int, s: dict | None, dur: float) -> Path:
     path = work / f"shot{k:02d}.mp4"
     n = round(dur * FPS)
     bg = background("blue" if s is None else "night")
-    if s is None:
-        run([ffmpeg, "-y", "-loglevel", "error", "-loop", "1", "-framerate", FPS, "-i", bg, "-frames:v", n, "-c:v", "libx264",
+    if s is None:                                       # carte de fin : le fond, puis le logo de l'école sur une carte blanche
+        cy, cw = F["end"]["logo"]
+        pad, rad = cw // 12, cw // 20
+        lw = cw - 2 * pad
+        lh = round(lw * 652 / 1562 / 2) * 2                                  # (proportions du logo rendu)
+        ch = lh + 2 * pad
+        alpha = (f"if(gt(abs(X-W/2),W/2-{rad})*gt(abs(Y-H/2),H/2-{rad}),"
+                 f"if(lte(hypot(abs(X-W/2)-(W/2-{rad}),abs(Y-H/2)-(H/2-{rad})),{rad}),255,0),255)")
+        graph = (f"color=c=white:s={cw}x{ch}:r={FPS},format=rgba,geq=r=255:g=255:b=255:a='{alpha}'[card];"
+                 f"[1:v]scale={lw}:{lh}:flags=lanczos[logo];[card][logo]overlay={pad}:{pad}:format=auto,"
+                 f"fade=t=in:st=0.9:d=0.35:alpha=1[c];[0:v][c]overlay={(W - cw) // 2}:{cy - ch // 2}:shortest=1[v]")
+        run([ffmpeg, "-y", "-loglevel", "error", "-loop", "1", "-framerate", FPS, "-i", bg, "-loop", "1", "-framerate", FPS,
+             "-i", here / sc["end"]["logo"], "-filter_complex", graph, "-map", "[v]", "-frames:v", n, "-c:v", "libx264",
              "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p", path])
         return path
     x, y, w, h = crop_of(s["crop"])
     sp, z1 = float(s.get("speed", 1.0)), float(s.get("zoom", 1.08))
+    if F.get("full"):
+        return full_shot(path, n, s, (x, y, w, h), sp, z1)
     fx, fy, fwm, fhm = F["fit"]
     bx, by, bw, bh = F["blur"]
     k_fit = min(fwm / w, fhm / h)                                    # l'extrait entier, le plus grand possible dans la zone
@@ -129,6 +142,32 @@ def render_shot(k: int, s: dict | None, dur: float) -> Path:
     run([ffmpeg, "-y", "-loglevel", "error", "-ss", f"{s['src']:.3f}", "-t", f"{dur * sp + 0.5:.3f}", "-i", capture,
          "-loop", "1", "-framerate", FPS, "-i", bg, "-filter_complex", graph, "-map", "[v]", "-frames:v", n, "-c:v", "libx264",
          "-crf", "18", "-preset", "fast", "-pix_fmt", "yuv420p", "-r", FPS, path])
+    return path
+
+
+def full_shot(path: Path, n: int, s: dict, c: tuple, sp: float, z1: float) -> Path:
+    """Plan plein cadre (paysage) : l'écran du jeu à sa résolution, zoomé au plus de `zmax` sur la zone `c` (une image
+    nette plutôt qu'un petit bout agrandi), la zone entourée de vert si elle ne remplit pas l'image."""
+    x, y, w, h = c
+    sw, sh = 1920, 1080                                                    # la capture
+    vw = min(sw, max(w * 1.25, h * 1.25 * W / H, sw / F["zmax"]))
+    vw = round(vw / 2) * 2
+    vh = round(vw * H / W / 2) * 2
+    vx = int(min(max(x + w / 2 - vw / 2, 0), sw - vw))
+    vy = int(min(max(y + h / 2 - vh / 2, 0), sh - vh))
+    sup = 2                                                                # (x4 donnerait des images 8K ; x2 suffit à ces zooms lents)
+    k = W * sup / vw
+    box = ""
+    if w * h < 0.6 * vw * vh:                                              # la zone dont on parle, entourée de vert
+        t = 6 * sup
+        box = (f",drawbox=x={round((x - vx) * k) - t}:y={round((y - vy) * k) - t}:w={round(w * k) + 2 * t}:"
+               f"h={round(h * k) + 2 * t}:color=0x{C['green']}:t={t}")
+    z = f"if(lt(on,6),1.06-0.01*on,1+{z1 - 1:.4f}*(on-6)/{max(n - 6, 1)})"
+    graph = (f"[0:v]setpts=(PTS-STARTPTS)/{sp},fps={FPS},crop={vw}:{vh}:{vx}:{vy},scale={W * sup}:{H * sup}:flags=lanczos{box},"
+             f"zoompan=z='{z}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={W}x{H}:fps={FPS}[v]")
+    run([ffmpeg, "-y", "-loglevel", "error", "-ss", f"{s['src']:.3f}", "-t", f"{n / FPS * sp + 0.5:.3f}", "-i", capture,
+         "-filter_complex", graph, "-map", "[v]", "-frames:v", n, "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+         "-pix_fmt", "yuv420p", "-r", FPS, path])
     return path
 
 
@@ -196,25 +235,29 @@ async def main() -> None:
         f"Dialogue: 3,{ts(e0)},{ts(total)},End,,0,0,0,,{{\\an5\\pos({cx},{ey[0]})\\fad(80,0){pop.format(a=0, b=180)}}}{end[0]}",
         f"Dialogue: 3,{ts(e0 + 0.25)},{ts(total)},End,,0,0,0,,{{\\an5\\pos({cx},{ey[1]})\\fs{F['end']['big']}"
         f"\\c{ass_color(C['green'])}\\fad(60,0){pop.format(a=0, b=200)}}}{end[1]}",
-        f"Dialogue: 3,{ts(e0 + 0.7)},{ts(total)},Small,,0,0,0,,{{\\an5\\pos({cx},{ey[2]})\\fad(150,0)}}{end[2]}",
-        f"Dialogue: 3,{ts(e0 + 1.1)},{ts(total)},Small,,0,0,0,,{{\\an5\\pos({cx},{ey[3]})\\fs76\\c{ass_color(C['sky'])}\\fad(150,0)}}{end[3]}",
-    ]
+        f"Dialogue: 3,{ts(e0 + 0.6)},{ts(total)},Small,,0,0,0,,{{\\an5\\pos({cx},{ey[2]})\\fad(150,0)}}{end[2]}",
+    ]                                                                   # (puis le logo de l'école, posé par render_shot)
     ty = F["tag_y"]
-    for i, col in enumerate((C["green"], C["teal"], C["sky"])):          # trois bandes de couleur : en haut à gauche, puis sur la fin
-        events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Bar,,0,0,0,,{{\\an7\\pos({60 + i * 34},{ty - 2})\\c{ass_color(col)}\\p1}}"
-                      f"m 0 60 l 22 0 44 0 22 60{{\\p0}}")
-        events.append(f"Dialogue: 0,{ts(e0)},{ts(total)},Bar,,0,0,0,,{{\\an7\\pos({cx - 120 + i * 90},{F['end']['bars_y']})"
-                      f"\\c{ass_color(col)}\\fad(200,0)\\p1}}m 0 120 l 45 0 90 0 45 120{{\\p0}}")
-    events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Tag,,0,0,0,,{{\\an7\\pos(180,{ty})}}FILETS")
-    events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Tag,,0,0,0,,{{\\an9\\pos({W - 60},{ty})\\c{ass_color(C['sky'])}}}#IABD")
+    if not F.get("full"):                         # (plein cadre : l'en-tête du jeu est à l'image, on ne le double pas)
+        for i, col in enumerate((C["green"], C["teal"], C["sky"])):      # trois bandes de couleur, en haut à gauche
+            events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Bar,,0,0,0,,{{\\an7\\pos({60 + i * 34},{ty - 2})\\c{ass_color(col)}\\p1}}"
+                          f"m 0 60 l 22 0 44 0 22 60{{\\p0}}")
+        events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Tag,,0,0,0,,{{\\an7\\pos(180,{ty})}}FILETS")
+        events.append(f"Dialogue: 0,{ts(0)},{ts(e0)},Tag,,0,0,0,,{{\\an9\\pos({W - 60},{ty})\\c{ass_color(C['sky'])}}}#IABD")
     py, ph = F["progress"]
     events.append(f"Dialogue: 4,{ts(0)},{ts(total)},Bar,,0,0,0,,{{\\an7\\pos(0,{py})\\c{ass_color(C['green'])}"
                   f"\\clip(0,{py - 10},0,{H})\\t(0,{round(total * 1000)},\\clip(0,{py - 10},{W},{H}))\\p1}}m 0 0 l {W} 0 {W} {ph} 0 {ph}{{\\p0}}")
     white, dark = ass_color(C["white"]), "&H00301A0A&"
     (ts_, tm), (cs_, cm, _) = F["title"], F["cap"]
+    if F.get("full"):            # plein cadre : titre et sous-titres sur des bandeaux (BorderStyle 3 : boîte de la couleur OutlineColour)
+        title_style = f"&H30{ass_color(C['night'])[4:]},&H00000000,0,0,0,0,100,100,0,0,3,18,0,8,60,60,{tm},1"
+        cap_style = f"&H50000000&,&H00000000,0,0,0,0,100,100,0,0,3,12,0,2,70,70,{cm},1"
+    else:
+        title_style = f"{dark},&H78000000,0,0,0,0,100,100,0,0,1,0,7,8,60,60,{tm},1"
+        cap_style = f"{dark},&H96000000,0,0,0,0,100,100,0,0,1,6,3,2,70,70,{cm},1"
     styles = [
-        f"Style: Title,Segoe UI Black,{ts_},{white},{white},{dark},&H78000000,0,0,0,0,100,100,0,0,1,0,7,8,60,60,{tm},1",
-        f"Style: Cap,Segoe UI Black,{cs_},{white},{white},{dark},&H96000000,0,0,0,0,100,100,0,0,1,6,3,2,70,70,{cm},1",
+        f"Style: Title,Segoe UI Black,{ts_},{white},{white},{title_style}",
+        f"Style: Cap,Segoe UI Black,{cs_},{white},{white},{cap_style}",
         f"Style: End,Segoe UI Black,110,{white},{white},{dark},&H78000000,0,0,0,0,100,100,0,0,1,0,8,5,40,40,0,1",
         f"Style: Small,Segoe UI Semibold,56,{white},{white},{dark},&H78000000,0,0,0,0,100,100,0,0,1,0,4,5,60,60,0,1",
         f"Style: Tag,Segoe UI Black,48,{white},{white},{dark},&H00000000,0,0,0,0,100,100,2,0,1,0,0,7,0,0,0,1",
@@ -257,5 +300,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    assert regroup([(0, 1, "I"), (1, 2, "A"), (2, 3, "B"), (3, 4, "D"), (4, 5, "à")]) == [(0, 4, "IABD"), (4, 5, "à")]
+    assert regroup([(0, 1, "des"), (1, 2, "zi-a"), (2, 3, "I"), (3, 4, "A"), (4, 5, "B"), (5, 6, "D"), (6, 7, "rag")]) == \
+        [(0, 1, "des"), (1, 2, "IA"), (2, 6, "IABD"), (6, 7, "RAG")]
     asyncio.run(main())

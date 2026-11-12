@@ -25,7 +25,7 @@
     "narration": 1.0,
     "per_day": 0.25
   },
-  "about": "Scénario de la vidéo de démonstration. Un temps couvre la partie de son `t` (jours simulés) au `t` du temps suivant, et dure à l'écran le temps de sa voix (`say`) plus `hold` secondes de silence. Ce temps d'écran se partage entre les événements visibles de la portion selon `pace` : les moments chargés vont lentement, les creux vite ; une réplique reste au moins 2,5 s à l'écran, donc une veillée se découpe en plusieurs temps dont la voix couvre ses répliques (sinon : des blancs). Deux temps au même `t` figent la partie. `camera` : overview (toute la vallée), fit (zoom 1 centré), village:<Nom> (zoom 2,2 sur ce village) ; `mesh` : les mailles ; `tab` : onglet de droite ; `inspect` : agent montré dans l'inspecteur. `title`, `subtitle` : la carte du début ; `end` : la carte de fin (deux lignes).",
+  "about": "Scénario de la vidéo de démonstration. Un temps couvre la partie de son `t` (jours simulés) au `t` du temps suivant, et dure à l'écran le temps de sa voix (`say`) plus `hold` secondes de silence. Ce temps d'écran se partage entre les événements visibles de la portion selon `pace` : les moments chargés vont lentement, les creux vite ; une réplique reste au moins 2,5 s à l'écran, donc une veillée se découpe en plusieurs temps dont la voix couvre ses répliques (sinon : des blancs). Deux temps au même `t` figent la partie. `camera` : overview (toute la vallée), fit (zoom 1 centré), village:<Nom> (zoom 2,2 sur ce village) ; `mesh` : les mailles ; `tab` : onglet de droite ; `inspect` : agent montré dans l'inspecteur. `title`, `subtitle` : la carte du début ; `end` : la carte de fin (deux lignes). `pron` : comment la voix doit dire certains mots (expression régulière, remplacement), le sous-titre gardant le texte : la liaison avant « IA » (« les zi-a »), « une i-a » sans coupure, « RAG » lu comme un mot (« rag »).",
   "beats": [
     {
       "t": 0,
@@ -165,5 +165,19 @@
       "camera": "overview",
       "tab": "Récit du narrateur"
     }
+  ],
+  "pron": [
+    [
+      "\\b([LlDdCc]es) IA\\b",
+      "\\1 zi-a"
+    ],
+    [
+      "\\b([Uu]ne) IA\\b",
+      "\\1 i-a"
+    ],
+    [
+      "\\bRAG\\b",
+      "rag"
+    ]
   ]
 }
