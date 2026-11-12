@@ -1,5 +1,5 @@
 {
-  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré). `pron` : [motif, ce que dit la voix, ce qu'on entend, ce qu'affiche le sous-titre] : la liaison avant « IA » (« les zi-a »), « une i-a » sans coupure, « RAG » lu comme un mot, « IABD » épelé. `end` : la carte de fin et le logo de l'école (sur une carte blanche ; `formats.*.end.logo` = [centre vertical, largeur de la carte]). `formats` : la vidéo verticale (portrait) et paysage, mêmes plans ; en paysage (`full`), l'écran du jeu plein cadre, agrandi au plus de `zmax` vers la zone `crop` (entourée de vert), titre et sous-titres sur des bandeaux ; en portrait, `fit` la zone où l'image de la partie tient entière, `blur` la zone couverte par son flou, `title` [taille, marge haute], `cap` [taille, marge basse, caractères par groupe]. Construite par `docs/demo/short.py`.",
+  "about": "Vidéo courte (format vertical des réseaux) tirée de la capture SANS sous-titre de la démo (même minutage que FILETS-demo.mp4 : `--no-captions`). Chaque ligne : une phrase de voix (`say`, les chiffres en chiffres : la voix les lit, le sous-titre les montre), un titre en haut (`title`, le mot entre * en couleur), des plans (`shots`) qui se partagent la durée de la voix. Un plan : `src` (secondes dans la capture), `crop` (zone de l'image 1920x1080 : map, panel, kpi, feed, chart, ring, ou [x, y, w, h]), `speed` (accéléré). `pron` : [motif, ce que dit la voix, ce qu'on entend, ce qu'affiche le sous-titre] : la liaison avant « IA » (« les zia »), « une i-a » sans coupure, « RAG » lu comme un mot, « IABD » épelé. `end` : la carte de fin et le logo de l'école (sur une carte blanche ; `formats.*.end.logo` = [centre vertical, largeur de la carte]). `formats` : la vidéo verticale (portrait) et paysage, mêmes plans ; en paysage (`full`), l'écran du jeu plein cadre, agrandi au plus de `zmax` vers la zone `crop` (entourée de vert), titre et sous-titres sur des bandeaux ; en portrait, `fit` la zone où l'image de la partie tient entière, `blur` la zone couverte par son flou, `title` [taille, marge haute], `cap` [taille, marge basse, caractères par groupe]. Construite par `docs/demo/short.py`.",
   "fps": 30,
   "voice": {
     "name": "fr-FR-VivienneMultilingualNeural",
@@ -290,8 +290,8 @@
   "pron": [
     [
       "\\b([LlDdCc]es) IA\\b",
-      "\\1 zi-a",
-      "zi-a",
+      "\\1 zia",
+      "zia",
       "IA"
     ],
     [

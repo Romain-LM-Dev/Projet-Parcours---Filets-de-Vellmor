@@ -1,6 +1,7 @@
 """Voix de la démo : un WAV par temps du scénario (docs/demo/voice/NN.wav) avec edge-tts (voix neuronale en ligne :
 seul le texte de la narration part chez Microsoft). Donne la durée de chaque fichier.
-    python narrate.py <chemin de ffmpeg>      (python avec le paquet edge-tts ; ffmpeg convertit le MP3 en WAV 44,1 kHz mono)"""
+    python narrate.py <chemin de ffmpeg>      (python avec le paquet edge-tts ; ffmpeg convertit le MP3 en WAV 44,1 kHz mono)
+    python narrate.py <ffmpeg> --only=1,18 --out=<dossier>   seulement ces temps, dans un autre dossier (pour revoice.py)"""
 import asyncio, json, re, subprocess, sys, wave
 from pathlib import Path
 
@@ -9,7 +10,9 @@ import edge_tts
 here = Path(__file__).parent
 sc = json.loads((here / "scenario.json").read_text(encoding="utf8"))
 ffmpeg = sys.argv[1]
-out = here / "voice"
+opts = dict(a[2:].split("=", 1) for a in sys.argv[2:] if a.startswith("--") and "=" in a)
+only = {int(x) for x in opts["only"].split(",")} if "only" in opts else None
+out = Path(opts["out"]) if "out" in opts else here / "voice"
 out.mkdir(exist_ok=True)
 
 
@@ -27,6 +30,8 @@ async def main() -> None:
     print("voix :", name)
     total = 0.0
     for i, b in enumerate(sc["beats"]):
+        if only is not None and i not in only:
+            continue
         mp3, wav = out / f"{i:02d}.mp3", out / f"{i:02d}.wav"
         for essai in range(4):                       # le service répond parfois sans audio : on réessaie
             try:

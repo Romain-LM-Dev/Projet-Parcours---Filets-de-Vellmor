@@ -294,6 +294,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    assert regroup([(0, 1, "des"), (1, 2, "zi-a"), (2, 3, "I"), (3, 4, "A"), (4, 5, "B"), (5, 6, "D"), (6, 7, "rag")]) == \
+    assert regroup([(0, 1, "des"), (1, 2, "zia"), (2, 3, "I"), (3, 4, "A"), (4, 5, "B"), (5, 6, "D"), (6, 7, "rag")]) == \
         [(0, 1, "des"), (1, 2, "IA"), (2, 6, "IABD"), (6, 7, "RAG")]
     asyncio.run(main())
