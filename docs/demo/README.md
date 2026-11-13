@@ -1,5 +1,7 @@
 # Vidéo de démonstration
 
+Les scripts, en documents : [vidéo de démonstration](script-video-longue.md) ([PDF](script-video-longue.pdf)) et [vidéos courtes](script-videos-courtes.md) ([PDF](script-videos-courtes.pdf)), tirés de `scenario.json` et `short.json` par `python docs/demo/scripts.py` (à relancer après chaque changement de texte).
+
 1. Partie (`runs/demo_ia/`, non versionnée) : `.venv/Scripts/python -m filets run --config config/demo_ia.yaml --run-id demo_ia --fast --no-linger` (~20 min de calcul sur une RTX 3060 6 Go, vrais modèles : Qwen 2.5 3B et 1,5B, tev1 0,8B, et le 7B pour le narrateur) ; préchauffer tev1 avant par `/v1/systemone` (son premier chargement dépasse 60 s). `--fast` n'attend pas l'affichage : la partie est la même, la vidéo la rejoue à son rythme. Le scénario lit `runs/demo_ia/events.jsonl` ; ses textes sont calés sur CETTE partie (une autre partie demande de les réécrire).
 2. Voix (voix neuronale en ligne, seul le texte part chez Microsoft) : dans un venv jetable `pip install edge-tts`, puis `python docs/demo/narrate.py <ffmpeg>` (un WAV par temps dans `docs/demo/voice/`, durées affichées ; voix et débit dans `scenario.json`, champ `voice` ; ce que la voix doit dire
    autrement que le sous-titre, champ `pron` : la liaison avant « IA » (« les zia »), « RAG » lu comme un mot).

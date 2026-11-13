@@ -857,7 +857,8 @@ Ces documents décrivent la construction du jeu :
   * [docs/demo/README.md](docs/demo/README.md) : comment les vidéos sont faites ;
   * [docs/demo/FILETS-demo.mp4](docs/demo/FILETS-demo.mp4) : la démonstration (4 min 50) ;
   * [docs/demo/FILETS-short.mp4](docs/demo/FILETS-short.mp4) : la vidéo courte, verticale (47 s), pour les réseaux sociaux ;
-  * [docs/demo/FILETS-short-paysage.mp4](docs/demo/FILETS-short-paysage.mp4) : la même, en paysage (1920x1080).
+  * [docs/demo/FILETS-short-paysage.mp4](docs/demo/FILETS-short-paysage.mp4) : la même, en paysage (1920x1080) ;
+  * les scripts : [vidéo de démonstration](docs/demo/script-video-longue.md) ([PDF](docs/demo/script-video-longue.pdf)) et [vidéos courtes](docs/demo/script-videos-courtes.md) ([PDF](docs/demo/script-videos-courtes.pdf)).
 
 Chaque diagramme est précédé d'un paragraphe qui dit comment le lire et suivi des emplacements dans le code
 (`fichier:ligne`).
