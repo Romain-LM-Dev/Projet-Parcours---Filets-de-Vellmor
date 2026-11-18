@@ -842,6 +842,7 @@ All these documents are in French. They describe how the game is built:
   * [docs/demo/FILETS-demo.mp4](docs/demo/FILETS-demo.mp4): the demonstration (4 min 50);
   * [docs/demo/FILETS-short.mp4](docs/demo/FILETS-short.mp4): the short vertical video (47 s), for social networks;
   * [docs/demo/FILETS-short-paysage.mp4](docs/demo/FILETS-short-paysage.mp4): the same in landscape (1920x1080);
+  * [docs/demo/FILETS-demo-sans-voix.mp4](docs/demo/FILETS-demo-sans-voix.mp4): the demo video without voice-over or subtitles, with its separate [detailed description of the solution](docs/demo/descriptif-solution.md) ([PDF](docs/demo/descriptif-solution.pdf), in French);
   * the scripts (in French): [demo video](docs/demo/script-video-longue.md) ([PDF](docs/demo/script-video-longue.pdf)) and [short videos](docs/demo/script-videos-courtes.md) ([PDF](docs/demo/script-videos-courtes.pdf)).
 
 Each diagram is preceded by a paragraph that says how to read it and followed by the locations in the code

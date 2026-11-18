@@ -1,5 +1,6 @@
 """Les scripts des vidéos, en documents : docs/demo/script-video-longue.{md,pdf} et script-videos-courtes.{md,pdf}, tirés de
-scenario.json et short.json (la source), avec le minutage des voix (docs/demo/voice/, s'il est là) et les prénoms de la partie.
+scenario.json et short.json (la source), avec le minutage des voix (docs/demo/voice/, s'il est là) et les prénoms de la partie ;
+et descriptif-solution.pdf, mis en page depuis descriptif-solution.md (écrit à la main).
     python docs/demo/scripts.py          (le PDF passe par le Chrome de puppeteer, comme docs/uml/build_pdf.py)"""
 import html
 import json
@@ -157,3 +158,18 @@ for name, doc, widths in (("script-video-longue", long_script(), (4, 7, 12, 17, 
     assert doc[3] and all(len(r) == len(doc[2]) for r in doc[3]), name
     (here / f"{name}.md").write_text(md(*doc), encoding="utf8")
     print("écrit :", here / f"{name}.md", "et", pdf(name, *doc, widths))
+
+# le descriptif de la solution (écrit à la main, en Markdown) : le même gabarit, mis en page par marked comme la doc UML
+desc = here / "descriptif-solution.md"
+body = here / "descriptif-solution.body.html"
+subprocess.run(f'npx -y marked@14.1.0 --gfm -i "{desc}" -o "{body}"', shell=True, check=True, capture_output=True)
+page = here / "descriptif-solution.html"
+page.write_text('<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>FILETS : descriptif de la solution</title>'
+                f'<style>{CSS} h2 {{ color: #0064B0; margin: 6mm 0 2mm; }} h3 {{ color: #263286; margin: 4mm 0 1.5mm; }} '
+                f'li {{ margin-bottom: 1.2mm; line-height: 1.4; }} code {{ font-size: 9pt; }} td:nth-child(2) {{ white-space: normal; color: inherit; }}</style></head>'
+                f'<body>{body.read_text(encoding="utf8")}</body></html>', encoding="utf8")
+subprocess.run([chrome(), "--headless=new", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={here / 'descriptif-solution.pdf'}",
+                page.as_uri()], check=True, capture_output=True)
+body.unlink()
+page.unlink()
+print("écrit :", here / "descriptif-solution.pdf")
