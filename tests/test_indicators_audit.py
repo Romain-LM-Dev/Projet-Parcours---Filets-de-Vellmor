@@ -1,8 +1,8 @@
 """Audit des indicateurs : chaque chiffre du moteur est recalculé ici, à part, depuis les événements bruts.
 
 La référence est volontairement écrite autrement que `IndicatorEngine` (autres structures, autre formule
-du Gini) : si les deux s'accordent sur des parties de natures différentes (synchrone, asynchrone, veillées
-par hameau, population personnalisée), c'est que les chiffres affichés sont les vrais.
+du Gini) : si les deux s'accordent sur des parties de natures différentes (par défaut, veillées par hameau, sans
+communication, toutes à règles), c'est que les chiffres affichés sont les vrais.
 """
 from __future__ import annotations
 

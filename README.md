@@ -53,10 +53,10 @@ Sous Windows, deux scripts font tout (voir `install.ps1` et [`start.ps1`](docs/u
 pip install -r requirements.txt
 python -m pytest -q                                  # tests de cohérence (les tests Kafka et Godot sont ignorés si absents)
 python -m filets serve                               # salon + API sur :8765 (WebSocket pour Godot, REST : http://localhost:8765/docs)
-python -m filets run --mode async --ws               # ou : partie immédiate, sans menu
+python -m filets run --ws                            # ou : partie immédiate, sans menu
 ```
 
-Ouvrez `godot/project.godot` dans **Godot 4.3+** et lancez la scène (F5) : un menu de démarrage s'affiche
+Ouvrez `godot/project.godot` dans **Godot 4.7** et lancez la scène (F5) : un menu de démarrage s'affiche
 si le moteur est en salon. Cliquez sur un pêcheur pour l'inspecter ; les boutons du bas injectent des
 événements dans la partie en cours. Sans Godot, la console suffit : chaque prise, parole, règle adoptée
 ou promesse trahie s'y affiche.
@@ -71,7 +71,7 @@ Au lancement, Godot propose le menu **Nouvelle partie** tant que le moteur est e
 |---|---|
 | Temps du monde | un seul mode : réfléchir ne prend pas de temps (l'horloge attend les IA), agir en prend ; la veillée se déroule au fil de l'eau ([docs/temps.md](docs/temps.md)) |
 | Durée et hasard | nombre de saisons, graine (un même réglage et une même graine rejouent la même partie avec le faux LLM) |
-| La vallée | veillées (**conseil de la vallée**, par village, interdites), conseil (**un élu par village** ou tous les pêcheurs), **tours de parole** par veillée (1 à 3, 2 par défaut ; un seul en asynchrone), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
+| La vallée | veillées (**conseil de la vallée**, par village, interdites), conseil (**un élu par village** ou tous les pêcheurs), **tours de parole** par veillée (1 à 3, 2 par défaut), prises connues de tous ou non, l'ancien (présent ou non, IA ou règles) |
 | Le lac | **stock max** : la limite du stock, de 10 à 1000 t, ou *Auto* (12,5 t par pêcheur, qui suit alors le nombre de pêcheurs). C'est 100 % de la jauge : le lac part plein et ne la dépasse jamais. **Repeuplement** : le taux `r` du lac, de 0,1 à 2 par saison (1 = normal). Le menu rappelle ce que le lac renouvelle (`r·K/4` par saison) face à ce que les barques peuvent ramener. **Arrêter si le lac est vide** (coché par défaut) |
 | Vallée, lacs, patrouilles | **Paramétrée** (vous réglez villages, pêcheurs, flotte et nombre de lacs) ou **Aléatoire** (tout est tiré de la graine : villages, pêcheurs, flotte, lacs et leur poisson, patrouilles ; le dé change de vallée). **Lacs** : de 1 à 4 ; avec plusieurs, une ligne par lac (stock max, part pleine au départ, repeuplement), les villages se partageant en blocs. **Patrouilles** : de 1 à 4 (décochée : aucune). **Part prenable** : la part du poisson d'un lac qu'un bateau peut prendre (50 %) |
 | Saisons et hasard | **saisons de l'année et événements** (sécheresse, tempête, banc de poissons…), leur fréquence, et l'amplitude de la **chance à la pêche** (0 : ni chance ni malchance, seul le temps compte) |
@@ -122,12 +122,8 @@ Une barre au-dessus de la carte commande la partie en cours (touche **Espace** p
 
 * **Pause / Reprendre** : le monde se fige complètement (temps simulé, appels aux IA, événements). Un appel déjà parti dont la réponse
   arrive pendant la pause attend la reprise. Le temps de pause n'est pas compté dans `processed_at`.
-* **Vitesse** × 1/16 … × 16, ou **Max** (aucune attente d'affichage). En asynchrone, la vitesse change aussi le poids de la réflexion
-  des IA dans le temps du monde : c'est un paramètre du modèle de temps (C5), tracé dans le journal par un événement `injection`.
-  **Plus on va vite, plus l'IA paraît lente** : le monde avance pendant qu'elle réfléchit, et la veillée peut se fermer sans elle.
-  Quand c'est le cas (asynchrone, vraie IA, vitesse au-dessus de celle que le moteur d'IA peut suivre), un bouton orange
-  **Ralentir (× ¼)** apparaît ; un compteur indique les répliques et sorties perdues depuis le début de la saison. Si, même à la
-  vitesse conseillée, au moins deux se perdent dans la saison, le bouton propose la vitesse du dessous.
+* **Vitesse** × 1/16 … × 16, ou **Max** (aucune attente d'affichage). La vitesse ne règle que l'affichage : réfléchir ne
+  prend pas de temps simulé, l'horloge attend les IA, et aucune sortie ni réplique ne se perd parce qu'une IA est lente.
 * **Réflexion** : une bulle « … » surmonte chaque agent dont une décision est en cours, et la barre du haut indique « N en réflexion » ; l'horloge attend.
   Chaque `season_start` porte le mode dans lequel la saison est jouée.
 * **Arrêter la partie** (deux clics) : immédiat, même pendant la réflexion d'une IA ; le run est clos avec la raison `stop`.
@@ -167,7 +163,7 @@ Schémas et doc : [architecture § 1](docs/architecture.md#1-architecture), [§ 
 | Commande | Rôle |
 |---|---|
 | `python -m filets serve [--bus local\|kafka] [--mode …] [--agents N] [--seasons S] [--llm ollama] [--no-ws]` | **salon** : attend `start_game` du menu de Godot, joue la partie, puis une autre ; `--mode/--agents/--seasons/--llm` règlent les valeurs proposées par le menu |
-| `python -m filets run [--agents N] [--mode sync\|async] [--seasons S] [--config …] [--set clé=valeur]` | lance un run tout de suite, l'enregistre dans `runs/<id>/` |
+| `python -m filets run [--agents N] [--seasons S] [--config …] [--set clé=valeur]` | lance un run tout de suite, l'enregistre dans `runs/<id>/` |
 | `python -m filets replay <id> [--speed 4] [--ws]` | rejoue un run **sans aucun appel LLM**, recalcule et compare les indicateurs |
 | `python -m filets verify <id>` | schémas, ordre, monotonie du temps simulé, violations temporelles |
 | `python -m filets batch --config A.yaml --config B.yaml --runs 5` | runs répétés (graines successives), tableau moyenne ± écart-type, archivage SQLite |
@@ -220,7 +216,7 @@ fois** et ne garde pas deux gros modèles en mémoire :
 
 **Sur un portable, la carte graphique chauffe.** Une partie longue avec Ollama la maintient à 100 % : vers 88 °C la fréquence tombe
 (mesuré : de 2100 MHz à 210–580 MHz) et chaque réponse met 5 à 10 fois plus de temps qu'à froid. Les IA paraissent alors « lentes »
-sans que rien ne soit cassé : brancher le secteur, soulever l'arrière du portable, ou ralentir le monde (asynchrone) y change plus que
+sans que rien ne soit cassé : brancher le secteur ou soulever l'arrière du portable y change plus que
 n'importe quel réglage du jeu. `nvidia-smi --query-gpu=temperature.gpu,clocks.sm --format=csv` montre l'état de la carte.
 
 Réglages du serveur Ollama (variables d'environnement, non appliquées par le jeu) : `OLLAMA_FLASH_ATTENTION=1` et
@@ -255,8 +251,8 @@ commence au printemps) :
 |---|---|
 | avant J0 | chaque village choisit son **élu** ; le capitaine de la **patrouille du lac** (une IA) choisit sa route, si le conseil en a voté une |
 | J0 06:00 | ouverture de la pêche : chaque pêcheur estime le stock (±10 %), fait son **plan de saison** (grand modèle) et décide sa première sortie ; ensuite il décide chaque sortie à son retour ; ce qu'il rapporte vraiment dépend du temps de chaque jour, de sa chance, de la saison et des événements |
-| J20 | fermeture : aucune sortie ne commence plus ; une sortie commencée rentre normalement ; une décision encore en cours est abandonnée (`missed_window`, « sortie perdue ») |
-| J25 18:00 | veillée chez l'ancien : le **conseil de la vallée** (l'ancien et l'élu de chaque village), des veillées par village, ou aucune ; 1 à 3 tours de parole à tour de rôle (synchrone) ou une parole de chacun, de son côté (asynchrone) ; une parole pas prête à la fermeture est une « réplique perdue » |
+| J20 | fermeture : aucune sortie ne commence plus ; une sortie commencée rentre normalement |
+| J25 18:00 | veillée chez l'ancien : le **conseil de la vallée** (l'ancien et l'élu de chaque village), des veillées par village, ou aucune ; jusqu'à `scenario.assembly_rounds` répliques par personne (2 par défaut), une seule personne parlant à la fois |
 | J29 | fin de veillée : une proposition soutenue par **au moins la moitié des présents au conseil** devient règle pour la saison suivante |
 | J29 21:36 | repeuplement logistique (selon la saison de l'année et les événements), bilan, promesses tenues ou trahies |
 
@@ -422,8 +418,7 @@ soutenue par au moins la moitié des pêcheurs présents (4 sur 8) devient une r
 **Le bulletin.** Beaucoup de pêcheurs à IA ne disent aucun chiffre et ne soutiennent rien : ils s'abstenaient, et des propositions
 manquaient le seuil d'une voix. Avant la clôture, chaque pêcheur à IA qui n'a rien soutenu remplit donc un **bulletin** : une
 question de quelques lignes (les propositions, leurs soutiens, l'état du lac), posée au petit modèle, dont la réponse est contrainte
-à l'identifiant d'une proposition ou « aucune » (10 tokens au plus, `llm_call` de nature `vote`, système 1). En asynchrone les
-bulletins se remplissent 6 h avant la fin de la veillée (`time.ballot_lead_days`) : une IA trop lente perd sa voix, comme sa réplique.
+à l'identifiant d'une proposition ou « aucune » (10 tokens au plus, `llm_call` de nature `vote`, système 1).
 Avec le faux LLM, qui ne sait pas répondre à un bulletin, on compte ce que chacun a dit.
 
 Mesuré avec Ollama (3B + 1,5B, 8 pêcheurs, 6 saisons) : trois règles de 1,5 t adoptées (7, 7 puis 8 pêcheurs sur 8, accord 88 %), là où
@@ -712,7 +707,7 @@ Schémas et doc : [classes, Godot § 7.6](docs/uml/classes-godot.md#76-fil-des-i
 
 ## La scène Godot
 
-Vue de dessus de la vallée, dessinée entièrement en code (aucune image externe) :
+Vue isométrique de la vallée, dessinée entièrement en code (aucune image externe) :
 
 * **la carte remplit tout le cadre** : la vallée en losange touche ses quatre bords, la forêt s'étend au-delà. La vallée est plus grande que l'écran (sa taille suit le nombre de villages et de lacs, `run_start.map.size`) ;
   ses bords se fondent dans la forêt et les collines, et une **mini-carte** en bas à droite montre toute la vallée et la vue (un clic y déplace la vue ; au zoom minimum, toute la vallée tient à l'écran). On s'y promène comme
@@ -754,7 +749,7 @@ godot --headless --path godot -s res://tests/feed_test.gd -- --events=$PWD/runs/
 
 Captures automatiques d'un run en direct : `godot --path godot -- --shots=4,12,20 --shotdir=/tmp`.
 
-Tests hors fenêtre de l'interface principale (fil des interactions, répliques perdues, annonces, bouton « Ralentir ») et du menu :
+Tests hors fenêtre de l'interface principale (fil des interactions sans « sortie perdue », annonces, plus de bouton « Ralentir » ni de choix de mode) et du menu :
 
 ```bash
 godot --headless --path godot -s res://tests/main_feed_test.gd -- --events=$PWD/runs/<id>/events.jsonl
@@ -791,7 +786,7 @@ entre 0 et 100 %.
 pêcheurs) : un événement qui arrive sans lui, ou d'un autre run, est ignoré plutôt que de produire des chiffres faux.
 Les services Kafka reprennent donc au dernier `run_start` du topic, et le pont n'envoie à Godot que les indicateurs
 du run affiché. `tests/test_indicators_audit.py` recalcule chaque indicateur à part, depuis les événements bruts, pour
-des parties synchrones, asynchrones, par hameau, sans communication et à règles, et exige le même résultat.
+des parties par défaut, à veillées par hameau, sans communication et toutes à règles, et exige le même résultat.
 
 Schémas et doc : [classes, infrastructure § 3](docs/uml/classes-infrastructure.md#3-événements-et-indicateurs).
 
@@ -848,7 +843,7 @@ Ces documents décrivent la construction du jeu :
 * [docs/architecture.md](docs/architecture.md) : les blocs et leurs liens, l'horloge, la mémoire, les tokens, le stockage ;
 * [docs/temps.md](docs/temps.md) : le temps, un seul ordonnanceur (réfléchir ne prend pas de temps, agir en prend ; la
   veillée au fil de l'eau) ;
-* [docs/uml/](docs/uml/) : 97 diagrammes UML en Mermaid, que GitHub affiche directement, réunis aussi dans un seul PDF :
+* [docs/uml/](docs/uml/) : 98 diagrammes UML en Mermaid, que GitHub affiche directement, réunis aussi dans un seul PDF :
   [docs/uml/FILETS-diagrammes-UML.pdf](docs/uml/FILETS-diagrammes-UML.pdf), avec un dictionnaire des variables et des
   paramètres, et une affiche A0 de toutes les classes :
   [docs/uml/FILETS-classes-A0.pdf](docs/uml/FILETS-classes-A0.pdf) ;
@@ -890,7 +885,7 @@ tous ses attributs et méthodes, dans la couleur de sa zone.
 | Le monde, le temps, les règles, les lacs | [classes-monde.md](docs/uml/classes-monde.md) | 14 | `World` en neuf vues par domaine (ses 137 méthodes), `Lake`, `Agent`, `Profile`, `Norm`, `Proposal`, `Assembly`, climat, horloge, contrôle, `SeasonScheduler` |
 | Les décisions, les modèles, la mémoire, le RAG | [classes-decisions.md](docs/uml/classes-decisions.md) | 5 | agents, règles d'archétype, routage système 1 / 2, invites, routeur et clients des modèles, mémoire, RAG et vecteurs |
 | L'infrastructure | [classes-infrastructure.md](docs/uml/classes-infrastructure.md) | 6 | salon (`Engine`), API, bus local et Kafka, événements, indicateurs, stockage, services, configuration, catalogue, ligne de commande, banc |
-| L'interface Godot | [classes-godot.md](docs/uml/classes-godot.md) | 36 | les 8 scripts (274 fonctions, `WorldView` en dix vues) et le shader de la vallée |
+| L'interface Godot | [classes-godot.md](docs/uml/classes-godot.md) | 37 | les 8 scripts (274 fonctions, `WorldView` en dix vues) et le shader de la vallée |
 
 **Scénarios** (une séquence et une communication chacun)
 
@@ -926,7 +921,7 @@ filets/            moteur : world.py (le monde), scheduler.py (l'ordonnanceur, v
                    api.py (FastAPI), aio.py (aiokafka), vectors.py (plongements, pgvector), pgstore.py (historique
                    PostgreSQL), store.py (historique SQLite), objects.py (stockage objet S3)
 filets/services/   services Kafka asynchrones : indicators, bridge (API FastAPI), store (PostgreSQL ou SQLite)
-godot/             projet Godot 4 : main.gd (interface, barre de pilotage, inspecteur), start_menu.gd (menu de démarrage),
+godot/             projet Godot 4.7 : main.gd (interface, barre de pilotage, inspecteur), start_menu.gd (menu de démarrage),
                    menu_map.gd (aperçu de la vallée du menu), world_view.gd (scène), art.gd (palette, pions), chart.gd,
                    legend.gd, shaders/valley.gdshader, fonts/, tests/ (feed_test.gd, menu_test.gd, main_feed_test.gd)
 install.ps1, start.ps1, stop.ps1 (et .cmd)   installation, démarrage et arrêt sous Windows
@@ -934,9 +929,10 @@ corpus/            base de connaissances fictive de la vallée
 config/            default (vallée de base : 4 villages, 8 pêcheurs), large (grande vallée : 4 villages, 18 pêcheurs), lakes (trois lacs,
                    six villages, deux patrouilles), random (vallée tirée de la graine), baseline (sans LLM),
                    no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
-                   ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, stockage objet)
+                   ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, stockage objet),
+                   demo et demo_ia (la partie de démonstration, avec le faux LLM ou les vrais modèles)
 docs/              architecture.md (architecture, communication, tokens, stockage), temps.md (le temps), peche.md (la pêche décidée par le pêcheur),
-                   demo/ (vidéo de démonstration et vidéo courte), uml/ (97 diagrammes UML et leur PDF)
+                   demo/ (vidéos, leurs scripts, descriptif de la solution), uml/ (98 diagrammes UML et leur PDF)
 schemas/           schémas JSON versionnés des événements
 analysis/          requêtes SQL du rapport (queries.sql pour SQLite, queries_pg.sql pour PostgreSQL)
 runs/              runs enregistrés (un exemple fourni)

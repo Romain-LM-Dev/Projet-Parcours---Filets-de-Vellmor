@@ -4,7 +4,7 @@ Calendrier d'une saison (jours simulés depuis le début de la saison, configura
 
     J0 06:00   ouverture de la pêche : chaque pêcheur décide de sa prise visée (la prise réelle dépend de la réussite du jour,
                de la saison de l'année et des événements : voir `climate.py`)
-    J20        fermeture : une sortie décidée après est perdue (incident `missed_window`)
+    J20        fermeture : aucune sortie ne commence plus ; une sortie commencée rentre normalement
     J25 18:00  veillée chez l'ancien (selon le mode de communication) : au conseil de la vallée, un élu par village et l'ancien ;
                propositions de quota, soutiens, promesses, accusations, exclusions, patrouille du lac
     J29        fin de la veillée : adoption d'une règle si au moins la moitié des élus présents la soutient

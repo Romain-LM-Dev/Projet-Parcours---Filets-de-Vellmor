@@ -53,10 +53,10 @@ By hand, without Kafka:
 pip install -r requirements.txt
 python -m pytest -q                                  # consistency tests (Kafka and Godot tests are skipped if absent)
 python -m filets serve                               # lobby + API on :8765 (WebSocket for Godot, REST: http://localhost:8765/docs)
-python -m filets run --mode async --ws               # or: immediate game, without the menu
+python -m filets run --ws                            # or: immediate game, without the menu
 ```
 
-Open `godot/project.godot` in **Godot 4.3+** and run the scene (F5): a start menu appears
+Open `godot/project.godot` in **Godot 4.7** and run the scene (F5): a start menu appears
 if the engine is in lobby mode. Click on a fisher to inspect them; the buttons at the bottom inject
 events into the current game. Without Godot, the console is enough: every catch, speech, adopted rule
 or broken promise is printed there.
@@ -71,7 +71,7 @@ On launch, Godot shows the **Nouvelle partie** (New game) menu as long as the en
 |---|---|
 | World time | a single mode: thinking takes no time (the clock waits for the AIs), acting does; the evening gathering unfolds as it goes ([docs/temps.md](docs/temps.md)) |
 | Duration and randomness | number of seasons, seed (the same settings and the same seed replay the same game with the fake LLM) |
-| The valley | evening gatherings (**valley council**, per village, forbidden), council (**one delegate per village** or all the fishers), **speaking rounds** per gathering (1 to 3, 2 by default; only one in asynchronous mode), catches known to all or not, the elder (present or not, AI or rules) |
+| The valley | evening gatherings (**valley council**, per village, forbidden), council (**one delegate per village** or all the fishers), **speaking rounds** per gathering (1 to 3, 2 by default), catches known to all or not, the elder (present or not, AI or rules) |
 | The lake | **max stock**: the stock limit, from 10 to 1000 t, or *Auto* (12.5 t per fisher, which then follows the number of fishers). It is 100 % of the gauge: the lake starts full and never exceeds it. **Replenishment**: the lake's rate `r`, from 0.1 to 2 per season (1 = normal). The menu shows what the lake renews (`r·K/4` per season) against what the boats can bring back. **Stop if the lake is empty** (checked by default) |
 | Valley, lakes, patrols | **Paramétrée** (Configured: you set villages, fishers, fleet and number of lakes) or **Aléatoire** (Random: everything is drawn from the seed: villages, fishers, fleet, lakes and their fish, patrols; the die changes the valley). **Lakes**: from 1 to 4; with several, one row per lake (max stock, full share at the start, replenishment), the villages splitting into blocks. **Patrols**: from 1 to 4 (unchecked: none). **Catchable share**: the share of a lake's fish that a boat can take (50 %) |
 | Seasons and randomness | **seasons of the year and events** (drought, storm, school of fish…), their frequency, and the amplitude of **luck at fishing** (0: neither luck nor bad luck, only the weather counts) |
@@ -122,12 +122,8 @@ A bar above the map controls the current game (**Space** key to pause):
 
 * **Pause / Resume**: the world freezes completely (simulated time, AI calls, events). A call already sent whose answer
   arrives during the pause waits for the resume. Pause time is not counted in `processed_at`.
-* **Speed** × 1/16 … × 16, or **Max** (no display wait). In asynchronous mode, speed also changes the weight of the AIs' reflection
-  in world time: it is a parameter of the time model (C5), recorded in the log by an `injection` event.
-  **The faster you go, the slower the AI seems**: the world moves on while it thinks, and the gathering can close without it.
-  When this happens (asynchronous, real AI, speed above what the AI engine can keep up with), an orange button
-  **Ralentir (× ¼)** (Slow down) appears; a counter shows the speeches and outings lost since the start of the season. If, even at the
-  recommended speed, at least two are lost in the season, the button offers the next speed down.
+* **Speed** × 1/16 … × 16, or **Max** (no display wait). Speed only sets the display: thinking takes no simulated
+  time, the clock waits for the AIs, and no outing or speech is lost because an AI is slow.
 * **Reflection**: a "…" bubble hovers over each agent with a decision in progress, and the top bar shows "N en réflexion" (N thinking); the clock waits.
   Each `season_start` carries the mode in which the season is played.
 * **Arrêter la partie** (Stop the game, two clicks): immediate, even while an AI is thinking; the run is closed with the reason `stop`.
@@ -167,7 +163,7 @@ Diagrams and docs: [architecture § 1](docs/architecture.md#1-architecture), [§
 | Command | Role |
 |---|---|
 | `python -m filets serve [--bus local\|kafka] [--mode …] [--agents N] [--seasons S] [--llm ollama] [--no-ws]` | **lobby**: waits for `start_game` from the Godot menu, plays the game, then another; `--mode/--agents/--seasons/--llm` set the values offered by the menu |
-| `python -m filets run [--agents N] [--mode sync\|async] [--seasons S] [--config …] [--set clé=valeur]` | starts a run right away, saves it in `runs/<id>/` |
+| `python -m filets run [--agents N] [--seasons S] [--config …] [--set clé=valeur]` | starts a run right away, saves it in `runs/<id>/` |
 | `python -m filets replay <id> [--speed 4] [--ws]` | replays a run **without any LLM call**, recomputes and compares the indicators |
 | `python -m filets verify <id>` | schemas, ordering, monotonicity of simulated time, temporal violations |
 | `python -m filets batch --config A.yaml --config B.yaml --runs 5` | repeated runs (successive seeds), mean ± standard deviation table, SQLite archiving |
@@ -220,7 +216,7 @@ time** and does not keep two large models in memory:
 
 **On a laptop, the graphics card heats up.** A long game with Ollama keeps it at 100 %: around 88 °C the frequency drops
 (measured: from 2100 MHz to 210–580 MHz) and each answer takes 5 to 10 times longer than when cold. The AIs then seem "slow"
-without anything being broken: plugging in the power, raising the back of the laptop, or slowing down the world (asynchronous) makes more difference than
+without anything being broken: plugging in the power or raising the back of the laptop makes more difference than
 any game setting. `nvidia-smi --query-gpu=temperature.gpu,clocks.sm --format=csv` shows the state of the card.
 
 Ollama server settings (environment variables, not applied by the game): `OLLAMA_FLASH_ATTENTION=1` and
@@ -255,8 +251,8 @@ starts in spring):
 |---|---|
 | before D0 | each village chooses its **delegate**; the captain of the **lake patrol** (an AI) chooses its route, if the council has voted for one |
 | D0 06:00 | fishing opens: each fisher estimates the stock (±10 %) and decides on their **target catch**; what they really bring back depends on each day's weather, their luck, the season and events |
-| D20 | closing: a decision still in progress is abandoned and the outing is lost (`missed_window`, "sortie perdue", lost outing) |
-| D25 18:00 | evening gathering at the elder's: the **valley council** (the elder and the delegate of each village), gatherings per village, or none; 1 to 3 speaking rounds in turn (synchronous) or one speech from each, on their own (asynchronous); a speech not ready at closing is a "lost speech" |
+| D20 | closing: no outing starts any more; an outing already under way comes back normally |
+| D25 18:00 | evening gathering at the elder's: the **valley council** (the elder and the delegate of each village), gatherings per village, or none; up to `scenario.assembly_rounds` speeches per person (2 by default), one person speaking at a time |
 | D29 | end of the gathering: a proposal supported by **at least half of those present at the council** becomes a rule for the next season |
 | D29 21:36 | logistic replenishment (according to the season of the year and events), review, promises kept or broken |
 
@@ -414,8 +410,7 @@ supported by at least half of the fishers present (4 out of 8) becomes a rule.
 **The ballot.** Many AI fishers state no figure and support nothing: they abstained, and proposals
 missed the threshold by one vote. Before closing, each AI fisher who has supported nothing therefore fills in a **ballot**: a
 question of a few lines (the proposals, their supporters, the state of the lake), asked to the small model, whose answer is constrained
-to the identifier of a proposal or "none" (10 tokens at most, `llm_call` of kind `vote`, system 1). In asynchronous mode the
-ballots are filled in 6 h before the end of the gathering (`time.ballot_lead_days`): an AI that is too slow loses its vote, like its speech.
+to the identifier of a proposal or "none" (10 tokens at most, `llm_call` of kind `vote`, system 1).
 With the fake LLM, which cannot answer a ballot, what each one said is counted.
 
 Measured with Ollama (3B + 1.5B, 8 fishers, 6 seasons): three rules of 1.5 t adopted (7, 7 then 8 fishers out of 8, 88 % agreement), where
@@ -700,7 +695,7 @@ Diagrams and docs: [classes, Godot § 7.6](docs/uml/classes-godot.md#76-fil-des-
 
 ## The Godot scene
 
-Top-down view of the valley, drawn entirely in code (no external image):
+Isometric view of the valley, drawn entirely in code (no external image):
 
 * **the map fills the whole frame**: the diamond-shaped valley touches its four edges, the forest extends beyond. The valley is larger than the screen (its size follows the number of villages and lakes, `run_start.map.size`);
   its edges blend into the forest and the hills, and a **minimap** at the bottom right shows the whole valley and the view (a click there moves the view; at minimum zoom, the whole valley fits on the screen). You move around as
@@ -738,7 +733,7 @@ godot --headless --path godot -s res://tests/feed_test.gd -- --events=$PWD/runs/
 
 Automatic screenshots of a live run: `godot --path godot -- --shots=4,12,20 --shotdir=/tmp`.
 
-Windowless tests of the main interface (interactions feed, lost speeches, announcements, "Ralentir" button) and of the menu:
+Windowless tests of the main interface (interactions feed with no "lost outing", announcements, no more "Ralentir" button nor mode choice) and of the menu:
 
 ```bash
 godot --headless --path godot -s res://tests/main_feed_test.gd -- --events=$PWD/runs/<id>/events.jsonl
@@ -775,7 +770,7 @@ between 0 and 100 %.
 fishers): an event that arrives without it, or from another run, is ignored rather than producing false figures.
 The Kafka services therefore resume at the last `run_start` of the topic, and the bridge only sends Godot the indicators
 of the displayed run. `tests/test_indicators_audit.py` recomputes each indicator separately, from the raw events, for
-synchronous, asynchronous, per-hamlet, no-communication and rule-based games, and requires the same result.
+default, per-hamlet, no-communication and all-rule-based games, and requires the same result.
 
 Diagrams and docs: [classes, infrastructure § 3](docs/uml/classes-infrastructure.md#3-événements-et-indicateurs) (in French).
 
@@ -832,7 +827,7 @@ All these documents are in French. They describe how the game is built:
 * [docs/architecture.md](docs/architecture.md): the blocks and their links, the clock, memory, tokens, storage;
 * [docs/temps.md](docs/temps.md): time, a single scheduler (thinking takes no time, acting does; the evening
   gathering unfolding as it goes);
-* [docs/uml/](docs/uml/): 97 UML diagrams in Mermaid, which GitHub displays directly, also gathered in a single PDF:
+* [docs/uml/](docs/uml/): 98 UML diagrams in Mermaid, which GitHub displays directly, also gathered in a single PDF:
   [docs/uml/FILETS-diagrammes-UML.pdf](docs/uml/FILETS-diagrammes-UML.pdf), with a dictionary of variables and
   parameters, and an A0 poster of all the classes:
   [docs/uml/FILETS-classes-A0.pdf](docs/uml/FILETS-classes-A0.pdf);
@@ -874,7 +869,7 @@ all its attributes and methods, in the color of its zone.
 | The world, time, rules, lakes | [classes-monde.md](docs/uml/classes-monde.md) | 14 | `World` in nine views by domain (its 137 methods), `Lake`, `Agent`, `Profile`, `Norm`, `Proposal`, `Assembly`, climate, clock, control, `SeasonScheduler` |
 | Decisions, models, memory, RAG | [classes-decisions.md](docs/uml/classes-decisions.md) | 5 | agents, archetype rules, system 1 / 2 routing, prompts, model router and clients, memory, RAG and vectors |
 | Infrastructure | [classes-infrastructure.md](docs/uml/classes-infrastructure.md) | 6 | lobby (`Engine`), API, local bus and Kafka, events, indicators, storage, services, configuration, catalog, command line, bench |
-| The Godot interface | [classes-godot.md](docs/uml/classes-godot.md) | 36 | the 8 scripts (274 functions, `WorldView` in ten views) and the valley shader |
+| The Godot interface | [classes-godot.md](docs/uml/classes-godot.md) | 37 | the 8 scripts (274 functions, `WorldView` in ten views) and the valley shader |
 
 **Scenarios** (one sequence and one communication each)
 
@@ -910,7 +905,7 @@ filets/            engine: world.py (the world), scheduler.py (the scheduler, se
                    api.py (FastAPI), aio.py (aiokafka), vectors.py (embeddings, pgvector), pgstore.py (PostgreSQL
                    history), store.py (SQLite history), objects.py (S3 object storage)
 filets/services/   asynchronous Kafka services: indicators, bridge (FastAPI API), store (PostgreSQL or SQLite)
-godot/             Godot 4 project: main.gd (interface, control bar, inspector), start_menu.gd (start menu),
+godot/             Godot 4.7 project: main.gd (interface, control bar, inspector), start_menu.gd (start menu),
                    menu_map.gd (menu valley preview), world_view.gd (scene), art.gd (palette, tokens), chart.gd,
                    legend.gd, shaders/valley.gdshader, fonts/, tests/ (feed_test.gd, menu_test.gd, main_feed_test.gd)
 install.ps1, start.ps1, stop.ps1 (and .cmd)   installation, start and stop on Windows
@@ -918,9 +913,10 @@ corpus/            fictional knowledge base of the valley
 config/            default (base valley: 4 villages, 8 fishers), large (large valley: 4 villages, 18 fishers), lakes (three lakes,
                    six villages, two patrols), random (valley drawn from the seed), baseline (without LLM),
                    no_comm, hamlet, drought, ollama (7B), ollama_fast (3B),
-                   ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, object storage)
+                   ollama_open (3B + tev1), groq, data (PostgreSQL + pgvector, object storage),
+                   demo and demo_ia (the demonstration game, with the fake LLM or the real models)
 docs/              architecture.md: architecture, time, communication, tokens, asynchronous, storage; temps.md (time);
-                   peche.md (fishing decided by the fisher); demo/ (demo video and short video); uml/ (97 UML diagrams and their PDF)
+                   peche.md (fishing decided by the fisher); demo/ (videos, their scripts, description of the solution); uml/ (98 UML diagrams and their PDF)
 schemas/           versioned JSON schemas of the events
 analysis/          SQL queries for the report (queries.sql for SQLite, queries_pg.sql for PostgreSQL)
 runs/              saved runs (one example provided)

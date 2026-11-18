@@ -206,7 +206,8 @@ sont acceptées et ignorées, avec un avertissement (il n'y a plus qu'un mode de
 |---|---|---|
 | `baseline.yaml` | `default` | `population.rule_fraction: 1.0`, `elder_kind: rule` : partie témoin sans modèle de langage. |
 | `data.yaml` | `default` | `rag.backend: pgvector` avec `embeddinggemma` (768 dimensions, sur processeur), `storage.history: postgres`, `storage.objects` en S3 (MinIO local). |
-| `demo.yaml` | `lakes` | 3 saisons, graine 7, une annonce programmée à la saison 2 (la partie de la vidéo de démonstration). |
+| `demo.yaml` | `lakes` | 3 saisons, graine 7, une annonce programmée à la saison 2 (la partie de démonstration, avec le faux LLM). |
+| `demo_ia.yaml` | `demo` | La même avec les vrais modèles : Qwen 2.5 3B (grand) et 1,5B (petit), `tev1:0.8b` en réflexe (`ollama_s1`), Qwen 2.5 7B en narrateur ; `llm.reflection: adaptive`. La partie filmée pour les vidéos. |
 | `drought.yaml` | `default` | Une sécheresse à la saison 4 (`factor: 0.5`). |
 | `groq.yaml` | `default` | Grand modèle `llama-3.3-70b-versatile` chez Groq, petit modèle `qwen2.5:1.5b` sur Ollama. |
 | `hamlet.yaml` | `default` | `scenario.communication: hamlet` : une veillée par village. |
