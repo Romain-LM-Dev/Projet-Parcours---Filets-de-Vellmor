@@ -1,6 +1,6 @@
 # FILETS : descriptif de la solution
 
-Ce document présente le projet FILETS : ce que fait la solution développée et comment elle est construite. Il complète toutes les vidéos du projet, avec ou sans voix off (voir la partie 4), et peut se lire seul.
+Ce document présente le projet FILETS : ce que fait la solution développée et comment elle est construite. Il complète les vidéos du projet, avec ou sans voix off, et peut se lire seul.
 
 ## 1. En bref
 
@@ -145,21 +145,35 @@ par WebSocket.
 | Vidéos | Godot Movie Maker, voix edge-tts, montage ffmpeg |
 ## 4. La démonstration
 
-Les vidéos montrent une vraie partie de trois saisons (`runs/demo_ia`), jouée par les modèles locaux, puis rejouée depuis son
-journal pour être filmée.
+La démonstration est une vraie partie de trois saisons, jouée par les modèles locaux sur le PC portable (environ 20 minutes de
+calcul), avec la configuration `config/demo_ia.yaml` et son journal `runs/demo_ia`. La vallée compte trois lacs et six villages ;
+parmi les seize pêcheurs, douze sont des agents IA (six sur le grand modèle, six sur le petit) et quatre des agents à règles ;
+l'ancien est un agent IA.
 
-### 4.1 Les vidéos
+### 4.1 Le déroulé de la partie
 
-| Vidéo | Format | Durée | Contenu |
-|---|---|---|---|
-| [FILETS-demo.mp4](FILETS-demo.mp4) | 1920x1080 | 4 min 50 | la partie commentée en voix off, sous-titrée |
-| [FILETS-demo-sans-voix.mp4](FILETS-demo-sans-voix.mp4) | 1920x1080 | 4 min 50 | la même, sans voix off, sous-titres ni son |
-| [FILETS-short.mp4](FILETS-short.mp4) | vertical 1080x1920 | 47 s | le résumé pour les réseaux sociaux, aux couleurs de l'EIGSI Casablanca |
-| [FILETS-short-sans-voix.mp4](FILETS-short-sans-voix.mp4) | vertical 1080x1920 | 47 s | le même montage, sans voix, sous-titres ni son (titres et carte de fin gardés) |
-| [FILETS-short-paysage.mp4](FILETS-short-paysage.mp4) | paysage 1920x1080 | 47 s | le résumé, en paysage |
-| [FILETS-short-paysage-sans-voix.mp4](FILETS-short-paysage-sans-voix.mp4) | paysage 1920x1080 | 47 s | le même, sans voix, sous-titres ni son |
+- **Saison 1.** Les pêcheurs sortent sur leurs lacs, certains sur ceux des autres. À la veillée, l'ancien établit un mensonge
+  d'Arnaud, à tort : Arnaud avait tout déclaré, les témoins avaient surestimé sa barque. Isaure demande qu'on l'interdise de
+  pêche, Arnaud lui retourne la demande ; les deux sont refusées. Parmi les propositions (2 t, 3 t, 5,5 t par pêcheur, une zone
+  réservée), la vallée adopte 3 t par pêcheur pour la saison suivante, et vote une patrouille.
+- **Saison 2.** Le joueur lance une rumeur : un marchand paierait le poisson le double. Le lac de Vellmor attire des pêcheurs de
+  toute la vallée ; huit pêcheurs dépassent les 3 t. La patrouille prend Maëlle et Sylvain à mentir. La veillée adopte une règle
+  pour le seul lac de Vellmor (un peu plus de 2 t par pêcheur), puis Maëlle, prise par la patrouille, propose de la retirer : le
+  retrait passe, à trois voix sur six.
+- **Saison 3.** Vellmor continue de baisser (de 46 à 33 t), pendant que Brémol reste plein. Les témoins prennent Sylvain et Lucien
+  à mentir ; Albane accuse Capucine à tort. Quatre propositions sont sur la table (un repos du lac de Vellmor, un nombre de
+  sorties, deux quotas) : aucune n'est adoptée.
 
-### 4.2 La partie filmée en chiffres
+### 4.2 Ce qu'elle montre
+
+- Les agents ne suivent pas un scénario : ils mentent, se font prendre, s'accusent, parfois à tort, et votent des règles qui
+  les contraignent ; certains votent aussi contre le contrôle qui les a pris.
+- Le lac le plus fréquenté baisse le plus : la règle de la vallée ne suffit pas, celle d'un seul lac vient ensuite, et les
+  propositions finissent par se disperser.
+- Les limites des modèles restent visibles et mesurées : l'ancien se trompe, certaines répliques du petit modèle sont
+  maladroites, et chaque réponse invalide est comptée comme incident.
+
+### 4.3 La partie en chiffres
 
 | Mesure | Valeur |
 |---|---|
@@ -173,54 +187,3 @@ journal pour être filmée.
 | Appels aux modèles | 372, pour 1 014 094 tokens ; 75 réponses contrôlées et traitées comme incidents |
 | Mémoire | 668 souvenirs écrits, 275 changements de confiance |
 | Stocks des lacs | Vellmor 62 → 33 t, Orsane 62 → 55 t, Brémol 75 → 73 t |
-
-### 4.3 Au fil de la vidéo de démonstration
-
-Les moments valent pour les deux versions (avec et sans voix off) et sont donnés à une seconde près ; « S1, jour 26 » est la saison et le jour de jeu affichés en haut à gauche de la carte.
-
-| Vidéo | Partie | À l'écran | Ce que ça montre |
-|---|---|---|---|
-| 0:00 | | Carte de titre | « FILETS. Une vallée où chaque personnage est une IA. » |
-| 0:03 | S1, jour 1 | Toute la vallée | Les trois lacs (Vellmor, Orsane, Brémol), les six villages et la maison de l'ancien, reliés par des chemins. En haut, les jauges de stock des lacs ; à droite, les indicateurs. |
-| 0:13 | S1, jour 1 | La carte | La vallée en vue isométrique, à la manière d'un jeu de stratégie : caméra qui zoome et glisse, mini-carte en bas à droite. Les pions sont les pêcheurs (couleur : caractère ; anneau doré : grand modèle ; carré : agent à règles). |
-| 0:25 | S1, jour 2 | Mailles visibles | Le monde découpé en cases : chaque case de lac porte son poisson et sa chance, les maisons bloquent le passage, les trajets se calculent sur cette grille. |
-| 0:36 | S1, jour 3 | Zoom sur Ostrel, fil des interactions | Les premières barques partent. À droite, le fil des interactions : chaque sortie, chaque prise, chaque déclaration à l'ancien, avec ce que le pêcheur a vraiment pêché. |
-| 0:47 | S1, jour 7 | La carte | La saison de pêche : les barques vont et viennent, sur leur lac ou sur un autre (le trajet se paie). Les jauges des lacs baissent. |
-| 0:59 | S1, jour 12 | La carte, indicateurs | Les cartes d'indicateurs se mettent à jour en direct : stock des lacs, appels aux modèles, tokens, incidents, violations temporelles. |
-| 1:08 | S1, jour 17 | Inspecteur : Mathis | La fiche d'un agent : son caractère, son modèle, son argent, sa confiance envers les autres, son plan de saison et sa dernière décision avec sa justification. |
-| 1:19 | S1, jour 20 | Fil des interactions | La pêche ferme. Les témoignages arrivent : tel voisin a vu telle barque rentrer avec environ tant de tonnes. |
-| 1:28 | S1, jour 26 | Salon de la veillée | La veillée chez l'ancien s'ouvre : les élus des villages autour du feu. Dans le fil, l'ancien établit un mensonge d'Arnaud… à tort (« ACCUSÉ À TORT »). Les bulles sont les répliques écrites par les IA. |
-| 1:44 | S1, jour 26 | Salon de la veillée | Les propositions de règle (étiquettes jaunes : 2 t, 3 t, 5,5 t par pêcheur, zone réservée), les soutiens, Isaure qui demande d'interdire Arnaud de pêche, et Arnaud qui lui retourne la demande. |
-| 2:00 | S1, jour 30 | Onglet « Règles » | Le vote : la règle de 3 t par pêcheur pour toute la vallée est adoptée, une patrouille est installée, personne n'est interdit. |
-| 2:16 | S1, jour 30 | Onglet « Récit du narrateur » | Le récit de la saison, écrit par un modèle de langage, suivi des chiffres exacts calculés par le programme. |
-| 2:26 | S2, jour 1 | Toute la vallée | Saison deux. Le joueur a lancé une rumeur (un marchand paierait le poisson le double) ; la barre du bas permet d'intervenir (sécheresse, communication, rumeur). |
-| 2:38 | S2, jour 11 | Onglet « Confiance » | Ce que chacun pense des autres : la confiance que chaque agent accorde, d'après ce qu'il a vu et entendu. |
-| 2:45 | S2, jour 17 | La carte, fil | La patrouille fait sa tournée sur la carte. Le lac de Vellmor attire des pêcheurs de toute la vallée. |
-| 2:55 | S2, jour 26 | Salon de la veillée | La patrouille a pris Maëlle et Sylvain à mentir. Nouvelles propositions : une règle pour le seul lac de Vellmor, une zone réservée au large. |
-| 3:13 | S2, jour 26 | Salon de la veillée | La règle de Vellmor est adoptée ; Maëlle, prise par la patrouille, propose de la retirer, et le retrait passe à trois voix sur six. |
-| 3:28 | S3, jour 1 | Toute la vallée | Troisième saison : la règle de Vellmor s'applique ; le lac continue de baisser, Brémol reste plein. |
-| 3:39 | S3, jour 10 | La carte | Les sorties de la dernière saison, toutes enregistrées. |
-| 3:50 | S3, jour 18 | La carte | Les dernières sorties avant la fermeture de la pêche (jour 20) ; les courbes montrent les saisons passées. |
-| 4:00 | S3, jour 26 | Salon de la veillée | Dernière veillée : Sylvain et Lucien pris à mentir par les témoins, un repos du lac de Vellmor proposé, une accusation injuste. |
-| 4:22 | S3, jour 26 | Onglet « Règles » | Quatre propositions sur la table, aucune adoptée. |
-| 4:34 | S3, jour 30 | Toute la vallée, récit | La vallée à la fin de la partie et le récit de la dernière saison. |
-| 4:47 | | Carte de fin | « Dominante IABD. Intelligence artificielle et big data. » |
-
-### 4.4 Les vidéos courtes
-
-Les quatre vidéos courtes suivent le même montage : un titre par idée, sur un plan fixe de la partie, en coupes franches.
-
-| Titre à l'écran | Ce qu'on voit |
-|---|---|
-| 16 PÊCHEURS. 0 HUMAIN. | Toute la vallée au début de la partie |
-| CHAQUE VILLAGEOIS EST UNE IA | Le village d'Ostrel, puis les barques sur les lacs |
-| ELLES PEUVENT MENTIR | Une déclaration mensongère dans le fil des interactions (« MENSONGE ») |
-| LES VOISINS TÉMOIGNENT | Les témoignages des voisins sur une barque qui rentre |
-| L'ANCIEN SE TROMPE | Arnaud « ACCUSÉ À TORT », puis Isaure qui demande de l'interdire de pêche |
-| ILS VOTENT LEURS RÈGLES | Les bulles de la veillée, puis les règles en vigueur |
-| LA PATROUILLE VEILLE | La patrouille sur la carte |
-| LA PATROUILLE RETIRÉE | Maëlle à la veillée, qui fait voter la fin de la patrouille |
-| 100 % LOCAL. 4 MODÈLES. | La fiche d'un agent, les indicateurs en direct, les courbes des lacs |
-| 372 APPELS D'IA | Les compteurs d'appels aux modèles et de tokens à la fin de la partie |
-| UN LABO À IA | La vallée en troisième saison, puis le récit du narrateur |
-| (carte de fin) | « Dominante IABD, intelligence artificielle & big data » et le logo de l'EIGSI Casablanca |
