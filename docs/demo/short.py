@@ -1,7 +1,8 @@
 """Vidéo courte (réseaux sociaux), verticale ou paysage, d'après short.json et la capture SANS sous-titre de la démo
 (`--no-captions`, même minutage que FILETS-demo.mp4). Voix edge-tts (seul le texte part chez Microsoft), sous-titres mot à mot et titres
 en ASS (libass), plans recadrés par ffmpeg (plans fixes, coupes franches : pas de zoom).
-    python short.py <ffmpeg> <capture sans sous-titre .avi> [portrait|paysage]      (python avec le paquet edge-tts)"""
+    python short.py <ffmpeg> <capture sans sous-titre .avi> [portrait|paysage] [sans-voix]      (python avec le paquet edge-tts)
+`sans-voix` : le même montage (même découpage, mêmes titres, carte de fin), sans voix, sous-titres ni son."""
 import asyncio
 import json
 import re
@@ -17,7 +18,8 @@ sc = json.loads((here / "short.json").read_text(encoding="utf8"))
 ffmpeg, capture = sys.argv[1], str(Path(sys.argv[2]).resolve())
 FMT = sys.argv[3] if len(sys.argv) > 3 else "portrait"
 F = sc["formats"][FMT]
-out = here / F["out"]
+SILENT = "sans-voix" in sys.argv[4:]
+out = here / (F["out"].replace(".mp4", "-sans-voix.mp4") if SILENT else F["out"])
 work = here / "voice" / "short"          # (docs/demo/voice/ n'est pas versionné)
 work.mkdir(parents=True, exist_ok=True)
 W, H = F["size"]
@@ -211,7 +213,7 @@ async def main() -> None:
             shots = ln["shots"]
             plan += [(s, dur / len(shots)) for s in shots]
             events.append(f"Dialogue: 2,{ts(t)},{ts(t + dur)},Title,,0,0,0,,{title_text(ln['title'])}")
-            events += captions(words, t, t + dur)
+            events += [] if SILENT else captions(words, t, t + dur)
         t += dur
     total = t
     assert total <= 60.0, f"la vidéo dure {total:.1f} s : plus d'une minute"
@@ -264,6 +266,11 @@ async def main() -> None:
            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text", *events]
     (work / "short.ass").write_text("\n".join(ass) + "\n", encoding="utf8")
 
+    if SILENT:                                       # (la voix ne sert qu'au minutage : même découpage que la version parlée)
+        run([ffmpeg, "-y", "-loglevel", "error", "-i", "full.mp4", "-vf", "ass=short.ass:fontsdir=/Windows/Fonts", "-an",
+             "-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], cwd=work)
+        print("écrit :", out)
+        return
     # la voix, et un souffle discret à chaque coupe
     run([ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anoisesrc=d=0.32:c=pink:a=0.6:r=48000", "-af",
          "highpass=f=700,lowpass=f=5000,afade=t=in:d=0.12,afade=t=out:st=0.12:d=0.2,volume=0.35", "-ac", "1", "whoosh.wav"], cwd=work)

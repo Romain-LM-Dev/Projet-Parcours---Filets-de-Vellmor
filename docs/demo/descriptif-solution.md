@@ -1,8 +1,6 @@
 # FILETS : descriptif de la solution
 
-Ce document accompagne la vidéo sans voix off [FILETS-demo-sans-voix.mp4](FILETS-demo-sans-voix.mp4) (4 min 50, 1920x1080, sans
-son ni sous-titres). Il décrit ce qu'on voit à l'écran, puis la solution développée. La même vidéo existe avec voix off :
-[FILETS-demo.mp4](FILETS-demo.mp4) (son texte : [script-video-longue.md](script-video-longue.md)).
+Ce document présente le projet FILETS : ce que fait la solution développée et comment elle est construite. Il complète toutes les vidéos du projet, avec ou sans voix off (voir la partie 4), et peut se lire seul.
 
 ## 1. En bref
 
@@ -16,10 +14,169 @@ Le projet sert de laboratoire : chaque décision, chaque parole et chaque prise 
 (intelligence artificielle et big data) : des modèles de langage, une mémoire par recherche sémantique (RAG), un flux de données
 en continu et des indicateurs calculés en direct.
 
-## 2. La vidéo sans voix : ce qu'on voit
+## 2. La solution développée
 
-La vidéo rejoue une vraie partie de trois saisons (`runs/demo_ia`), jouée par les modèles locaux. Les moments sont donnés à une
-seconde près ; « S1, jour 26 » est la saison et le jour de jeu affichés en haut à gauche de la carte.
+### 2.1 Le principe
+
+Une partie dure plusieurs saisons de trente jours. Chaque saison : les pêcheurs préparent leur plan, pêchent pendant vingt jours
+et déclarent chaque retour à l'ancien ; le soir de la veillée, les élus des villages débattent et votent des règles ; puis les
+lacs se repeuplent et un narrateur raconte la saison. Le poisson ne se renouvelle bien que si les lacs ne sont pas vidés : la
+vallée doit trouver d'elle-même des règles et les faire respecter, alors que chacun a intérêt à pêcher plus et peut mentir.
+
+### 2.2 Le monde
+
+- **La vallée** est tirée au hasard (graine) en restant cohérente : lacs, villages, chemins, rives, décor. On peut en tirer une
+  autre depuis le menu. Dans la partie filmée : trois lacs (Vellmor 62 t, Orsane 62 t, Brémol 75 t de capacité), deux villages
+  par lac (Ostrel et Bramois, Tilque et Hennad, Varenne et Corbel) et la maison de l'ancien.
+- **Les mailles** : le monde est une grille. Chaque case de lac a son poisson et sa chance (un coin trop pêché rend moins), les
+  maisons bloquent le passage, les trajets sont calculés sur la grille.
+- **Le lac** se repeuple selon une croissance qui est la plus forte autour de la moitié de sa capacité. Climat et saisons de
+  l'année jouent sur les prises ; des événements peuvent survenir.
+- **Les bateaux** ont des cales de tailles différentes ; aller pêcher sur un autre lac prend du temps et coûte de l'argent.
+
+### 2.3 Les habitants
+
+- **Seize pêcheurs**, chacun d'un caractère : ancienne famille, nouveau venu, beau parleur, taiseux. Chaque caractère a ses
+  priorités et sa façon de parler, que les modèles reçoivent dans leur consigne.
+- La plupart sont des **agents IA** ; quelques-uns sont des **agents à règles** (un comportement fixe par caractère), pour
+  comparer. L'**ancien** (Maître Oswin) reçoit les déclarations, recoupe les témoignages et préside la veillée.
+- Chaque action d'un agent vient de sa propre réflexion (modèle de langage) ou de la règle de son caractère : le moteur ne
+  décide jamais à sa place ; il compte, vérifie et applique la physique du monde.
+
+### 2.4 Les modèles d'IA
+
+Quatre modèles tournent en local avec Ollama, sur la carte graphique d'un PC portable (RTX 3060, 6 Go), sans serveur ni
+abonnement :
+
+| Modèle | Rôle | Dans la partie filmée |
+|---|---|---|
+| tev1 0,8B | Les décisions de routine et les votes : il choisit une option et donne sa probabilité, sans écrire de texte | 151 appels |
+| Qwen 2.5 3B | La réflexion des pêcheurs expérimentés et de l'ancien : plan de saison, sorties quand la situation change, paroles de veillée | 137 appels |
+| Qwen 2.5 1,5B | La même chose pour les pêcheurs moins expérimentés | 81 appels |
+| Qwen 2.5 7B | Le récit de fin de saison | 3 appels |
+
+À chaque décision, un aiguillage choisit entre le réflexe (rien n'a changé : le petit modèle de décision) et la réflexion
+(quelque chose a changé : un modèle de langage). Les réponses sont contrôlées : une réponse illisible, hors rôle ou hors bornes
+est un incident, traité par une règle de repli ou une seconde demande.
+
+### 2.5 Une saison
+
+1. **Le plan** : chaque pêcheur fixe ce qu'il compte prendre et ce qu'il compte déclarer.
+2. **Les sorties** : à l'ouverture puis à chaque retour, il décide quand ressortir, où (son lac ou un autre, rive ou large),
+   combien prendre, sortie courte (3 h) ou longue (7 h) ; personne ne pêche la nuit. Le poisson sort du lac au retour.
+3. **Les déclarations** : à chaque retour, il déclare sa pêche à l'ancien ; il peut mentir.
+4. **Les indices** : les voisins voient les barques rentrer et estiment leur charge ; la patrouille, si elle a été votée,
+   contrôle une zone. L'ancien recoupe ces indices avec les déclarations et établit les mensonges, parfois à tort.
+
+### 2.6 La veillée et les règles
+
+- Les villages élisent leurs délégués au **conseil de la vallée** ; les absents en sont informés ensuite.
+- Les répliques se préparent en même temps, mais **une seule personne parle à la fois** (vingt minutes de jeu par réplique) ;
+  celui à qui l'on s'adresse répond en priorité, et une réplique dépassée par la discussion est préparée de nouveau. Une IA qui
+  répète ce qui a déjà été dit est relancée une fois, puis se tait.
+- Une réplique peut proposer une règle, en soutenir une, promettre, accuser, demander d'interdire un pêcheur de pêche, ou
+  d'installer ou de retirer la patrouille.
+- **Cinq sortes de règles** : un quota par pêcheur, une zone réservée, un repos du lac, un nombre de sorties, une taille de
+  bateau ; chacune peut viser toute la vallée, un village ou un seul lac. Une règle passe avec au moins la moitié des pêcheurs
+  présents.
+
+### 2.7 Confiance, mémoire et RAG
+
+- **La confiance** : chaque agent juge lui-même, après ce qu'il voit et entend, ce que ses voisins valent ; cette confiance
+  pèse sur la façon dont il reçoit leurs paroles et leurs témoignages.
+- **La mémoire** : chaque agent garde ses souvenirs (prises, promesses, accusations, règles) sous forme de vecteurs, et retrouve
+  ceux qui comptent pour la décision en cours par leur sens (recherche sémantique). C'est le principe du RAG : le modèle répond à
+  partir de documents retrouvés pour lui, ici ses propres souvenirs et les faits marquants de la partie.
+
+### 2.8 Le narrateur
+
+À la fin de chaque saison, un narrateur extérieur, qui sait tout (même les mensonges non découverts), écrit le récit à partir
+des faits relevés par le programme. Il ne reçoit aucun tonnage : les chiffres exacts sont calculés par le code et ajoutés au
+récit, et un récit qui invente un nombre est corrigé.
+
+### 2.9 Le temps simulé
+
+Le moteur est une simulation à événements discrets : réfléchir ne prend pas de temps dans le jeu, agir en prend (une sortie, un
+trajet, une réplique). Les décisions qui ne dépendent pas les unes des autres partent en même temps vers les modèles ; leurs
+effets s'appliquent toujours dans l'ordre du temps de jeu, jamais dans l'ordre où les modèles répondent. À graine égale, avec le
+faux modèle des tests, deux parties donnent le même journal ; avec de vrais modèles, les réponses peuvent varier d'une partie à l'autre.
+
+### 2.10 Le joueur
+
+Le joueur prépare la partie dans un menu (vallée, pêcheurs, modèles, réglages), puis observe et intervient : sécheresse,
+communication entre villages, déclarations publiques ou non, rumeur, vitesse, pause et arrêt. La rumeur de la partie filmée
+(« un marchand paierait le poisson le double ») est l'une de ces interventions.
+
+### 2.11 Les données
+
+- Chaque geste devient un **événement** (JSON, schéma vérifié), enregistré dans le journal de la partie.
+- En version complète, les événements passent par **Kafka** (sujets des événements, des commandes, des indicateurs, de l'état
+  et des messages en erreur), comme dans les plateformes de données ; des services les consomment.
+- Les **indicateurs** se calculent en continu : part du stock, norme partagée, accord déclaré, conformité, promesses tenues,
+  dispersion des prises, appels, tokens, incidents, violations temporelles.
+- **PostgreSQL avec pgvector** garde l'historique et la mémoire vectorielle ; un **stockage objet** (MinIO) garde les fichiers.
+- Une partie se **rejoue** depuis son journal, avec le bus local ou avec Kafka. La vidéo elle-même rejoue le journal de la partie filmée.
+
+### 2.12 L'interface
+
+L'interface Godot 4.7 dessine la vallée entièrement en code, en vue isométrique : caméra libre (zoom, glissement), mini-carte,
+mailles affichables, salon de la veillée avec ses bulles, jauges des lacs, cartes d'indicateurs et courbes par saison, onglets
+(interactions, récit du narrateur, confiance, fiche d'agent, règles) et barre d'interventions. Elle reçoit la partie du moteur
+par WebSocket.
+
+### 2.13 Qualité et documentation
+
+- 583 tests automatisés (moteur Python et interface Godot sans fenêtre), dont le rejeu identique d'une partie.
+- 97 diagrammes UML (cas d'utilisation, séquences, communication, classes) et un dictionnaire de tous les paramètres et
+  variables, réunis dans [un PDF](../uml/FILETS-diagrammes-UML.pdf).
+- Les spécifications du temps ([temps.md](../temps.md)), de la pêche ([peche.md](../peche.md)) et de l'architecture
+  ([architecture.md](../architecture.md)).
+
+## 3. Pile technique
+
+| Partie | Technologie |
+|---|---|
+| Moteur de simulation | Python 3.13, asyncio (ordonnanceur à événements discrets) |
+| Modèles d'IA | Ollama en local : Qwen 2.5 (1,5B, 3B, 7B), tev1 0,8B |
+| Flux de données | Apache Kafka (et un bus local pour jouer sans Docker) |
+| Stockage | PostgreSQL 17 + pgvector, stockage objet MinIO |
+| Interface | Godot 4.7 (GDScript), WebSocket vers le moteur |
+| Lancement | Docker Compose, scripts PowerShell `install` et `start` |
+| Vidéos | Godot Movie Maker, voix edge-tts, montage ffmpeg |
+## 4. La démonstration
+
+Les vidéos montrent une vraie partie de trois saisons (`runs/demo_ia`), jouée par les modèles locaux, puis rejouée depuis son
+journal pour être filmée.
+
+### 4.1 Les vidéos
+
+| Vidéo | Format | Durée | Contenu |
+|---|---|---|---|
+| [FILETS-demo.mp4](FILETS-demo.mp4) | 1920x1080 | 4 min 50 | la partie commentée en voix off, sous-titrée |
+| [FILETS-demo-sans-voix.mp4](FILETS-demo-sans-voix.mp4) | 1920x1080 | 4 min 50 | la même, sans voix off, sous-titres ni son |
+| [FILETS-short.mp4](FILETS-short.mp4) | vertical 1080x1920 | 47 s | le résumé pour les réseaux sociaux, aux couleurs de l'EIGSI Casablanca |
+| [FILETS-short-sans-voix.mp4](FILETS-short-sans-voix.mp4) | vertical 1080x1920 | 47 s | le même montage, sans voix, sous-titres ni son (titres et carte de fin gardés) |
+| [FILETS-short-paysage.mp4](FILETS-short-paysage.mp4) | paysage 1920x1080 | 47 s | le résumé, en paysage |
+| [FILETS-short-paysage-sans-voix.mp4](FILETS-short-paysage-sans-voix.mp4) | paysage 1920x1080 | 47 s | le même, sans voix, sous-titres ni son |
+
+### 4.2 La partie filmée en chiffres
+
+| Mesure | Valeur |
+|---|---|
+| Durée | 3 saisons de 30 jours ; environ 20 minutes de calcul sur le PC portable |
+| Sorties en mer | 254, autant de déclarations à l'ancien |
+| Témoignages | 197 |
+| Mensonges établis | 5 (dont 1 à tort : Arnaud en saison 1) ; Maëlle et Sylvain pris par la patrouille en saison 2, Sylvain et Lucien par les témoins en saison 3 |
+| Veillées | 3, 30 répliques, 11 propositions de règle |
+| Règles adoptées | 2 : 3 t par pêcheur pour la vallée (dès la saison 2), un peu plus de 2 t au lac de Vellmor (dès la saison 3) |
+| Votes de sanction | patrouille installée (saison 1) puis retirée (saison 2) ; deux demandes d'interdiction rejetées |
+| Appels aux modèles | 372, pour 1 014 094 tokens ; 75 réponses contrôlées et traitées comme incidents |
+| Mémoire | 668 souvenirs écrits, 275 changements de confiance |
+| Stocks des lacs | Vellmor 62 → 33 t, Orsane 62 → 55 t, Brémol 75 → 73 t |
+
+### 4.3 Au fil de la vidéo de démonstration
+
+Les moments valent pour les deux versions (avec et sans voix off) et sont donnés à une seconde près ; « S1, jour 26 » est la saison et le jour de jeu affichés en haut à gauche de la carte.
 
 | Vidéo | Partie | À l'écran | Ce que ça montre |
 |---|---|---|---|
@@ -49,147 +206,21 @@ seconde près ; « S1, jour 26 » est la saison et le jour de jeu affichés en h
 | 4:34 | S3, jour 30 | Toute la vallée, récit | La vallée à la fin de la partie et le récit de la dernière saison. |
 | 4:47 | | Carte de fin | « Dominante IABD. Intelligence artificielle et big data. » |
 
-## 3. La solution développée
+### 4.4 Les vidéos courtes
 
-### 3.1 Le principe
+Les quatre vidéos courtes suivent le même montage : un titre par idée, sur un plan fixe de la partie, en coupes franches.
 
-Une partie dure plusieurs saisons de trente jours. Chaque saison : les pêcheurs préparent leur plan, pêchent pendant vingt jours
-et déclarent chaque retour à l'ancien ; le soir de la veillée, les élus des villages débattent et votent des règles ; puis les
-lacs se repeuplent et un narrateur raconte la saison. Le poisson ne se renouvelle bien que si les lacs ne sont pas vidés : la
-vallée doit trouver d'elle-même des règles et les faire respecter, alors que chacun a intérêt à pêcher plus et peut mentir.
-
-### 3.2 Le monde
-
-- **La vallée** est tirée au hasard (graine) en restant cohérente : lacs, villages, chemins, rives, décor. On peut en tirer une
-  autre depuis le menu. Dans la partie filmée : trois lacs (Vellmor 62 t, Orsane 62 t, Brémol 75 t de capacité), deux villages
-  par lac (Ostrel et Bramois, Tilque et Hennad, Varenne et Corbel) et la maison de l'ancien.
-- **Les mailles** : le monde est une grille. Chaque case de lac a son poisson et sa chance (un coin trop pêché rend moins), les
-  maisons bloquent le passage, les trajets sont calculés sur la grille.
-- **Le lac** se repeuple selon une croissance qui est la plus forte autour de la moitié de sa capacité. Climat et saisons de
-  l'année jouent sur les prises ; des événements peuvent survenir.
-- **Les bateaux** ont des cales de tailles différentes ; aller pêcher sur un autre lac prend du temps et coûte de l'argent.
-
-### 3.3 Les habitants
-
-- **Seize pêcheurs**, chacun d'un caractère : ancienne famille, nouveau venu, beau parleur, taiseux. Chaque caractère a ses
-  priorités et sa façon de parler, que les modèles reçoivent dans leur consigne.
-- La plupart sont des **agents IA** ; quelques-uns sont des **agents à règles** (un comportement fixe par caractère), pour
-  comparer. L'**ancien** (Maître Oswin) reçoit les déclarations, recoupe les témoignages et préside la veillée.
-- Chaque action d'un agent vient de sa propre réflexion (modèle de langage) ou de la règle de son caractère : le moteur ne
-  décide jamais à sa place ; il compte, vérifie et applique la physique du monde.
-
-### 3.4 Les modèles d'IA
-
-Quatre modèles tournent en local avec Ollama, sur la carte graphique d'un PC portable (RTX 3060, 6 Go), sans serveur ni
-abonnement :
-
-| Modèle | Rôle | Dans la partie filmée |
-|---|---|---|
-| tev1 0,8B | Les décisions de routine et les votes : il choisit une option et donne sa probabilité, sans écrire de texte | 151 appels |
-| Qwen 2.5 3B | La réflexion des pêcheurs expérimentés et de l'ancien : plan de saison, sorties quand la situation change, paroles de veillée | 137 appels |
-| Qwen 2.5 1,5B | La même chose pour les pêcheurs moins expérimentés | 81 appels |
-| Qwen 2.5 7B | Le récit de fin de saison | 3 appels |
-
-À chaque décision, un aiguillage choisit entre le réflexe (rien n'a changé : le petit modèle de décision) et la réflexion
-(quelque chose a changé : un modèle de langage). Les réponses sont contrôlées : une réponse illisible, hors rôle ou hors bornes
-est un incident, traité par une règle de repli ou une seconde demande.
-
-### 3.5 Une saison
-
-1. **Le plan** : chaque pêcheur fixe ce qu'il compte prendre et ce qu'il compte déclarer.
-2. **Les sorties** : à l'ouverture puis à chaque retour, il décide quand ressortir, où (son lac ou un autre, rive ou large),
-   combien prendre, sortie courte (3 h) ou longue (7 h) ; personne ne pêche la nuit. Le poisson sort du lac au retour.
-3. **Les déclarations** : à chaque retour, il déclare sa pêche à l'ancien ; il peut mentir.
-4. **Les indices** : les voisins voient les barques rentrer et estiment leur charge ; la patrouille, si elle a été votée,
-   contrôle une zone. L'ancien recoupe ces indices avec les déclarations et établit les mensonges, parfois à tort.
-
-### 3.6 La veillée et les règles
-
-- Les villages élisent leurs délégués au **conseil de la vallée** ; les absents en sont informés ensuite.
-- Les répliques se préparent en même temps, mais **une seule personne parle à la fois** (vingt minutes de jeu par réplique) ;
-  celui à qui l'on s'adresse répond en priorité, et une réplique dépassée par la discussion est préparée de nouveau. Une IA qui
-  répète ce qui a déjà été dit est relancée une fois, puis se tait.
-- Une réplique peut proposer une règle, en soutenir une, promettre, accuser, demander d'interdire un pêcheur de pêche, ou
-  d'installer ou de retirer la patrouille.
-- **Cinq sortes de règles** : un quota par pêcheur, une zone réservée, un repos du lac, un nombre de sorties, une taille de
-  bateau ; chacune peut viser toute la vallée, un village ou un seul lac. Une règle passe avec au moins la moitié des pêcheurs
-  présents.
-
-### 3.7 Confiance, mémoire et RAG
-
-- **La confiance** : chaque agent juge lui-même, après ce qu'il voit et entend, ce que ses voisins valent ; cette confiance
-  pèse sur la façon dont il reçoit leurs paroles et leurs témoignages.
-- **La mémoire** : chaque agent garde ses souvenirs (prises, promesses, accusations, règles) sous forme de vecteurs, et retrouve
-  ceux qui comptent pour la décision en cours par leur sens (recherche sémantique). C'est le principe du RAG : le modèle répond à
-  partir de documents retrouvés pour lui, ici ses propres souvenirs et les faits marquants de la partie.
-
-### 3.8 Le narrateur
-
-À la fin de chaque saison, un narrateur extérieur, qui sait tout (même les mensonges non découverts), écrit le récit à partir
-des faits relevés par le programme. Il ne reçoit aucun tonnage : les chiffres exacts sont calculés par le code et ajoutés au
-récit, et un récit qui invente un nombre est corrigé.
-
-### 3.9 Le temps simulé
-
-Le moteur est une simulation à événements discrets : réfléchir ne prend pas de temps dans le jeu, agir en prend (une sortie, un
-trajet, une réplique). Les décisions qui ne dépendent pas les unes des autres partent en même temps vers les modèles ; leurs
-effets s'appliquent toujours dans l'ordre du temps de jeu, jamais dans l'ordre où les modèles répondent. À graine égale, avec le
-faux modèle des tests, deux parties donnent le même journal ; avec de vrais modèles, les réponses peuvent varier d'une partie à l'autre.
-
-### 3.10 Le joueur
-
-Le joueur prépare la partie dans un menu (vallée, pêcheurs, modèles, réglages), puis observe et intervient : sécheresse,
-communication entre villages, déclarations publiques ou non, rumeur, vitesse, pause et arrêt. La rumeur de la partie filmée
-(« un marchand paierait le poisson le double ») est l'une de ces interventions.
-
-### 3.11 Les données
-
-- Chaque geste devient un **événement** (JSON, schéma vérifié), enregistré dans le journal de la partie.
-- En version complète, les événements passent par **Kafka** (sujets des événements, des commandes, des indicateurs, de l'état
-  et des messages en erreur), comme dans les plateformes de données ; des services les consomment.
-- Les **indicateurs** se calculent en continu : part du stock, norme partagée, accord déclaré, conformité, promesses tenues,
-  dispersion des prises, appels, tokens, incidents, violations temporelles.
-- **PostgreSQL avec pgvector** garde l'historique et la mémoire vectorielle ; un **stockage objet** (MinIO) garde les fichiers.
-- Une partie se **rejoue** depuis son journal, avec le bus local ou avec Kafka. La vidéo elle-même rejoue le journal de la partie filmée.
-
-### 3.12 L'interface
-
-L'interface Godot 4.7 dessine la vallée entièrement en code, en vue isométrique : caméra libre (zoom, glissement), mini-carte,
-mailles affichables, salon de la veillée avec ses bulles, jauges des lacs, cartes d'indicateurs et courbes par saison, onglets
-(interactions, récit du narrateur, confiance, fiche d'agent, règles) et barre d'interventions. Elle reçoit la partie du moteur
-par WebSocket.
-
-### 3.13 Qualité et documentation
-
-- 583 tests automatisés (moteur Python et interface Godot sans fenêtre), dont le rejeu identique d'une partie.
-- 97 diagrammes UML (cas d'utilisation, séquences, communication, classes) et un dictionnaire de tous les paramètres et
-  variables, réunis dans [un PDF](../uml/FILETS-diagrammes-UML.pdf).
-- Les spécifications du temps ([temps.md](../temps.md)), de la pêche ([peche.md](../peche.md)) et de l'architecture
-  ([architecture.md](../architecture.md)).
-
-## 4. La partie filmée en chiffres
-
-| Mesure | Valeur |
+| Titre à l'écran | Ce qu'on voit |
 |---|---|
-| Durée | 3 saisons de 30 jours ; environ 20 minutes de calcul sur le PC portable |
-| Sorties en mer | 254, autant de déclarations à l'ancien |
-| Témoignages | 197 |
-| Mensonges établis | 5 (dont 1 à tort : Arnaud en saison 1) ; Maëlle et Sylvain pris par la patrouille en saison 2, Sylvain et Lucien par les témoins en saison 3 |
-| Veillées | 3, 30 répliques, 11 propositions de règle |
-| Règles adoptées | 2 : 3 t par pêcheur pour la vallée (dès la saison 2), un peu plus de 2 t au lac de Vellmor (dès la saison 3) |
-| Votes de sanction | patrouille installée (saison 1) puis retirée (saison 2) ; deux demandes d'interdiction rejetées |
-| Appels aux modèles | 372, pour 1 014 094 tokens ; 75 réponses contrôlées et traitées comme incidents |
-| Mémoire | 668 souvenirs écrits, 275 changements de confiance |
-| Stocks des lacs | Vellmor 62 → 33 t, Orsane 62 → 55 t, Brémol 75 → 73 t |
-
-## 5. Pile technique
-
-| Partie | Technologie |
-|---|---|
-| Moteur de simulation | Python 3.13, asyncio (ordonnanceur à événements discrets) |
-| Modèles d'IA | Ollama en local : Qwen 2.5 (1,5B, 3B, 7B), tev1 0,8B |
-| Flux de données | Apache Kafka (et un bus local pour jouer sans Docker) |
-| Stockage | PostgreSQL 17 + pgvector, stockage objet MinIO |
-| Interface | Godot 4.7 (GDScript), WebSocket vers le moteur |
-| Lancement | Docker Compose, scripts PowerShell `install` et `start` |
-| Vidéos | Godot Movie Maker, voix edge-tts, montage ffmpeg |
+| 16 PÊCHEURS. 0 HUMAIN. | Toute la vallée au début de la partie |
+| CHAQUE VILLAGEOIS EST UNE IA | Le village d'Ostrel, puis les barques sur les lacs |
+| ELLES PEUVENT MENTIR | Une déclaration mensongère dans le fil des interactions (« MENSONGE ») |
+| LES VOISINS TÉMOIGNENT | Les témoignages des voisins sur une barque qui rentre |
+| L'ANCIEN SE TROMPE | Arnaud « ACCUSÉ À TORT », puis Isaure qui demande de l'interdire de pêche |
+| ILS VOTENT LEURS RÈGLES | Les bulles de la veillée, puis les règles en vigueur |
+| LA PATROUILLE VEILLE | La patrouille sur la carte |
+| LA PATROUILLE RETIRÉE | Maëlle à la veillée, qui fait voter la fin de la patrouille |
+| 100 % LOCAL. 4 MODÈLES. | La fiche d'un agent, les indicateurs en direct, les courbes des lacs |
+| 372 APPELS D'IA | Les compteurs d'appels aux modèles et de tokens à la fin de la partie |
+| UN LABO À IA | La vallée en troisième saison, puis le récit du narrateur |
+| (carte de fin) | « Dominante IABD, intelligence artificielle & big data » et le logo de l'EIGSI Casablanca |
